@@ -348,4 +348,84 @@ defmodule String do
   def split(string, pattern, []) when is_binary(string) and pattern != "" do
     :binary.split(string, pattern, [:global])
   end
+
+  def split(string, pattern, options) when is_binary(string) do
+    parts   = Keyword.get(options, :parts, :infinity)
+    trim    = Keyword.get(options, :trim, false)
+    pattern = maybe_compile_pattern(pattern)
+    split_each(string, pattern, trim, parts_to_index(parts))
+  end
+
+  defp parts_to_index(:infinity), do: 0
+  defp parts_to_index(n) when is_integer(n) and n > 0, do: n
+
+  defp split_each("", _pattern, true, 1), do: []
+  defp split_each(string, _pattern, _trim, 1) when is_binary(string), do: [string]
+  defp split_each(string, pattern, trim, count) do
+    case do_splitter(string, pattern, trim) do
+      {h, t} -> [h | split_each(t, pattern, trim, count -1)]
+      nil    -> []
+    end
+  end
+
+  defp do_splitter(:nomatch, _pattern, _), do: nil
+  defp do_splitter("", _pattern, true),    do: nil
+  defp do_splitter("", _pattern, false),   do: {"", :nomatch}
+
+  defp do_splitter(bin, "", _trim) do
+    next_grapheme(bin)
+  end
+
+  defp do_splitter(bin, pattern, trim) do
+    case :binary.match(bin, pattern) do
+      {0, length} when trim ->
+        do_splitter(:binary.part(bin, length, byte_size(bin) - length), pattern, trim)
+      {pos, length} ->
+        final = pos + length
+        {:binary.part(bin, 0, pos),
+         :binary.part(bin, final, byte_size(bin) - final)}
+      :nomatch ->
+        {bin, :nomatch}
+    end
+  end
+
+  defp maybe_compile_pattern(""), do: ""
+  defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
+  defp maybe_compile_pattern(pattern), do: :binary.compile_pattern(pattern)
+
+  @doc """
+  Returns the next grapheme in a string.
+
+  The result is a tuple with the grapheme and the
+  remainder of the string or `nil` in case
+  the String reached its end.
+
+  ## Examples
+
+      iex> String.next_grapheme("olá")
+      {"o", "lá"}
+  """
+  @spec next_grapheme(t) :: {grapheme, t} | nil
+  def next_grapheme(binary) do
+    case next_grapheme_size(binary) do
+      {size, rest} -> {:binary.part(binary, 0, size), rest}
+      nil          -> nil
+    end
+  end
+
+  @doc """
+  Returns the size of the next grapheme.
+
+  The result is a tuple with the next grapheme size and
+  the remainder of the string or `nil` in case the string
+  reached its end.
+
+  ## Examples
+
+      iex> String.next_grapheme_size("olá")
+      {1, "lá"}
+
+  """
+  @spec next_grapheme_size(t) :: {pos_integer, t} | nil
+  defdelegate next_grapheme_size(string), to: String.Unicode
 end
