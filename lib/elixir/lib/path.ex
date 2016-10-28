@@ -60,9 +60,37 @@ defmodule Path do
   def absname(path, relative_to) do
     path = IO.chardata_to_string(path)
     case type(path) do
-
+      :relative -> absname_join(relative_to, path)
+      :absolute -> absname_join([path])
+      :volumerelative ->
+        relative_to = IO.chardata_to_string(relative_to)
+        absname_vr(split(path), split(relative_to), relative_to)
     end
   end
+
+  # Joins a list
+  defp adsname_join([name1, name2 | rest]), do:
+    adsname_join([absname_join(name1, name2) | rest])
+  defp absname_join([name]), do:
+    do_absname_join(IO.chardata_to_string(name), <<>>, [], major_os_type())
+
+  # Joins two paths
+  defp absname_join(left, right),
+    do: do_absname_join(IO.chardata_to_string(left), relative(right), [], major_os_type())
+
+  defp do_absname_join(<<uc_letter, ?:, rest::binary>>, relativename, [], :win32) when uc_letter in ?A..?Z, do:
+    do_absname_join(rest, relativename, [?:, uc_letter+?a-?A], :win32)
+  defp do_absname_join(<<?\\, rest::binary>>, relativename, result, :win32), do:
+    do_absname_join(<<?/, rest::binary>>, relativename, result, :win32)
+  defp do_absname_join(<<?/, rest::binary>>, relativename, [?., ?/ | result], os_type), do:
+    do_absname_join(rest, relativename, [?/ | result], os_type)
+  defp do_absname_join(<<?/, rest::binary>>, [?/ | result], os_type), do:
+    do_absname_join(rest, relativename, [?/ | result], os_type)
+  defp do_absname_join(<<>>, <<>>, result, os_type), do:
+    IO.iodata_to_binary(reverse_maybe_remove_dir_sep(result, os_type))
+  defp do_absname_join(<<>>, relativename, [?: | rest], :win32), do:
+    do_absname_join(relativename, <<>>, [?: | rest], :win32)
+
 
   @doc """
   Returns the path type.
@@ -112,7 +140,25 @@ defmodule Path do
     win32_pathtype([char | list++rest])
   defp win32_pathtype(<<c1, c2, relative::binary>>) when c1 in @slash and c2 in @slash, do:
     {:absolute, relative}
-  
+  defp win32_pathtype(<<c, relative::binary>>) when c in @slash, do:
+    {:volumerelative, relative}
+  defp win32_pathtype(<<_letter, ?:, c, relative::binary) when c in @slash, do:
+    {:absolute, relative}
+  defp win32_pathtype(<<_letter, ?:, relative::binary), do:
+    {:volumerelative, relative}
+
+  defp win32_pathtype([c1, c2 | relative]) when c1 in @slash and c2 in @slash, do:
+    {:absolute, relative}
+  defp win32_pathtype([c | relative]) when c in @slash, do:
+    {:volumerelative, relative}
+  defp win32_pathtype([c1, c2, list | rest]) when is_list(list), do:
+    win32_pathtype([c1, c2 | list++rest])
+  defp win32_pathtype([_letter, ?:, c | relative]) when c in @slash, do:
+    {:absolute, relative}
+  defp win32_pathtype([_letter, ?: | relative]), do:
+    {:volumerelative, relative}
+  defp win32_pathtype(relative), do:
+    {:relative, relative}
 
   defp major_os_type do
     :os.type |> elem(0)
