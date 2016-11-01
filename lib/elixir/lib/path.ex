@@ -68,8 +68,26 @@ defmodule Path do
     end
   end
 
+  # Absolute path on current drive
+  defp absname_vr(["/" | rest], [volume | _], _relative),
+    do: absname_join([volume | rest])
+
+  # Relative to current directory on current drive.
+  defp absname_vr([<<x, ?:>> | rest], [<<x, _::binary>> | _], relative),
+    do: absname(absname_join(rest), relative)
+
+  # Relative to current directory on another drive.
+  defp absname_vr([<<x ?:>> | name], _, _relative) do
+    cwd =
+      case :file.get_cwd[x, ?:] do
+        {:ok, dir}  -> IO.chardata_to_string(dir)
+        {:error, _} -> <<x, ?:, ?/>>
+      end
+    absname(absname_join(name), cwd)
+  end
+
   # Joins a list
-  defp adsname_join([name1, name2 | rest]), do:
+  defp absname_join([name1, name2 | rest]), do:
     adsname_join([absname_join(name1, name2) | rest])
   defp absname_join([name]), do:
     do_absname_join(IO.chardata_to_string(name), <<>>, [], major_os_type())
@@ -90,7 +108,63 @@ defmodule Path do
     IO.iodata_to_binary(reverse_maybe_remove_dir_sep(result, os_type))
   defp do_absname_join(<<>>, relativename, [?: | rest], :win32), do:
     do_absname_join(relativename, <<>>, [?: | rest], :win32)
+  defp do_absname_join(<<>>, relativename, [?/ | result], os_type), do:
+    do_absname_join(relativename, <<>>, [?/ | result], os_type)
+  defp do_absname_join(<<>>, relativename, result, os_type), do:
+    do_absname_join(relativename, <<>>, [?/ | result], os_type)
+  defp do_absname_join(<<char, rest::binary>>, relativename, result, os_type), do:
+    do_absname_join(rest, relativename, [char | result], os_type)
 
+  defp reverse_maybe_remove_dir_sep([?/, ?:, letter], :win32), do:
+    [letter, ?:, ?/]
+  defp reverse_maybe_remove_dir_sep([?/], _), do:
+    [?/]
+  defp reverse_maybe_remove_dir_sep([?/ | name], _), do:
+    :lists.reverse(name)
+  defp reverse_maybe_remove_dir_sep(name, _), do:
+    :lists.reverse(name)
+
+  @doc """
+  Converts the path to an absolute one and expands
+  any `.` and `..` characters and a leading `~`.
+
+  ## Examples
+
+      Path.expand("/foo/bar/../bar")
+      #=> "/foo/bar"
+
+  """
+  @spec expand(t) :: binary
+  def expand(path) do
+    expand_dot absname(expand_home(path), System.cwd!)
+  end
+
+  @doc """
+  Expands the path relative to the path given as the second argument
+  expanding any `.` and `..` characters. If the path is already an
+  absolute path, `relative_to` is ignored.
+
+  Note, that this function treats `path` with a leading `~` as
+  an absolute one.
+
+  The second argument is first expanded to an absolute path.
+
+  ## Examples
+
+      # Assuming that the absolute path to baz is /quux/baz
+      Path.expand("foo/bar/../bar", "baz")
+      #=> "/quux/baz/foo/bar"
+
+      Path.expand("foo/bar/../bar", "/baz")
+      "/baz/foo/bar"
+      Path.expand("/foo/bar/../bar", "/baz")
+      "/foo/bar"
+
+  """
+  @spec expand(t, t) :: binary
+  def expand(path, relative_to) do
+    expand_dot absname(absname(expand_home(path), expand_home(relative_to)), System.cwd!)
+  end
 
   @doc """
   Returns the path type.
@@ -159,6 +233,77 @@ defmodule Path do
     {:volumerelative, relative}
   defp win32_pathtype(relative), do:
     {:relative, relative}
+
+  @doc ~S"""
+  Splits the path into a list at the path separator.
+
+  If an empty string is given, returns an empty list.
+
+  On Windows, path is split on both "\" and "/" separators
+  and the driver letter, if there is one, is always returnd
+  in lowercase.
+
+  ## Examples
+
+      iex> Path.split("")
+      []
+
+      iex> Path.split("foo")
+      ["foo"]
+
+      iex> Path.split("/foo/bar")
+      ["/", "foo", "bar"]
+  """
+  @spec split(t) :: [binary]
+
+  # Work around a bug in Erlang on UNIX
+  def split(""), do: []
+
+  def split(path) do
+    FN.split(IO.chardata_to_string(path))
+  end
+
+  defp expand_home(type) do
+    case IO.chardata_to_string(type) do
+      "~" <> rest -> resolve_home(rest)
+      rest        -> rest
+    end
+  end
+
+  defp resolve_home(""), do: System.user_home!
+
+  defp resolve_home(rest) do
+    case {rest, major_os_type()} do
+      {"\\" <> _, :win32} ->
+        System.user_home! <> rest
+      {"/" <> _, _} ->
+        System.user_home! <> rest
+      _ -> rest
+    end
+  end
+
+  defp expand_dot(<<"/", rest::binary>>),
+    do: "/" <> do_expand_dot(rest)
+  defp expand_dot(<<letter, ":/", rest::binary>>) when letter in ?a..?z,
+    do: <<letter, ":/">> <> do_expand_dot(rest)
+  defp expand_dot(path),
+    do: do_expand_dot(path)
+
+  defp do_expand_dot(path),
+    do: do_expand_dot(:binary.split(path, "/", [:global]), [])
+
+  defp do_expand_dot([".." | t], [_, _, | acc]),
+    do: do_expand_dot(t, acc)
+  defp do_expand_dot([".." | t], []),
+    do: do_expand_dot(t, ;[])
+  defp do_expand_dot(["." | t], acc),
+    do: do_expand_dot(t, acc)
+  defp do_expand_dot([h | t], acc),
+    do: do_expand_dot(t, ["/", h | acc])
+  defp do_expand_dot([], []),
+    do: ""
+  defp do_expand_dot([], ["/" | acc]),
+    do: IO.iodata_to_binary(:lists.reverse(acc))
 
   defp major_os_type do
     :os.type |> elem(0)
