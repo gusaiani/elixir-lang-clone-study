@@ -1,4 +1,4 @@
-# Use elixir_bootstrap module to be able to boostrap Kernel.
+# Use elixir_bootstrap module to be able to bootstrap Kernel.
 # The bootstrap module provides simpler implementations of the
 # functions removed, simple enough to bootstrap.
 import Kernel, except: [@: 1, defmodule: 2, def: 1, def: 2, defp: 2,
@@ -21,7 +21,7 @@ defmodule Kernel do
 
   Some of the functions described in this module are inlined by
   the Elixir compiler into their Erlang counterparts in the `:erlang`
-  module. Those functions are called BIFs (builtin internal functions)
+  module. Those functions are called BIFs (built-in internal functions)
   in Erlang-land and they exhibit interesting properties, as some of
   them are allowed in guards and others are used for compiler
   optimizations.
@@ -39,7 +39,7 @@ defmodule Kernel do
   ## Delegations to Erlang with inlining (macros)
 
   @doc """
-  Returns an integer or float which is the arithmetical absoluet value of `number`.
+  Returns an integer or float which is the arithmetical absolute value of `number`.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -106,7 +106,7 @@ defmodule Kernel do
   A negative `length` can be used to extract bytes that come *before* the byte
   at `start`:
 
-      iex> binary_part("Hello", 5 , -3)
+      iex> binary_part("Hello", 5, -3)
       "llo"
 
   """
@@ -116,7 +116,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns an integer which is the size in bits of `bistring`.
+  Returns an integer which is the size in bits of `bitstring`.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -169,7 +169,7 @@ defmodule Kernel do
   the result is always rounded towards zero.
 
   If you want to perform floored integer division (rounding towards negative infinity),
-  ues `Integer.floor_div/2` instead.
+  use `Integer.floor_div/2` instead.
 
   ## Examples
 
@@ -202,7 +202,7 @@ defmodule Kernel do
 
       exit(:normal)
 
-  In case something goes wrong,  you can also use `exit/1` with
+  In case something goes wrong, you can also use `exit/1` with
   a different reason:
 
       exit(:seems_bad)
@@ -210,7 +210,7 @@ defmodule Kernel do
   If the exit reason is not `:normal`, all the processes linked to the process
   that exited will crash (unless they are trapping exits).
 
-  ## OTP Exits
+  ## OTP exits
 
   Exits are used by the OTP to determine if a process exited abnormally
   or not. The following exits are considered "normal":
@@ -338,7 +338,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if `term` is as function; otherwise returns `false`.
+  Returns `true` if `term` is a function; otherwise returns `false`.
 
   Allowed in guard tests. Inlined by the compiler.
   """
@@ -398,7 +398,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` is `term` is a PID (process identifier); otherwise returns `false`.
+  Returns `true` if `term` is a PID (process identifier); otherwise returns `false`.
 
   Allowed in guard tests. Inlined by the compiler.
   """
@@ -438,7 +438,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` is `term` is a map; otherwise returns `false`.
+  Returns `true` if `term` is a map; otherwise returns `false`.
 
   Allowed in guard tests. Inlined by the compiler.
   """
@@ -734,7 +734,7 @@ defmodule Kernel do
   ## Examples
 
       current = self()
-      spawn_monitor(fn -> send current, {self(), 1 + 2}, end)
+      spawn_monitor(fn -> send current, {self(), 1 + 2} end)
 
   """
   @spec spawn_monitor((() -> any)) :: {pid, reference}
@@ -762,7 +762,7 @@ defmodule Kernel do
   end
 
   @doc """
-  A non-local return from a function. Check `Kernel.SpecialForms/try/1` for more information.
+  A non-local return from a function. Check `Kernel.SpecialForms.try/1` for more information.
 
   Inlined by the compiler.
   """
@@ -825,7 +825,7 @@ defmodule Kernel do
   @doc """
   Arithmetic addition.
 
-  Allowed in guard tests. Inlined by the computer.
+  Allowed in guard tests. Inlined by the compiler.
 
   ## Examples
 
@@ -897,7 +897,7 @@ defmodule Kernel do
       2
 
   """
-  @spec (number, number) :: number
+  @spec (number * number) :: number
   def left * right do
     :erlang.*(left, right)
   end
@@ -929,7 +929,7 @@ defmodule Kernel do
 
   The complexity of `a ++ b` is proportional to `length(a)`, so avoid repeatedly
   appending to lists of arbitrary length, e.g. `list ++ [item]`.
-  Instead, consider prepending via `[item | rest ]` and then reversing.
+  Instead, consider prepending via `[item | rest]` and then reversing.
 
   If the `right` operand is not a proper list, it returns an improper list.
   If the `left` operand is not a proper list, it raises `ArgumentError`.
@@ -962,5 +962,537 @@ defmodule Kernel do
     :erlang.++(left, right)
   end
 
-  
+  @doc """
+  Removes the first occurrence of an item on the left list
+  for each item on the right.
+
+  The complexity of `a -- b` is proportional to `length(a) * length(b)`,
+  meaning that it will be very slow if both `a` and `b` are long lists.
+  In such cases, consider converting each list to a `MapSet` and using
+  `MapSet.difference/2`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> [1, 2, 3] -- [1, 2]
+      [3]
+
+      iex> [1, 2, 3, 2, 1] -- [1, 2, 2]
+      [3, 1]
+
+  """
+  @spec (list -- list) :: list
+  def left -- right do
+    :erlang.--(left, right)
+  end
+
+  @doc """
+  Boolean not.
+
+  `arg` must be a boolean; if it's not, an `ArgumentError` exception is raised.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> not false
+      true
+
+  """
+  @spec not(boolean) :: boolean
+  def not(arg) do
+    :erlang.not(arg)
+  end
+
+  @doc """
+  Returns `true` if left is less than right.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 < 2
+      true
+
+  """
+  @spec (term < term) :: boolean
+  def left < right do
+    :erlang.<(left, right)
+  end
+
+  @doc """
+  Returns `true` if left is more than right.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 > 2
+      false
+
+  """
+  @spec (term > term) :: boolean
+  def left > right do
+    :erlang.>(left, right)
+  end
+
+  @doc """
+  Returns `true` if left is less than or equal to right.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 <= 2
+      true
+
+  """
+  @spec (term <= term) :: boolean
+  def left <= right do
+    :erlang."=<"(left, right)
+  end
+
+  @doc """
+  Returns `true` if left is more than or equal to right.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 >= 2
+      false
+
+  """
+  @spec (term >= term) :: boolean
+  def left >= right do
+    :erlang.>=(left, right)
+  end
+
+  @doc """
+  Returns `true` if the two items are equal.
+
+  This operator considers 1 and 1.0 to be equal. For stricter
+  semantics, use `===` instead.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 == 2
+      false
+
+      iex> 1 == 1.0
+      true
+
+  """
+  @spec (term == term) :: boolean
+  def left == right do
+    :erlang.==(left, right)
+  end
+
+  @doc """
+  Returns `true` if the two items are not equal.
+
+  This operator considers 1 and 1.0 to be equal. For match
+  comparison, use `!==` instead.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 != 2
+      true
+
+      iex> 1 != 1.0
+      false
+
+  """
+  @spec (term != term) :: boolean
+  def left != right do
+    :erlang."/="(left, right)
+  end
+
+  @doc """
+  Returns `true` if the two items are exactly equal.
+
+  The items are only considered to be exactly equal if they
+  have the same value and are of the same type. For example,
+  `1 == 1.0` returns true, but since they are of different
+  types, `1 === 1.0` returns false.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 === 2
+      false
+
+      iex> 1 === 1.0
+      false
+
+  """
+  @spec (term === term) :: boolean
+  def left === right do
+    :erlang."=:="(left, right)
+  end
+
+  @doc """
+  Returns `true` if the two items are not exactly equal.
+
+  All terms in Elixir can be compared with each other.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> 1 !== 2
+      true
+
+      iex> 1 !== 1.0
+      true
+
+  """
+  @spec (term !== term) :: boolean
+  def left !== right do
+    :erlang."=/="(left, right)
+  end
+
+  @doc """
+  Gets the element at the zero-based `index` in `tuple`.
+
+  Allowed in guard tests. Inlined by the compiler.
+
+  ## Examples
+
+      iex> tuple = {:foo, :bar, 3}
+      iex> elem(tuple, 1)
+      :bar
+
+  """
+  @spec elem(tuple, non_neg_integer) :: term
+  def elem(tuple, index) do
+    :erlang.element(index + 1, tuple)
+  end
+
+  @doc """
+  Inserts `value` at the given zero-based `index` in `tuple`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> tuple = {:foo, :bar, 3}
+      iex> put_elem(tuple, 0, :baz)
+      {:baz, :bar, 3}
+
+  """
+  @spec put_elem(tuple, non_neg_integer, term) :: tuple
+  def put_elem(tuple, index, value) do
+    :erlang.setelement(index + 1, tuple, value)
+  end
+
+  ## Implemented in Elixir
+
+  @doc """
+  Boolean or.
+
+  If the first argument is `true`, `true` is returned; otherwise, the second
+  argument is returned.
+
+  Requires only the first argument to be a boolean since it short-circuits.
+  If the first argument is not a boolean, an `ArgumentError` exception is
+  raised.
+
+  Allowed in guard tests.
+
+  ## Examples
+
+      iex> true or false
+      true
+      iex> false or 42
+      42
+
+  """
+  defmacro left or right do
+    quote do: :erlang.orelse(unquote(left), unquote(right))
+  end
+
+  @doc """
+  Boolean and.
+
+  If the first argument is `false`, `false` is returned; otherwise, the second
+  argument is returned.
+
+  Requires only the first argument to be a boolean since it short-circuits. If
+  the first argument is not a boolean, an `ArgumentError` exception is raised.
+
+  Allowed in guard tests.
+
+  ## Examples
+
+      iex> true and false
+      false
+      iex> true and "yay!"
+      "yay!"
+
+  """
+  defmacro left and right do
+    quote do: :erlang.andalso(unquote(left), unquote(right))
+  end
+
+  @doc """
+  Boolean not.
+
+  Receives any argument (not just booleans) and returns `true` if the argument
+  is `false` or `nil`; returns `false` otherwise.
+
+  Not allowed in guard clauses.
+
+  ## Examples
+
+      iex> !Enum.empty?([])
+      false
+
+      iex> !List.first([])
+      true
+
+  """
+  defmacro !(arg)
+
+  defmacro !({:!, _, [arg]}) do
+    optimize_boolean(quote do
+      case unquote(arg) do
+        x when x in [false, nil] -> false
+        _ -> true
+      end
+    end)
+  end
+
+  defmacro !(arg) do
+    optimize_boolean(quote do
+      case unquote(arg) do
+        x when x in [false, nil] -> true
+        _ -> false
+      end
+    end)
+  end
+
+  @doc """
+  Concatenates two binaries.
+
+  ## Examples
+
+      iex> "foo" <> "bar"
+      "foobar"
+
+  The `<>` operator can also be used in pattern matching (and guard clauses) as
+  long as the first part is a literal binary:
+
+      iex> "foo" <> x = "foobar"
+      iex> x
+      "bar"
+
+  `x <> "bar" = "foobar"` would have resulted in a `CompileError` exception.
+
+  """
+  defmacro left <> right do
+    concats = extract_concatenations({:<>, [], [left, right]})
+    quote do: <<unquote_splicing(concats)>>
+  end
+
+  # Extracts concatenations in order to optimize many
+  # concatenations into one single clause.
+  defp extract_concatenations({:<>, _, [left, right]}) do
+    [wrap_concatenation(left) | extract_concatenations(right)]
+  end
+
+  defp extract_concatenations(other) do
+    [wrap_concatenation(other)]
+  end
+
+  defp wrap_concatenation(binary) when is_binary(binary) do
+    binary
+  end
+
+  defp wrap_concatenation(other) do
+    {:::, [], [other, {:binary, [], nil}]}
+  end
+
+  @doc """
+  Raises an exception.
+
+  If the argument `msg` is a binary, it raises a `RuntimeError` exception
+  using the given argument as message.
+
+  If `msg` is an atom, it just calls `raise/2` with the atom as the first
+  argument and `[]` as the second argument.
+
+  If `msg` is anything else, raises an `ArgumentError` exception.
+
+  ## Examples
+
+      iex> raise "oops"
+      ** (RuntimeError) oops
+
+      try do
+        1 + :foo
+      rescue
+        x in [ArithmeticError] ->
+          IO.puts "that was expected"
+          raise x
+      end
+
+  """
+  defmacro raise(msg) do
+    # Try to figure out the type at compilation time
+    # to avoid dead code and make Dialyzer happy.
+    msg = case not is_binary(msg) and bootstrapped?(Macro) do
+      true  -> Macro.expand(msg, __CALLER__)
+      false -> msg
+    end
+
+    case msg do
+      msg when is_binary(msg) ->
+        quote do
+          :erlang.error RuntimeError.exception(unquote(msg))
+        end
+      {:<<>>, _, _} = msg ->
+        quote do
+          :erlang.error RuntimeError.exception(unquote(msg))
+        end
+      alias when is_atom(alias) ->
+        quote do
+          :erlang.error unquote(alias).exception([])
+        end
+      _ ->
+        quote do
+          :erlang.error Kernel.Utils.raise(unquote(msg))
+        end
+    end
+  end
+
+  @doc """
+  Raises an exception.
+
+  Calls the `exception/1` function on the given argument (which has to be a
+  module name like `ArgumentError` or `RuntimeError`) passing `attrs` as the
+  attributes in order to retrieve the exception struct.
+
+  Any module that contains a call to the `defexception/1` macro automatically
+  implements the `c:Exception.exception/1` callback expected by `raise/2`.
+  For more information, see `defexception/1`.
+
+  ## Examples
+
+      iex> raise(ArgumentError, message: "Sample")
+      ** (ArgumentError) Sample
+
+  """
+  defmacro raise(exception, attrs) do
+    quote do
+      :erlang.error unquote(exception).exception(unquote(attrs))
+    end
+  end
+
+  @doc """
+  Raises an exception preserving a previous stacktrace.
+
+  Works like `raise/1` but does not generate a new stacktrace.
+
+  Notice that `System.stacktrace/0` returns the stacktrace
+  of the last exception. That said, it is common to assign
+  the stacktrace as the first expression inside a `rescue`
+  clause as any other exception potentially raised (and
+  rescued) between the rescue clause and the raise call
+  may change the `System.stacktrace/0` value.
+
+  ## Examples
+
+      try do
+        raise "oops"
+      rescue
+        exception ->
+          stacktrace = System.stacktrace
+          if Exception.message(exception) == "oops" do
+            reraise exception, stacktrace
+          end
+      end
+  """
+  defmacro reraise(msg, stacktrace) do
+    # Try to figure out the type at compilation time
+    # to avoid dead code and make Dialyzer happy.
+
+    case Macro.expand(msg, __CALLER__) do
+      msg when is_binary(msg) ->
+        quote do
+          :erlang.raise :error, RuntimeError.exception(unquote(msg)), unquote(stacktrace)
+        end
+      {:<<>>, _, _} = msg ->
+        quote do
+          :erlang.raise :error, RuntimeError.exception(unquote(msg)), unquote(stacktrace)
+        end
+      alias when is_atom(alias) ->
+        quote do
+          :erlang.raise :error, unquote(alias).exception([]), unquote(stacktrace)
+        end
+      msg ->
+        quote do
+          stacktrace = unquote(stacktrace)
+          case unquote(msg) do
+            msg when is_binary(msg) ->
+              :erlang.raise :error, RuntimeError.exception(msg), stacktrace
+            atom when is_atom(atom) ->
+              :erlang.raise :error, atom.exception([]), stacktrace
+            %{__struct__: struct, __exception__: true} = other when is_atom(struct) ->
+              :erlang.raise :error, other, stacktrace
+            other ->
+              message = "reraise/2 expects an alias, string or exception as the first argument, got: #{inspect other}"
+              :erlang.error ArgumentError.exception(message)
+          end
+        end
+    end
+  end
+
+  @doc """
+  Raises an exception preserving a previous stacktrace.
+
+  `reraise/3` works like `reraise/2`, except it passes arguments to the
+  `exception/1` function as explained in `raise/2`.
+
+  ## Examples
+
+      try do
+        raise "oops"
+      rescue
+        exception ->
+          stacktrace = System.stacktrace
+          reraise WrapperError, [exception: exception], stacktrace
+      end
+  """
+  defmacro reraise(exception, attrs, stacktrace) do
+    quote do
+      :erlang.raise :error, unquote(exception).exception(unquote(attrs)), unquote(stacktrace)
+    end
+  end
+
+  # Shared functions
+
+  defp optimize_boolean({:case, meta, args}) do
+    {:case, [{:optimize_boolean, true} | meta], args}
+  end
 end
