@@ -263,7 +263,7 @@ defmodule Kernel do
       1
 
   """
-  @spec hd(maybe_improper_list) :: term
+  @spec hd(nonempty_maybe_improper_list(elem, any)) :: elem when elem: term
   def hd(list) do
     :erlang.hd(list)
   end
@@ -516,7 +516,7 @@ defmodule Kernel do
       :b
 
   """
-  @spec max(term, term) :: term
+  @spec max(first, second) :: (first | second) when first: term, second: term
   def max(first, second) do
     :erlang.max(first, second)
   end
@@ -536,7 +536,7 @@ defmodule Kernel do
       "bar"
 
   """
-  @spec min(term, term) :: term
+  @spec min(first, second) :: (first | second) when first: term, second: term
   def min(first, second) do
     :erlang.min(first, second)
   end
@@ -603,7 +603,8 @@ defmodule Kernel do
       -10
 
   """
-  @spec round(number) :: integer
+  @spec round(float) :: integer
+  @spec round(value) :: value when value: integer
   def round(number) do
     :erlang.round(number)
   end
@@ -780,8 +781,10 @@ defmodule Kernel do
 
       iex> tl([1, 2, 3, :go])
       [2, 3, :go]
+
   """
-  @spec tl(maybe_improper_list) :: maybe_improper_list
+  @spec tl(nonempty_maybe_improper_list(elem, tail)) ::
+        maybe_improper_list(elem, tail) | tail when elem: term, tail: term
   def tl(list) do
     :erlang.tl(list)
   end
@@ -795,11 +798,13 @@ defmodule Kernel do
 
       iex> trunc(5.4)
       5
+
       iex> trunc(5.99)
       5
 
   """
-  @spec trunc(number) :: integer
+  @spec trunc(value) :: value when value: integer
+  @spec trunc(float) :: integer
   def trunc(number) do
     :erlang.trunc(number)
   end
@@ -833,7 +838,10 @@ defmodule Kernel do
       3
 
   """
-  @spec (number + number) :: number
+  @spec (integer + integer) :: integer
+  @spec (float + float) :: float
+  @spec (integer + float) :: float
+  @spec (float + integer) :: float
   def left + right do
     :erlang.+(left, right)
   end
@@ -849,7 +857,10 @@ defmodule Kernel do
       -1
 
   """
-  @spec (number - number) :: number
+  @spec (integer - integer) :: integer
+  @spec (float - float) :: float
+  @spec (integer - float) :: float
+  @spec (float - integer) :: float
   def left - right do
     :erlang.-(left, right)
   end
@@ -865,7 +876,7 @@ defmodule Kernel do
       1
 
   """
-  @spec (+number) :: number
+  @spec (+value) :: value when value: number
   def (+value) do
     :erlang.+(value)
   end
@@ -881,7 +892,10 @@ defmodule Kernel do
       -2
 
   """
-  @spec (-number) :: number
+  @spec (-0) :: 0
+  @spec (-pos_integer) :: neg_integer
+  @spec (-neg_integer) :: pos_integer
+  @spec (-float) :: float
   def (-value) do
     :erlang.-(value)
   end
@@ -897,7 +911,10 @@ defmodule Kernel do
       2
 
   """
-  @spec (number * number) :: number
+  @spec (integer * integer) :: integer
+  @spec (float * float) :: float
+  @spec (integer * float) :: float
+  @spec (float * integer) :: float
   def left * right do
     :erlang.*(left, right)
   end
@@ -1000,7 +1017,8 @@ defmodule Kernel do
       true
 
   """
-  @spec not(boolean) :: boolean
+  @spec not(true) :: false
+  @spec not(false) :: true
   def not(arg) do
     :erlang.not(arg)
   end
@@ -1488,6 +1506,308 @@ defmodule Kernel do
     quote do
       :erlang.raise :error, unquote(exception).exception(unquote(attrs)), unquote(stacktrace)
     end
+  end
+
+  @doc """
+  Matches the term on the left against the regular expression or string on the
+  right.
+
+  Returns `true` if `left` matches `right` (if it's a regular expression)
+  or contains `right` (if it's a string).
+
+  ## Examples
+
+      iex> "abcd" =~ ~r/c(d)/
+      true
+
+      iex> "abcd" =~ ~r/e/
+      false
+
+      iex> "abcd" =~ "bc"
+      true
+
+      iex> "abcd" =~ "ad"
+      false
+
+      iex> "abcd" =~ ""
+      true
+
+  """
+  @spec (String.t =~ (String.t | Regex.t)) :: boolean
+  def left =~ "" when is_binary(left), do: true
+
+  def left =~ right when is_binary(left) and is_binary(right) do
+    :binary.match(left, right) != :nomatch
+  end
+
+  def left =~ right when is_binary(left) do
+    Regex.match?(right, left)
+  end
+
+  @doc ~S"""
+  Inspects the given argument according to the `Inspect` protocol.
+  The second argument is a keyword list with options to control
+  inspection.
+
+  ## Options
+
+  `inspect/2` accepts a list of options that are internally
+  translated to an `Inspect.Opts` struct. Check the docs for
+  `Inspect.Opts` to see the supported options.
+
+  ## Examples
+
+      iex> inspect(:foo)
+      ":foo"
+
+      iex> inspect [1, 2, 3, 4, 5], limit: 3
+      "[1, 2, 3, ...]"
+
+      iex> inspect [1, 2, 3], pretty: true, width: 0
+      "[1,\n 2,\n 3]"
+
+      iex> inspect("olá" <> <<0>>)
+      "<<111, 108, 195, 161, 0>>"
+
+      iex> inspect("olá" <> <<0>>, binaries: :as_strings)
+      "\"olá\\0\""
+
+      iex> inspect("olá", binaries: :as_binaries)
+      "<<111, 108, 195, 161>>"
+
+      iex> inspect('bar')
+      "'bar'"
+
+      iex> inspect([0 | 'bar'])
+      "[0, 98, 97, 114]"
+
+      iex> inspect(100, base: :octal)
+      "0o144"
+
+      iex> inspect(100, base: :hex)
+      "0x64"
+
+  Note that the `Inspect` protocol does not necessarily return a valid
+  representation of an Elixir term. In such cases, the inspected result
+  must start with `#`. For example, inspecting a function will return:
+
+      inspect fn a, b -> a + b end
+      #=> #Function<...>
+
+  """
+  @spec inspect(Inspect.t, Keyword.t) :: String.t
+  def inspect(arg, opts \\ []) when is_list(opts) do
+    opts  = struct(Inspect.Opts, opts)
+    limit = case opts.pretty do
+      true  -> opts.width
+      false -> :infinity
+    end
+    IO.iodata_to_binary(
+      Inspect.Algebra.format(Inspect.Algebra.to_doc(arg, opts), limit)
+    )
+  end
+
+  @doc """
+  Creates and updates structs.
+
+  The `struct` argument may be an atom (which defines `defstruct`)
+  or a `struct` itself. The second argument is any `Enumerable` that
+  emits two-element tuples (key-value pairs) during enumeration.
+
+  Keys in the `Enumerable` that don't exist in the struct are automatically
+  discarded. Note that keys must be atoms, as only atoms are allowed when
+  defining a struct.
+
+  This function is useful for dynamically creating and updating structs, as
+  well as for converting maps to structs; in the latter case, just inserting
+  the appropriate `:__struct__` field into the map may not be enough and
+  `struct/2` should be used instead.
+
+  ## Examples
+
+      defmodule User do
+        defstruct name: "john"
+      end
+
+      struct(User)
+      #=> %User{name: "john"}
+
+      opts = [name: "meg"]
+      user = struct(User, opts)
+      #=> %User{name: "meg"}
+
+      struct(user, unknown: "value")
+      #=> %User{name: "meg"}
+
+      struct(User, %{name: "meg"})
+      #=> %User{name: "meg"}
+
+      # String keys are ignored
+      struct(User, %{"name" => "meg"})
+      #=> %User{name: "john"}
+
+  """
+  @spec struct(module | struct, Enum.t) :: struct
+  def struct(struct, kv \\ []) do
+    struct(struct, kv, fn({key, val}, acc) ->
+      case :maps.is_key(key, acc) and key != :__struct__ do
+        true  -> :maps.put(key, val, acc)
+        false -> acc
+      end
+    end)
+  end
+
+  @doc """
+  Similar to `struct/2` but checks for key validity.
+
+  The function `struct!/2` emulates the compile time behaviour
+  of structs. This means that:
+
+    * when building a struct, as in `struct!(SomeStruct, key: :value)`,
+      it is equivalent to `%SomeStruct{key: :value}` and therefore this
+      function will check if every given key-value belongs to the struct.
+      If the struct is enforcing any key via `@enforce_keys`, those will
+      be enforced as well;
+
+    * when updating a struct, as in `struct!(%SomeStruct{}, key: :value)`,
+      it is equivalent to `%SomeStruct{struct | key: :value}` and therefore this
+      function will check if every given key-value belongs to the struct.
+      However, updating structs does not enforce keys, as keys are enforced
+      only when building;
+
+  """
+  @spec struct!(module | struct, Enum.t) :: struct | no_return
+  def struct!(struct, kv \\ [])
+
+  def struct!(struct, kv) when is_atom(struct) do
+    struct.__struct__(kv)
+  end
+
+  def struct!(struct, kv) when is_map(struct) do
+    struct(struct, kv, fn
+      {:__struct__, _}, acc -> acc
+      {key, val}, acc ->
+        :maps.update(key, val, acc)
+    end)
+  end
+
+  defp struct(struct, [], _fun) when is_atom(struct) do
+    struct.__struct__()
+  end
+
+  defp struct(struct, kv, fun) when is_atom(struct) do
+    struct(struct.__struct__(), kv, fun)
+  end
+
+  defp struct(%{__struct__: _} = struct, [], _fun) do
+    struct
+  end
+
+  defp struct(%{__struct__: _} = struct, kv, fun) do
+    Enum.reduce(kv, struct, fun)
+  end
+
+  @doc """
+  Gets a value from a nested structure.
+
+  Uses the `Access` module to traverse the structures
+  according to the given `keys`, unless the `key` is a
+  function.
+
+  If a key is a function, the function will be invoked
+  passing three arguments, the operation (`:get`), the
+  data to be accessed, and a function to be invoked next.
+
+  This means `get_in/2` can be extended to provide
+  custom lookups. The downside is that functions cannot be
+  stored as keys in the accessed data structures.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> get_in(users, ["john", :age])
+      27
+
+  In case any of entries in the middle returns `nil`, `nil` will be returned
+  as per the Access module:
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> get_in(users, ["unknown", :age])
+      nil
+
+  When one of the keys is a function, the function is invoked.
+  In the example below, we use a function to get all the maps
+  inside a list:
+
+      iex> users = [%{name: "john", age: 27}, %{name: "meg", age: 23}]
+      iex> all = fn :get, data, next -> Enum.map(data, next) end
+      iex> get_in(users, [all, :age])
+      [27, 23]
+
+  If the previous value before invoking the function is `nil`,
+  the function *will* receive nil as a value and must handle it
+  accordingly.
+  """
+  @spec get_in(Access.t, nonempty_list(term)) :: term
+  def get_in(data, keys)
+
+  def get_in(data, [h]) when is_function(h),
+    do: h.(:get, data, &(&1))
+  def get_in(data, [h | t]) when is_function(h),
+    do: h.(:get, data, &get_in(&1, t))
+
+  def get_in(nil, [_]),
+    do: nil
+  def get_in(nil, [_ | t]),
+    do: get_in(nil, t)
+
+  def get_in(data, [h]),
+    do: Access.get(data, h)
+  def get_in(data, [h | t]),
+    do: get_in(Access.get(data, h), t)
+
+  @doc """
+  Puts a value in a nested structure.
+
+  Uses the `Access` module to traverse the structures
+  according to the given `keys`, unless the `key` is a
+  function. If the key is a function, it will be invoked
+  as specified in `get_and_update_in/3`.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> put_in(users, ["john", :age], 28)
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+  In case any of entries in the middle returns `nil`,
+  an error will be raised when trying to access it next.
+  """
+  @spec put_in(Access.t, nonempty_list(term), term) :: Access.t
+  def put_in(data, keys, value) do
+    elem(get_and_update_in(data, keys, fn _ -> {nil, value} end), 1)
+  end
+
+  @doc """
+  Updates a key in a nested structure.
+
+  Uses the `Access` module to traverse the structures
+  according to the given `keys`, unless the `key` is a
+  function. If the key is a function, it will be invoked
+  as specified in `get_and_update_in/3`.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> update_in(users, ["john", :age], &(&1 + 1))
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+  In case any of entries in the middle returns `nil`,
+  an error will be raised when trying to access it next.
+  """
+  @spec update_in(Access.t, nonempty_list(term), (term -> term)) :: Access.t
+  def update_in(data, keys, fun) when is_function(fun, 1) do
+    elem(get_and_update_in(data, keys, fn x -> {nil, fun.(x)} end), 1)
   end
 
   # Shared functions
