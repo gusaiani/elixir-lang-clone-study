@@ -1810,6 +1810,50 @@ defmodule Kernel do
     elem(get_and_update_in(data, keys, fn x -> {nil, fun.(x)} end), 1)
   end
 
+  @doc """
+  Gets a value and updates a nested structure.
+
+  It expects a tuple to be returned, containing the value
+  retrieved and the updated one. The `fun` may also
+  return `:pop`, implying the current value shall be removed
+  from the structure and returned.
+
+  It uses the `Access` module to traverse the structures
+  according to the given `keys`, unless the `key` is a
+  function.
+
+  If a key is a function, the function will be invoked
+  passing three arguments, the operation (`:get_and_update`),
+  the data to be accessed, and a function to be invoked next.
+
+  This means `get_and_update_in/3` can be extended to provide
+  custom lookups. The downside is that functions cannot be stored
+  as keys in the accessed data structures.
+
+  ## Examples
+
+  This function is useful when there is a need to retrieve the current
+  value (or something calculated in function of the current value) and
+  update it at the same time. For example, it could be used to increase
+  the age of a user by one and return the previous age in one pass:
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> get_and_update_in(users, ["john", :age], &1{&1, &1 + 1})
+      iex> {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+
+  When one of the keys is a function, the function is invoked.
+  In the example below, we use a function to get and increment all
+  ages inside a list:
+
+      iex> users = [%{name: "john", age: 27}, %{name: "meg", age: 23}]
+      iex> all = fn :get_and_update, data, next ->
+      ...>  Enum.map(data, next) |> :lists.unzip
+      ...> end
+      iex> get_and_update_in(users, [all, :age], &{&1, &1 + 1})
+      {[27, 23], [%{name: "john", age: 28}, %{name: "meg", age: 24}]}
+
+  """
+
   # Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
