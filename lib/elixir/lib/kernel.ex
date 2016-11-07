@@ -253,7 +253,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns the head of a list; raises `ArgumentError` if the list is empty.
+  Returns the head of a list. Raises `ArgumentError` if the list is empty.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -597,10 +597,15 @@ defmodule Kernel do
 
       iex> round(5.6)
       6
+
       iex> round(5.2)
       5
+
       iex> round(-9.9)
       -10
+
+      iex> round(-9)
+      -9
 
   """
   @spec round(float) :: integer
@@ -763,7 +768,9 @@ defmodule Kernel do
   end
 
   @doc """
-  A non-local return from a function. Check `Kernel.SpecialForms.try/1` for more information.
+  A non-local return from a function.
+
+  Check `Kernel.SpecialForms.try/1` for more information.
 
   Inlined by the compiler.
   """
@@ -799,8 +806,11 @@ defmodule Kernel do
       iex> trunc(5.4)
       5
 
-      iex> trunc(5.99)
-      5
+      iex> trunc(-5.99)
+      -5
+
+      iex> trunc(-5)
+      -5
 
   """
   @spec trunc(value) :: value when value: integer
@@ -932,8 +942,11 @@ defmodule Kernel do
       iex> 1 / 2
       0.5
 
-      iex> 2 / 1
-      2.0
+      iex> -3.0 / 2.0
+      -1.5
+
+      iex> 5 / 1
+      5.0
 
   """
   @spec (number / number) :: float
@@ -1814,7 +1827,7 @@ defmodule Kernel do
   Gets a value and updates a nested structure.
 
   It expects a tuple to be returned, containing the value
-  retrieved and the updated one. The `fun` may also
+  retrieved and the update one. The `fun` may also
   return `:pop`, implying the current value shall be removed
   from the structure and returned.
 
@@ -1838,8 +1851,8 @@ defmodule Kernel do
   the age of a user by one and return the previous age in one pass:
 
       iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
-      iex> get_and_update_in(users, ["john", :age], &1{&1, &1 + 1})
-      iex> {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+      iex> get_and_update_in(users, ["john", :age], &{&1, &1 + 1})
+      {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
 
   When one of the keys is a function, the function is invoked.
   In the example below, we use a function to get and increment all
@@ -1847,12 +1860,141 @@ defmodule Kernel do
 
       iex> users = [%{name: "john", age: 27}, %{name: "meg", age: 23}]
       iex> all = fn :get_and_update, data, next ->
-      ...>  Enum.map(data, next) |> :lists.unzip
+      ...>   Enum.map(data, next) |> :lists.unzip
       ...> end
       iex> get_and_update_in(users, [all, :age], &{&1, &1 + 1})
       {[27, 23], [%{name: "john", age: 28}, %{name: "meg", age: 24}]}
 
+  If the previous value before invoking the function is `nil`,
+  the function *will* receive `nil` as a value and must handle it
+  accordingly (be it by failing or providing a sane default).
+
+  The `Access` module ships with many convenience accessor functions,
+  like the `all` anonymous function defined above. See `Access.all/0`,
+  `Access.key/2` and others as examples.
   """
+  @spec get_and_update_in(Access.t, nonempty_list(term), (term -> {get, term} | :pop)) ::
+                          {get, Access.t} when get: var
+  def get_and_update_in(data, keys, fun)
+
+  def get_and_update_in(data, [h], fun) when is_function(h),
+    do: h.(:get_and_update, data, fun)
+  def get_and_update_in(data, [h | t], fun) when is_function(h),
+    do: h.(:get_and_update, data, &get_and_update_in(&1, t, fun))
+
+  def get_and_update_in(data, [h], fun),
+    do: Access.get_and_update(data, h, fun)
+  def get_and_update_in(data, [h | t], fun),
+    do: Access.get_and_update(data, h, &get_and_update_in(&1, t, fun))
+
+  @doc """
+  Pops a key from the given nested structure.
+
+  Uses the `Access` protocol to traverse the structures
+  according to the given `keys`, unless the `key` is a
+  function. If the key is a function, it will be invoked
+  as specified in `get_and_update_in/3`.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> pop_in(users, ["john", :age])
+      {27, %{"john" => %{}, "meg" => %{age: 23}}}
+
+  In case any entry returns `nil`, its key will be removed
+  and the deletion will be considered a success.
+  """
+  @spec pop_in(Access.t, nonempty_list(term)) :: {term, Access.t}
+  def pop_in(data, keys)
+  def pop_in(nil, [h | _]), do: Access.pop(nil, h)
+  def pop_in(data, keys), do: do_pop_in(data, keys)
+
+  defp do_pop_in(nil, [_ | _]),
+    do: :pop
+  defp do_pop_in(data, [h]) when is_function(h),
+    do: h.(:get_and_update, data, fn _ -> :pop end)
+  defp do_pop_in(data, [h | t]) when is_function(h),
+    do: h.(:get_and_update, data, &do_pop_in(&1, t))
+  defp do_pop_in(data, [h]),
+    do: Access.pop(data, h)
+  defp do_pop_in(data, [h | t]),
+    do: Access.get_and_update(data, h, &do_pop_in(&1, t))
+
+  @doc """
+  Puts a value in a nested structure via the given `path`.
+
+  This is similar to `put_in/3`, except the path is extracted via
+  a macro rather than passing a list. For example:
+
+      put_in(opts[:foo][:bar], :baz)
+
+  Is equivalent to:
+
+      put_in(opts, [:foo, :bar], :baz)
+
+  Note that in order for this macro to work, the complete path must always
+  be visible by this macro. For more information about the supported path
+  expressions, please check `get_and_update_in/2` docs.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> put_in(users["john"][:age], 28)
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> put_in(users["john"].age, 28)
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+  """
+  defmacro put_in(path, value) do
+    case unnest(path, [], true, "put_in/2") do
+      {[h | t], true} ->
+        nest_update_in(h, t, quote(do: fn _ -> unquote(value) end))
+      {[h | t], false} ->
+        expr = nest_get_and_update_in(h, t, quote(do: fn _ -> {nil, unquote(value)} end))
+        quote do: :erlang.element(2, unquote(expr))
+    end
+  end
+
+
+
+  defp unnest({{:., _, [Access, :get]}, _, [expr, key]}, acc, _all_map?, kind) do
+    unnest(expr, [{:access, key} | acc], false, kind)
+  end
+
+  defp unnest({{:., _, [expr, key]}, _, []}, acc, all_map?, kind)
+      when is_tuple(expr) and
+           :erlang.element(1, expr) != :__aliases__ and
+           :erlang.element(1, expr) != :__MODULE__ do
+    unnest(expr, [{:map, key} | acc], all_map?, kind)
+  end
+
+  defp unnest(other, [], _all_map?, kind) do
+    raise ArgumentError,
+      "expected expression given to #{kind} to access at least one element, got: #{Macro.to_string other}"
+  end
+
+  defp unnest(other, acc, all_map?, kind) do
+    case proper_start?(other) do
+      true -> {[other | acc], all_map?}
+      false ->
+        raise ArgumentError,
+          "expression given to #{kind} must start with a variable, local or remote call " <>
+          "and be followed by an element access, got: #{Macro.to_string other}"
+    end
+  end
+
+  defp proper_start?({{:., _, [expr, _]}, _, _args})
+    when is_atom(expr)
+    when :erlang.element(1, expr) == :__aliases__
+    when :erlang.element(1, expr) == :__MODULE__, do: true
+
+  defp proper_start?({atom, _, _args})
+    when is_atom(atom), do: true
+
+  defp proper_start?(other),
+    do: not is_tuple(other)
 
   # Shared functions
 
