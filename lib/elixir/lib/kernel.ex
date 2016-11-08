@@ -1957,7 +1957,201 @@ defmodule Kernel do
     end
   end
 
+  @doc """
+  Pops a key from the nested structure via the given `path`.
 
+  This is similar to `pop_in/2`, except the path is extracted via
+  a macro rather than passing a list. For example:
+
+      pop_in(opts[:foo][:bar])
+
+  Is equivalent to:
+
+      pop_in(opts, [:foo, :bar])
+
+  Note that in order for this macro to work, the complete path must always
+  be visible by this macro. For more information about the supported path
+  expressions, please check `get_and_update_in/2` docs.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> pop_in(users["john"][:age])
+      {27, %{"john" => %{}, "meg" => %{age: 23}}}
+
+      iex> users = %{john: %{age: 27}, meg: %{age: 23}}
+      iex> pop_in(users.john[:age])
+      {27, %{john: %{}, meg: %{age: 23}}}
+
+  In case any entry returns `nil`, its key will be removed
+  and the deletion will be considered a success.
+  """
+  defmacro pop_in(path) do
+    {[h | t], _} = unnest(path, [], true, "pop_in/1")
+    nest_pop_in(:map, h, t)
+  end
+
+  @doc """
+  Updates a nested structure via the given `path`.
+
+  This is similar to `update_in/3`, except the path is extracted via
+  a macro rather than passing a list. For example:
+
+      update_in(opts[:foo][:bar], &(&1 + 1))
+
+  Is equivalent to:
+
+      update_in(opts, [:foo, :bar], &(&1 + 1))
+
+  Note that in order for this macro to work, the complete path must always
+  be visible by this macro. For more information about the supported path
+  expressions, please check `get_and_update_in/2` docs.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> update_in(users["john"][:age], &(&1 + 1))
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> update_in(users["john"].age, &(&1 + 1))
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+  """
+  defmacro update_in(path, fun) do
+    case unnest(path, [], true, "update_in/2") do
+      {[h | t], true} ->
+        nest_update_in(h, t, fun)
+      {[h | t], false} ->
+        expr = nest_get_and_update_in(h, t, quote(do: fn x -> {nil, unquote(fun).(x)} end))
+        quote do: :erlang.element(2, unquote(expr))
+    end
+  end
+
+  @doc """
+  Gets a value and updates a nested data structure via the given `path`.
+
+  This is similar to `get_and_update_in/3`, except the path is extracted
+  via a macro rather than passing a list. For example:
+
+      get_and_update_in(opts[:foo][:bar], &{&1, &1 + 1})
+
+  Is equivalent to:
+
+      get_and_update_in(opts, [:foo, :bar], &{&1, &1 + 1})
+
+  Note that in order for this macro to work, the complete path must always
+  be visible by this macro. See the Paths section below.
+
+  ## Examples
+
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> get_and_update_in(users["john"].age, &{&1, &1 + 1})
+      {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+
+  ## Paths
+
+  A path may start with a variable, local or remote call, and must be
+  followed by one or more:
+
+    * `foo[bar]` - accesses the key `bar` in `foo`; in case `foo` is nil,
+      `nil` is returned
+
+    * `foo.bar` - accesses a map/struct field; in case the field is not
+      present, an error is raised
+
+  Here are some valid paths:
+
+      users["john"][:age]
+      users["john"].age
+      User.all["john"].age
+      all_users()["john"].age
+
+  Here are some invalid ones:
+
+      # Does a remote call after the initial value
+      users["john"].do_something(arg1, arg2)
+
+      # Does not access any key or field
+      users
+
+  """
+  defmacro get_and_update_in(path, fun) do
+    {[h | t], _} = unnest(path, [], true, "get_and_update_in/2")
+    nest_get_and_update_in(h, t, fun)
+  end
+
+  defp nest_update_in([], fun),  do: fun
+  defp nest_update_in(list, fun) do
+    quote do
+      fn x -> unquote(nest_update_in(quote(do: x), list, fun)) end
+    end
+  end
+  defp nest_update_in(h, [{:map, key} | t], fun) do
+    quote do
+      Map.update!(unquote(h), unquote(key), unquote(nest_update_in(t, fun)))
+    end
+  end
+
+  defp nest_get_and_update_in([], fun),  do: fun
+  defp nest_get_and_update_in(list, fun) do
+    quote do
+      fn x -> unquote(nest_get_and_update_in(quote(do: x), list, fun)) end
+    end
+  end
+  defp nest_get_and_update_in(h, [{:access, key} | t], fun) do
+    quote do
+      Access.get_and_update(
+        unquote(h),
+        unquote(key),
+        unquote(nest_get_and_update_in(t, fun))
+      )
+    end
+  end
+  defp nest_get_and_update_in(h, [{:map, key} | t], fun) do
+    quote do
+      Map.get_and_update!(unquote(h), unquote(key), unquote(nest_get_and_update_in(t, fun)))
+    end
+  end
+
+  defp nest_pop_in(kind, list) do
+    quote do
+      fn x -> unquote(nest_pop_in(kind, quote(do: x), list)) end
+    end
+  end
+
+  defp nest_pop_in(:map, h, [{:access, key}]) do
+    quote do
+      case unquote(h) do
+        nil -> {nil, nil}
+        h   -> Access.pop(h, unquote(key))
+      end
+    end
+  end
+
+  defp nest_pop_in(_, _, [{:map, key}]) do
+    raise ArgumentError, "cannot use pop_in when the last segment is a map/struct field. " <>
+                         "This would effectively remove the field #{inspect key} from the map/struct"
+  end
+  defp nest_pop_in(_, h, [{:map, key} | t]) do
+    quote do
+      Map.get_and_update!(unquote(h), unquote(key), unquote(nest_pop_in(:map, t)))
+    end
+  end
+
+  defp nest_pop_in(_, h, [{:access, key}]) do
+    quote do
+      case unquote(h) do
+        nil -> :pop
+        h   -> Access.pop(h, unquote(key))
+      end
+    end
+  end
+  defp nest_pop_in(_, h, [{:access, key} | t]) do
+    quote do
+      Access.get_and_update(unquote(h), unquote(key), unquote(nest_pop_in(:access, t)))
+    end
+  end
 
   defp unnest({{:., _, [Access, :get]}, _, [expr, key]}, acc, _all_map?, kind) do
     unnest(expr, [{:access, key} | acc], false, kind)
@@ -1996,9 +2190,401 @@ defmodule Kernel do
   defp proper_start?(other),
     do: not is_tuple(other)
 
-  # Shared functions
+  @doc """
+  Converts the argument to a string according to the
+  `String.Chars` protocol.
+
+  This is the function invoked when there is string interpolation.
+
+  ## Examples
+
+      iex> to_string(:foo)
+      "foo"
+
+  """
+  defmacro to_string(arg) do
+    quote do: String.Chars.to_string(unquote(arg))
+  end
+
+  @doc """
+  Converts the argument to a charlist according to the `List.Chars` protocol.
+
+  ## Examples
+
+      iex> to_charlist(:foo)
+      'foo'
+
+  """
+  defmacro to_charlist(arg) do
+    quote do: List.Chars.to_charlist(unquote(arg))
+  end
+
+  @doc """
+  Returns `true` if `term` is `nil`, `false` otherwise.
+
+  Allowed in guard clauses.
+
+  ## Examples
+
+      iex> is_nil(1)
+      false
+
+      iex> is_nil(nil)
+      true
+
+  """
+  defmacro is_nil(term) do
+    quote do: unquote(term) == nil
+  end
+
+  @doc """
+  A convenience macro that checks if the right side (an expression) matches the
+  left side (a pattern).
+
+  ## Examples
+
+      iex> match?(1, 1)
+      true
+
+      iex> match?(1, 2)
+      false
+
+      iex> match?({1, _}, {1, 2})
+      true
+
+      iex> map = %{a: 1, b: 2}
+      iex> match?(%{a: _}, map)
+      true
+
+      iex> a = 1
+      iex> match?(^a, 1)
+      true
+
+  `match?/2` is very useful when filtering of finding a value in an enumerable:
+
+      list = [{:a, 1}, {:b, 2}, {:a, 3}]
+      Enum.filter list, &match?({:a, _}, &1)
+      #=> [{:a, 1}, {:a, 3}]
+
+  Guard clauses can also be given to the match:
+
+      list = [{:a, 1}, {:b, 2}, {:a, 3}]
+      Enum.filter list, &match?({:a, x} when x < 2, &1)
+      #=> [{:a, 1}]
+
+  However, variables assigned in the match will not be available
+  outside of the function call (unlike regular pattern matching with the `=`
+  operator):
+
+      iex> match?(_x, 1)
+      true
+      iex> binding()
+      []
+
+  """
+  defmacro match?(pattern, expr) do
+    quote do
+      case unquote(expr) do
+        unquote(pattern) ->
+          true
+        _ ->
+          false
+      end
+    end
+  end
+
+  @doc """
+  Reads and writes attributes of the current module.
+
+  The canonical example for attributes is annotating that a module
+  implements the OTP behaviour called `gen_server`:
+
+      defmodule MyServer do
+        @behaviour :gen_server
+        # ... callbacks ...
+      end
+
+  By default Elixir supports all the module attributes supported by Erlang, but
+  custom attributes can be used as well:
+
+      defmodule MyServer do
+        @my_data 13
+        IO.inspect @my_data #=> 13
+      end
+
+  Unlike Erlang, such attributes are not stored in the module by default since
+  it is common in Elixir to use custom attributes to store temporary data that
+  will be available at compile-time. Custom attributes may be configured to
+  behave closer to Erlang by using `Module.register_attribute/3`.
+
+  Finally, notice that attributes can also be read inside functions:
+
+      defmodule MyServer do
+        @my_data 11
+        def first_data, do: @my_data
+        @my_data 13
+        def second_data, do: @my_data
+      end
+
+      MyServer.first_data #=> 11
+      MyServer.second_data #=> 13
+
+  It is important to note that reading an attribute takes a snapshot of
+  its current value. In other words, the value is read at compilation
+  time and not at runtime. Check the `Module` module for other functions
+  to manipulate module attributes.
+  """
+  defmacro @(expr)
+
+  defmacro @({name, _, args}) do
+    # Check for Module as it is compiled later than Kernel
+    case bootstrapped?(Module) do
+      false -> nil
+      true  ->
+        assert_module_scope(__CALLER__, :@, 1)
+        function? = __CALLER__.function != nil
+
+        case not function? and __CALLER__.context == :match do
+          false -> nil
+          true  ->
+            raise ArgumentError, "invalid write attribute syntax, you probably meant to use: @#{name} expression"
+        end
+
+        # Typespecs attributes are special cased by the compiler so far
+        case is_list(args) and length(args) == 1 and typespec(name) do
+          false ->
+            do_at(args, name, function?, __CALLER__)
+          macro ->
+            case bootstrapped?(Kernel.Typespec) do
+              false -> nil
+              true  -> quote do: Kernel.Typespec.unquote(macro)(unquote(hd(args)))
+            end
+        end
+    end
+  end
+
+  # @attribute(value)
+  defp do_at([arg], name, function?, env) do
+    case function? do
+      true ->
+        raise ArgumentError, "cannot set attribute @#{name} inside function/macro"
+      false ->
+        cond do
+          name == :behavior ->
+            :elixir_errors.warn env.line, env.file,
+                                "@behavior attribute is not supported, please use @behaviour instead"
+          :lists.member(name, [:moduledoc, :typedoc, :doc]) ->
+            {stack, _} = :elixir_quote.escape(env_stacktrace(env), false)
+            arg = {env.line, arg}
+            quote do: Module.put_attribute(__MODULE__, unquote(name), unquote(arg), unquote(stack))
+          true ->
+            quote do: Module.put_attribute(__MODULE__, unquote(name), unquote(arg))
+        end
+    end
+  end
+
+  # @attribute or @attribute()
+  defp do_at(args, name, function?, env) when is_atom(args) or args == [] do
+    stack = env_stacktrace(env)
+
+    doc_attr? = :lists.member(name, [:moduledoc, :typedoc, :doc])
+    case function? do
+      true ->
+        value =
+          with {_, doc} when doc_attr? <- Module.get_attribute(env.module, name, stack),
+            do: doc
+        try do
+          :elixir_quote.escape(value, false)
+        rescue
+          ex in [ArgumentError] ->
+            raise ArgumentError, "cannot inject attribute @#{name} into function/macro because " <> Exception.message(ex)
+        else
+          {val, _} -> val
+        end
+      false ->
+        {escaped, _} = :elixir_quote.escape(stack, false)
+        quote do
+          with {_, doc} when unquote(doc_attr?) <- Module.get_attribute(__MODULE__, unquote(name), unquote(escaped)),
+            do: doc
+        end
+    end
+  end
+
+  # All other cases
+  defp do_at(args, name, _function?, _env) do
+    raise ArgumentError, "expected 0 or 1 argument for @#{name}, got: #{length(args)}"
+  end
+
+  defp typespec(:type),               do: :deftype
+  defp typespec(:typep),              do: :deftypep
+  defp typespec(:opaque),             do: :defopaque
+  defp typespec(:spec),               do: :defspec
+  defp typespec(:callback),           do: :defcallback
+  defp typespec(:macrocallback),      do: :defmacrocallback
+  defp typespec(:optional_callbacks), do: :defoptional_callbacks
+  defp typespec(_),                   do: false
+
+  @doc """
+  Returns the binding for the given context as a keyword list.
+
+  In the returned result, keys are variable names and values are the
+  corresponding variable values.
+
+  If the given `context` is `nil` (by default it is), the binding for the
+  current context is returned.
+
+  ## Examples
+
+      iex> x = 1
+      iex> binding()
+      [x: 1]
+      iex> x = 2
+      iex> binding()
+      [x: 2]
+
+      iex> binding(:foo)
+      []
+      iex> var!(x, :foo) = 1
+      1
+      iex> binding(:foo)
+      [x: 1]
+
+  """
+  defmacro binding(context \\ nil) do
+    in_match? = Macro.Env.in_match?(__CALLER__)
+    for {v, c} <- __CALLER__.vars, c == context do
+      {v, wrap_binding(in_match?, {v, [generated: true], c})}
+    end
+  end
+
+  defp wrap_binding(true, var) do
+    quote do: ^(unquote(var))
+  end
+
+  defp wrap_binding(_, var) do
+    var
+  end
+
+  @doc """
+  Provides an `if/2` macro.
+
+  This macro expects the first argument to be a condition and the second
+  argument to be a keyword list.
+
+  ## One-liner examples
+
+      if(foo, do: bar)
+
+  In the example above, `bar` will be returned if `foo` evaluates to
+  `true` (i.e., it is neither `false` nor `nil`). Otherwise, `nil` will be
+  returned.
+
+  An `else` option can be given to specify the opposite:
+
+      if(foo, do: bar, else: baz)
+
+  ## Blocks examples
+
+  It's also possible to pass a block to the `if/2` macro. The first
+  example above would be translated to:
+
+      if foo do
+        bar
+      end
+
+  Note that `do/end` become delimiters. The second example would
+  translate to:
+
+      if foo do
+        bar
+      else
+        baz
+      end
+
+  In order to compare more than two clauses, the `cond/1` macro has to be used.
+  """
+  defmacro if(condition, clauses) do
+    build_if(condition, clauses)
+  end
+
+  defp build_if(condition, do: do_clause) do
+    build_if(condition, do: do_clause, else: nil)
+  end
+
+  defp build_if(condition, do: do_clause, else: else_clause) do
+    optimize_boolean(quote do
+      case unquote(condition) do
+        x when x in [false, nil] -> unquote(else_clause)
+        _ -> unquote(do_clause)
+      end
+    end)
+  end
+
+  defp build_if(_condition, _arguments) do
+    raise(ArgumentError, "invalid or duplicate keys for if, only \"do\" " <>
+      "and an optional \"else\" are permitted")
+  end
+
+  @doc """
+  Provides an `unless` macro.
+
+  This macro evaluates and returns the `do` block passed in as the second
+  argument unless `clause` evaluates to `true`. Otherwise, it returns the value
+  of the `else` block if present or `nil` if not.
+
+  See also `if/2`.
+
+  ## Examples
+
+      iex> unless(Enum.empty?([]), do: "Hello")
+      nil
+
+      iex> unless(Enum.empty?([1, 2, 3]), do: "Hello")
+      "Hello"
+
+      iex> unless Enum.sum([2, 2]) == 5 do
+      ...>   "Math still works"
+      ...> else
+      ...>   "Math is broken"
+      ...> end
+      "Math still works"
+
+  """
+  defmacro unless(condition, clauses) do
+    build_unless(condition, clauses)
+  end
+
+  defp build_unless(condition, do: do_clause) do
+    build_unless(condition, do: do_clause, else: nil)
+  end
+
+  defp build_unless(condition, do: do_clause, else: else_clause) do
+    quote do
+      if(unquote(condition), do: unquote(else_clause), else: unquote(do_clause))
+    end
+  end
+
+  defp build_unless(_condition, _arguments) do
+    raise(ArgumentError, "invalid or duplicate keys for unless, only \"do\" " <>
+      "and an optional \"else\" are permitted")
+  end
+
+  ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
     {:case, [{:optimize_boolean, true} | meta], args}
+  end
+
+  defp env_stacktrace(env) do
+    case bootstrapped?(Path) do
+      true  -> Macro.Env.stacktrace(env)
+      false -> []
+    end
+  end
+
+  # TODO: Deprecate by v1.5
+  @doc false
+  defmacro to_char_list(arg) do
+    quote do: Kernel.to_charlist(unquote(arg))
   end
 end
