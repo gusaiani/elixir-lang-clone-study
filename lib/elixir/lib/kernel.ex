@@ -2608,6 +2608,121 @@ defmodule Kernel do
     end
   end
 
+  @doc """
+  Returns a range with the specified start and end.
+
+  Both ends are included.
+
+  ## Examples
+
+      iex> 0 in 1..3
+      false
+
+      iex> 1 in 1..3
+      true
+
+      iex> 2 in 1..3
+      true
+
+      iex> 3 in 1..3
+      true
+
+  """
+  defmacro first..last when is_integer(first) and is_integer(last) do
+    {:%{}, [], [__struct__: Elixir.Range, first: first, last: last]}
+  end
+
+  defmacro first..last
+    when is_float(first) or is_float(last) or
+         is_atom(first) or is_atom(last) or
+         is_binary(first) or is_binary(last) or
+         is_list(first) or is_list(last) do
+    raise ArgumentError,
+      "ranges (first..last) expect both sides to be integers, " <>
+      "got: #{Macro.to_string({:.., [], [first, last]})}"
+  end
+
+  defmacro first..last do
+    case __CALLER__.context do
+      nil ->
+        quote do: Elixir.Range.new(unquote(first), unquote(last))
+      _ ->
+        {:%{}, [], [__struct__: Elixir.Range, first: first, last: last]}
+    end
+  end
+
+
+  @doc """
+  Provides a short-circuit operator that evaluates and returns
+  the second expression only if the first one evaluates to `true`
+  (i.e., it is neither `nil` nor `false`). Returns the first expression
+  otherwise.
+
+  Not allowed in guard clauses.
+
+  ## Examples
+
+      iex> Enum.empty?([]) && Enum.empty?([])
+      true
+
+      iex> List.first([]) && true
+      nil
+
+      iex> Enum.empty?([]) && List.first([1])
+      1
+
+      iex> false && throw(:bad)
+      false
+
+  Note that, unlike `and/2`, this operator accepts any expression
+  as the first argument, not only booleans.
+  """
+  defmacro left && right do
+    quote do
+      case unquote(left) do
+        x when x in [false, nil] ->
+          x
+        _ ->
+          unquote(right)
+      end
+    end
+  end
+
+  @doc """
+  Provides a short-circuit operator that evaluates and returns the second
+  expression only if the first one does not evaluate to `true` (i.e., it
+  is either `nil` or `false`). Returns the first expression otherwise.
+
+  Not allowed in guard clauses.
+
+  ## Examples
+
+      iex> Enum.empty?([1]) || Enum.empty?([1])
+      false
+
+      iex> List.first([]) || true
+      true
+
+      iex> Enum.empty?([1]) || 1
+      1
+
+      iex> Enum.empty?([]) || throw(:bad)
+      true
+
+  Note that, unlike `or/2`, this operator accepts any expression
+  as the first argument, not only booleans.
+  """
+  defmacro left || right do
+    quote do
+      case unquote(left) do
+        x when x in [false, nil] ->
+          unquote(right)
+        x ->
+          x
+      end
+    end
+  end
+
   ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
