@@ -2569,6 +2569,45 @@ defmodule Kernel do
       "and an optional \"else\" are permitted")
   end
 
+  @doc """
+  Destructures two lists, assigning each term in the
+  right one to the matching term in the left one.
+
+  Unlike pattern matching via `=`, if the sizes of the left
+  and right lists don't match, destructuring simply stops
+  instead of raising an error.
+
+  ## Examples
+
+      iex> destructure([x, y, z], [1, 2, 3, 4, 5])
+      iex> {x, y, z}
+      {1, 2, 3}
+
+  In the example above, even though the right list has more entries than the
+  left one, destructuring works fine. If the right list is smaller, the
+  remaining items are simply set to `nil`:
+
+      iex> destructure([x, y, z], [1])
+      iex> {x, y, z}
+      {1, nil, nil}
+
+  The left-hand side supports any expression you would use
+  on the left-hand side of a match:
+
+      x = 1
+      destructure([^x, y, z], [1, 2, 3])
+
+  The example above will only work if `x` matches the first value in the right
+  list. Otherwise, it will raise a `MatchError` (like the `=` operator would
+  do).
+  """
+  defmacro destructure(left, right) when is_list(left) do
+    quote do
+      unquote(left) =
+        Kernel.Utils.destructure(unquote(right), unquote(length(left)))
+    end
+  end
+
   ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
