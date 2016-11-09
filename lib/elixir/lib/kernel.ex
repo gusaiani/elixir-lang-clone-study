@@ -173,12 +173,17 @@ defmodule Kernel do
 
   ## Examples
 
-      iex> div(5, 2)
-      2
-      iex> div(6, -4)
-      -1
-      iex> div(-99, 2)
-      -49
+      div(5, 2)
+      #=> 2
+
+      div(6, -4)
+      #=> -1
+
+      div(-99, 2)
+      #=> -49
+
+      100 / 0
+      #=> ** (ArgumentError) argument error
 
   """
   @spec div(integer, neg_integer | pos_integer) :: integer
@@ -259,8 +264,11 @@ defmodule Kernel do
 
   ## Examples
 
-      iex> hd([1, 2, 3, 4])
-      1
+      hd([1, 2, 3, 4])
+      #=> 1
+
+      hd([])
+      #=> ** (ArgumentError) argument error
 
   """
   @spec hd(nonempty_maybe_improper_list(elem, any)) :: elem when elem: term
@@ -650,6 +658,8 @@ defmodule Kernel do
   Check the `Process` and `Node` modules for other functions
   to handle processes, including spawning functions in nodes.
 
+  The anonymous function receives 0 arguments, and may return any value.
+
   Inlined by the compiler.
 
   ## Examples
@@ -691,6 +701,8 @@ defmodule Kernel do
 
   Check the `Process` and `Node` modules for other functions
   to handle processes, including spawning functions in nodes.
+
+  The anonymous function receives 0 arguments, and may return any value.
 
   Inlined by the compiler.
 
@@ -734,6 +746,8 @@ defmodule Kernel do
 
   Check the `Process` and `Node` modules for other functions
   to handle processes, including spawning functions in nodes.
+
+  The anonymous function receives 0 arguments, and may return any value.
 
   Inlined by the compiler.
 
@@ -786,8 +800,11 @@ defmodule Kernel do
 
   ## Examples
 
-      iex> tl([1, 2, 3, :go])
-      [2, 3, :go]
+      tl([1, 2, 3, :go])
+      #=> [2, 3, :go]
+
+      tl([])
+      #=> ** (ArgumentError) argument error
 
   """
   @spec tl(nonempty_maybe_improper_list(elem, tail)) ::
@@ -935,18 +952,23 @@ defmodule Kernel do
   The result is always a float. Use `div/2` and `rem/2` if you want
   an integer division or the remainder.
 
+  Raises `ArithmeticError` if `right` is 0 or 0.0.
+
   Allowed in guard tests. Inlined by the compiler.
 
   ## Examples
 
-      iex> 1 / 2
-      0.5
+      1 / 2
+      #=> 0.5
 
-      iex> -3.0 / 2.0
-      -1.5
+      -3.0 / 2.0
+      #=> -1.5
 
-      iex> 5 / 1
-      5.0
+      5 / 1
+      #=> 5.0
+
+      7 / 0
+      #=> ** (ArgumentError) argument error
 
   """
   @spec (number / number) :: float
@@ -1206,13 +1228,21 @@ defmodule Kernel do
   @doc """
   Gets the element at the zero-based `index` in `tuple`.
 
+  It raises `ArgumentError` when index is negative or it is out of range of the tuple elements.
+
   Allowed in guard tests. Inlined by the compiler.
 
   ## Examples
 
-      iex> tuple = {:foo, :bar, 3}
-      iex> elem(tuple, 1)
-      :bar
+      tuple = {:foo, :bar, 3}
+      elem(tuple, 1)
+      #=> :bar
+
+      elem({}, 0)
+      #=> ** (ArgumentError) argument error
+
+      elem({:foo, :bar}, 2)
+      #=> ** (ArgumentError) argument error
 
   """
   @spec elem(tuple, non_neg_integer) :: term
@@ -1826,8 +1856,13 @@ defmodule Kernel do
   @doc """
   Gets a value and updates a nested structure.
 
-  It expects a tuple to be returned, containing the value
-  retrieved and the update one. The `fun` may also
+  `data` is a nested structure (ie. a map, keyword
+  list, or struct that implements the `Access` behaviour).
+
+  The `fun` argument receives the value of `key` (or `nil` if `key`
+  is not present) and must return a two-element tuple: the "get" value
+  (the retrieved value, which can be operated on before being returned)
+  and the new value to be stored under `key`. The `fun` may also
   return `:pop`, implying the current value shall be removed
   from the structure and returned.
 
@@ -1873,19 +1908,21 @@ defmodule Kernel do
   like the `all` anonymous function defined above. See `Access.all/0`,
   `Access.key/2` and others as examples.
   """
-  @spec get_and_update_in(Access.t, nonempty_list(term), (term -> {get, term} | :pop)) ::
-                          {get, Access.t} when get: var
+  @spec get_and_update_in(structure :: Access.t, keys, (term -> {get_value, update_value} | :pop)) ::
+        {get_value, structure :: Access.t} when keys: nonempty_list(any), get_value: var, update_value: term
   def get_and_update_in(data, keys, fun)
 
-  def get_and_update_in(data, [h], fun) when is_function(h),
-    do: h.(:get_and_update, data, fun)
-  def get_and_update_in(data, [h | t], fun) when is_function(h),
-    do: h.(:get_and_update, data, &get_and_update_in(&1, t, fun))
+  def get_and_update_in(data, [head], fun) when is_function(head, 3),
+    do: head.(:get_and_update, data, fun)
 
-  def get_and_update_in(data, [h], fun),
-    do: Access.get_and_update(data, h, fun)
-  def get_and_update_in(data, [h | t], fun),
-    do: Access.get_and_update(data, h, &get_and_update_in(&1, t, fun))
+  def get_and_update_in(data, [head | tail], fun) when is_function(head, 3),
+    do: head.(:get_and_update, data, &get_and_update_in(&1, tail, fun))
+
+  def get_and_update_in(data, [head], fun) when is_function(fun, 1),
+    do: Access.get_and_update(data, head, fun)
+
+  def get_and_update_in(data, [head | tail], fun) when is_function(fun, 1),
+    do: Access.get_and_update(data, head, &get_and_update_in(&1, tail, fun))
 
   @doc """
   Pops a key from the given nested structure.
@@ -2723,10 +2760,712 @@ defmodule Kernel do
     end
   end
 
+  @doc """
+  Pipe operator.
+
+  This operator introduces the expression on the left-hand side as
+  the first argument to the function call on the right-hand side.
+
+  ## Examples
+
+      iex> [1, [2], 3] |> List.flatten()
+      [1, 2, 3]
+
+  The example above is the same as calling `List.flatten([1, [2], 3])`.
+
+  The `|>` operator is mostly useful when there is a desire to execute a series
+  of operations resembling a pipeline:
+
+      iex> [1, [2], 3] |> List.flatten |> Enum.map(fn x -> x * 2 end)
+      [2, 4, 6]
+
+  In the example above, the list `[1, [2], 3]` is passed as the first argument
+  to the `List.flatten/1` function, then the flattened list is passed as the
+  first argument to the `Enum.map/2` function which doubles each element of the
+  list.
+
+  In other words, the expression above simply translates to:
+
+      Enum.map(List.flatten([1, [2], 3]), fn x -> x * 2 end)
+
+  ## Pitfalls
+
+  There are two common pitfalls when using the pipe operator.
+
+  The first one is related to operator precedence. For example,
+  the following expression:
+
+      String.graphemes "Hello" |> Enum.reverse
+
+  Translates to:
+
+      String.graphemes("Hello" |> Enum.reverse)
+
+  which results in an error as the `Enumerable` protocol is not defined
+  for binaries. Adding explicit parentheses resolves the ambiguity:
+
+      String.graphemes("Hello") |> Enum.reverse
+
+  Or, even better:
+
+      "Hello" |> String.graphemes |> Enum.reverse
+
+  The second pitfall is that the `|>` operator works on calls.
+  For example, when you write:
+
+      "Hello" |> some_function()
+
+  Elixir sees the right-hand side is a function call and pipes
+  to it. This means that, if you want to pipe to an anonymous
+  or captured function, it must also be explicitly called.
+
+  Given the anonymous function:
+
+      fun = fn x -> IO.puts(x) end
+      fun.("Hello")
+
+  This won't work as it will rather try to invoke the local
+  function `fun`:
+
+      "Hello" |> fun()
+
+  This works:
+
+      "Hello" |> fun.()
+
+  As you can see, the `|>` operator retains the same semantics
+  as when the pipe is not used since both require the `fun.(...)`
+  notation.
+  """
+  defmacro left |> right do
+    [{h, _} | t] = Macro.unpipe({:|>, [], [left, right]})
+    :lists.foldl fn {x, pos}, acc ->
+      # TODO: raise an error in `Macro.pipe/3` by 1.5
+      case Macro.pipe_warning(x) do
+        nil -> :ok
+        message ->
+          :elixir_errors.warn(__CALLER__.line, __CALLER__.file, message)
+      end
+      Macro.pipe(acc, x, pos)
+    end, h, t
+  end
+
+  @doc """
+  Returns `true` if `module` is loaded and contains a
+  public `function` with the given `arity`, otherwise `false`.
+
+  Note that this function does not load the module in case
+  it is not loaded. Check `Code.ensure_loaded/1` for more
+  information.
+
+  ## Examples
+
+      iex> function_exported?(Enum, :member?, 2)
+      true
+
+  """
+  @spec function_exported?(module, atom, arity) :: boolean
+  def function_exported?(module, function, arity) do
+    :erlang.function_exported(module, function, arity)
+  end
+
+  @doc """
+  Returns `true` if `module` is loaded and contains a
+  public `macro` with the given `arity`, otherwise `false`.
+
+  Note that this function does not load the module in case
+  it is not loaded. Check `Code.ensure_loaded/1` for more
+  information.
+
+  If `module` is an Erlang module (as opposed to an Elixir module), this
+  function always returns `false`.
+
+  ## Examples
+
+      iex> macro_exported?(Kernel, :use, 2)
+      true
+
+      iex> macro_exported?(:erlang, :abs, 1)
+      false
+
+  """
+  @spec macro_exported?(module, atom, arity) :: boolean
+  def macro_exported?(module, macro, arity)
+      when is_atom(module) and is_atom(macro) and is_integer(arity) and
+           (arity >= 0 and arity <= 255) do
+    function_exported?(module, :__info__, 1) and
+      :lists.member({macro, arity}, module.__info__(:macros))
+  end
+
+  @doc """
+  Checks if the element on the left-hand side is a member of the
+  collection on the right-hand side.
+
+  ## Examples
+
+      iex> x = 1
+      iex> x in [1, 2, 3]
+      true
+
+  This operator (which is a macro) simply translates to a call to
+  `Enum.member?/2`. The example above would translate to:
+
+      Enum.member?([1, 2, 3], x)
+
+  ## Guards
+
+  The `in/2` operator can be used in guard clauses as long as the
+  right-hand side is a range or a list. In such cases, Elixir will expand the
+  operator to a valid guard expression. For example:
+
+      when x in [1, 2, 3]
+
+  translates to:
+
+      when x === 1 or x === 2 or x === 3
+
+  When using ranges:
+
+      when x in 1..3
+
+  translates to:
+
+      when x >= 1 and x <= 3
+
+  """
+  defmacro left in right do
+    in_module? = (__CALLER__.context == nil)
+
+    right = case bootstrapped?(Macro) do
+      true  -> Macro.expand(right, __CALLER__)
+      false -> right
+    end
+
+    case right do
+      [] when not in_module? ->
+        false
+
+      [h | t] ->
+        in_var(in_module?, left, &in_list(&1, h, t))
+
+      {:%{}, _meta, [__struct__: Elixir.Range, first: first, last: last]} ->
+        first = Macro.expand(first, __CALLER__)
+        last  = Macro.expand(last, __CALLER__)
+        in_var(in_module?, left, &in_range(&1, first, last))
+
+      _ when in_module? ->
+        quote do: Elixir.Enum.member?(unquote(right), unquote(left))
+
+      %{__struct__: Elixir.Range, first: _, last: _} ->
+        raise ArgumentError, "non-literal range in guard should be escaped with Macro.escape/2"
+
+      _ ->
+        raise ArgumentError, <<"invalid args for operator \"in\", it expects a compile-time list ",
+                               "or compile-time range on the right side when used in guard expressions, got: ",
+                               Macro.to_string(right)::binary>>
+    end
+  end
+
+  defp in_var(false, ast, fun),
+    do: fun.(ast)
+  defp in_var(true, {atom, _, context} = var, fun) when is_atom(atom) and is_atom(context),
+    do: fun.(var)
+  defp in_var(true, ast, fun) do
+    quote do
+      var = unquote(ast)
+      unquote(fun.(quote(do: var)))
+    end
+  end
+
+  defp in_range(left, first, last) do
+    case is_integer(first) and is_integer(last) do
+      true  ->
+        in_range_literal(left, first, last)
+      false ->
+        quote do
+          (:erlang.is_integer(unquote(left)) and
+           :erlang.is_integer(unquote(first)) and
+           :erlang.is_integer(unquote(last))) and
+            ((:erlang."=<"(unquote(first), unquote(last)) and
+              unquote(increasing_compare(left, first, last))) or
+               (:erlang."<"(unquote(last), unquote(first)) and
+                unquote(decreasing_compare(left, first, last))))
+        end
+    end
+  end
+
+  defp in_range_literal(left, first, first) do
+    quote do
+      :erlang."=:="(unquote(left), unquote(first))
+    end
+  end
+
+  defp in_range_literal(left, first, last) when first < last do
+    quote do
+      :erlang.is_integer(unquote(left)) and
+        unquote(increasing_compare(left, first, last))
+    end
+  end
+
+  defp in_range_literal(left, first, last) do
+    quote do
+      :erlang.is_integer(unquote(left)) and
+        unquote(decreasing_compare(left, first, last))
+    end
+  end
+
+  defp in_list(left, h, t) do
+    :lists.foldr(fn x, acc ->
+      quote do: :erlang.or(unquote(comp(left, x)), unquote(acc))
+    end, comp(left, h), t)
+  end
+
+  defp comp(left, {:|, _, [h, t]}) do
+    quote(do: :erlang.or(:erlang."=:="(unquote(left), unquote(h)), unquote(left) in unquote(t)))
+  end
+
+  defp comp(left, right) do
+    quote(do: :erlang."=:="(unquote(left), unquote(right)))
+  end
+
+  defp increasing_compare(var, first, last) do
+    quote do
+      :erlang.">="(unquote(var), unquote(first)) and
+        :erlang."=<"(unquote(var), unquote(last))
+    end
+  end
+
+  defp decreasing_compare(var, first, last) do
+    quote do
+      :erlang."=<"(unquote(var), unquote(first)) and
+        :erlang.">="(unquote(var), unquote(last))
+    end
+  end
+
+  @doc """
+  When used inside quoting, marks that the given variable should
+  not be hygienized.
+
+  The argument can be either a variable unquoted or in standard tuple form
+  `{name, meta, context}`.
+
+  Check `Kernel.SpecialForms.quote/2` for more information.
+  """
+  defmacro var!(var, context \\ nil)
+
+  defmacro var!({name, meta, atom}, context) when is_atom(name) and is_atom(atom) do
+    # Remove counter and force them to be vars
+    meta = :lists.keydelete(:counter, 1, meta)
+    meta = :lists.keystore(:var, 1, meta, {:var, true})
+
+    case Macro.expand(context, __CALLER__) do
+      context when is_atom(context) ->
+        {name, meta, context}
+      other ->
+        raise ArgumentError, "expected var! context to expand to an atom, got: #{Macro.to_string(other)}"
+    end
+  end
+
+  defmacro var!(other, _context) do
+    raise ArgumentError, "expected a variable to be given to var!, got: #{Macro.to_string(other)}"
+  end
+
+  @doc """
+  When used inside quoting, marks that the given alias should not
+  be hygienized. This means the alias will be expanded when
+  the macro is expanded.
+
+  Check `Kernel.SpecialForms.quote/2` for more information.
+  """
+  defmacro alias!(alias) when is_atom(alias) do
+    alias
+  end
+
+  defmacro alias!({:__aliases__, meta, args}) do
+    # Simply remove the alias metadata from the node
+    # so it does not affect expansion.
+    {:__aliases__, :lists.keydelete(:alias, 1, meta), args}
+  end
+
+  ## Definitions implemented in Elixir
+
+  @doc ~S"""
+  Defines a module given by name with the given contents.
+
+  This macro defines a module with the given `alias` as its name and with the
+  given contents. It returns a tuple with four elements:
+
+    * `:module`
+    * the module name
+    * the binary contents of the module
+    * the result of evaluating the contents block
+
+  ## Examples
+
+      iex> defmodule Foo do
+      ...>   def bar, do: :baz
+      ...> end
+      iex> Foo.bar
+      :baz
+
+  ## Nesting
+
+  Nesting a module inside another module affects the name of the nested module:
+
+      defmodule Foo do
+        defmodule Bar do
+        end
+      end
+
+  In the example above, two modules - `Foo` and `Foo.Bar` - are created.
+  When nesting, Elixir automatically creates an alias to the inner module,
+  allowing the second module `Foo.Bar` to be accessed as `Bar` in the same
+  lexical scope where it's defined (the `Foo` module).
+
+  If the `Foo.Bar` module is moved somewhere else, the references to `Bar` in
+  the `Foo` module need to be updated to the fully-qualified name (`Foo.Bar`) or
+  an alias has to be explicitly set in the `Foo` module with the help of
+  `Kernel.SpecialForms.alias/2`.
+
+      defmodule Foo.Bar do
+        # code
+      end
+
+      defmodule Foo do
+        alias Foo.Bar
+        # code here can refer to "Foo.Bar" as just "Bar"
+      end
+
+  ## Module names
+
+  A module name can be any atom, but Elixir provides a special syntax which is
+  usually used for module names. What is called a module name is an
+  _uppercase ASCII letter_ followed by any number of _lowercase or
+  uppercase ASCII letters_, _numbers_, or _underscores_.
+  This identifier is equivalent to an atom prefixed by `Elixir.`. So in the
+  `defmodule Foo` example `Foo` is equivalent to `:"Elixir.Foo"`
+
+  ## Dynamic names
+
+  Elixir module names can be dynamically generated. This is very
+  useful when working with macros. For instance, one could write:
+
+      defmodule String.to_atom("Foo#{1}") do
+        # contents ...
+      end
+
+  Elixir will accept any module name as long as the expression passed as the
+  first argument to `defmodule/2` evaluates to an atom.
+  Note that, when a dynamic name is used, Elixir won't nest the name under the
+  current module nor automatically set up an alias.
+
+  """
+  defmacro defmodule(alias, do_block)
+
+  defmacro defmodule(alias, do: block) do
+    env   = __CALLER__
+    boot? = bootstrapped?(Macro)
+
+    expanded =
+      case boot? do
+        true  -> Macro.expand(alias, env)
+        false -> alias
+      end
+
+    {expanded, with_alias} =
+      case boot? and is_atom(expanded) do
+        true ->
+          # Expand the module considering the current environment/nesting
+          full = expand_module(alias, expanded, env)
+
+          # Generate the alias for this module definition
+          {new, old} = module_nesting(env.module, full)
+          meta = [defined: full, context: env.module] ++ alias_meta(alias)
+
+          {full, {:alias, meta, [old, [as: new, warn: false]]}}
+        false ->
+          {expanded, nil}
+      end
+
+    # We do this so that the block is not tail-call optimized and stacktraces
+    # are not messed up. Basically, we just insert something between the return
+    # value of the block and what is returned by defmodule. Using just ":ok" or
+    # similar doesn't work because it's likely optimized away by the compiler.
+    block = quote do
+      result = unquote(block)
+      :elixir_utils.noop()
+      result
+    end
+
+    {escaped, _} = :elixir_quote.escape(block, false)
+    module_vars  = module_vars(env.vars, 0)
+
+    quote do
+      unquote(with_alias)
+      :elixir_module.compile(unquote(expanded), unquote(escaped),
+                             unquote(module_vars), __ENV__)
+    end
+  end
+
+  defp alias_meta({:__aliases__, meta, _}), do: meta
+  defp alias_meta(_), do: []
+
+  # defmodule :foo
+  defp expand_module(raw, _module, _env) when is_atom(raw),
+    do: raw
+
+  # defmodule Elixir.Alias
+  defp expand_module({:__aliases__, _, [:Elixir | t]}, module, _env) when t != [],
+    do: module
+
+  # defmodule Alias in root
+  defp expand_module({:__aliases__, _, _}, module, %{module: nil}),
+    do: module
+
+  # defmodule Alias nested
+  defp expand_module({:__aliases__, _, t}, _module, env),
+    do: :elixir_aliases.concat([env.module | t])
+
+  # defmodule _
+  defp expand_module(_raw, module, env),
+    do: :elixir_aliases.concat([env.module, module])
+
+  # quote vars to be injected into the module definition
+  defp module_vars([{key, kind} | vars], counter) do
+    var =
+      case is_atom(kind) do
+        true  -> {key, [generated: true], kind}
+        false -> {key, [counter: kind, generated: true], nil}
+      end
+
+    under = String.to_atom(<<"_@", :erlang.integer_to_binary(counter)::binary>>)
+    args  = [key, kind, under, var]
+    [{:{}, [], args} | module_vars(vars, counter+1)]
+  end
+
+  defp module_vars([], _counter) do
+    []
+  end
+
+  # Gets two modules' names and returns an alias
+  # which can be passed down to the alias directive
+  # and it will create a proper shortcut representing
+  # the given nesting.
+  #
+  # Examples:
+  #
+  #     module_nesting(:"Elixir.Foo.Bar", :"Elixir.Foo.Bar.Baz.Bat")
+  #     {:"Elixir.Baz", :"Elixir.Foo.Bar.Baz"}
+  #
+  # In case there is no nesting/no module:
+  #
+  #     module_nesting(nil, :"Elixir.Foo.Bar.Baz.Bat")
+  #     {nil, :"Elixir.Foo.Bar.Baz.Bat"}
+  #
+  defp module_nesting(nil, full),
+    do: {nil, full}
+
+  defp module_nesting(prefix, full) do
+    case split_module(prefix) do
+      [] -> {nil, full}
+      prefix -> module_nesting(prefix, split_module(full), [], full)
+    end
+  end
+
+  defp module_nesting([x | t1], [x | t2], acc, full),
+    do: module_nesting(t1, t2, [x | acc], full)
+  defp module_nesting([], [h | _], acc, _full),
+    do: {String.to_atom(<<"Elixir.", h::binary>>),
+          :elixir_aliases.concat(:lists.reverse([h | acc]))}
+  defp module_nesting(_, _, _acc, full),
+    do: {nil, full}
+
+  defp split_module(atom) do
+    case :binary.split(Atom.to_string(atom), ".", [:global]) do
+      ["Elixir" | t] -> t
+      _ -> []
+    end
+  end
+
+  @doc """
+  Defines a function with the given name and body.
+
+  ## Examples
+
+      defmodule Foo do
+        def bar, do: :baz
+      end
+
+      Foo.bar #=> :baz
+
+  A function that expects arguments can be defined as follows:
+
+      defmodule Foo do
+        def sum(a, b) do
+          a + b
+        end
+      end
+
+  In the example above, a `sum/2` function is defined; this function receives
+  two arguments and returns their sum.
+
+  ## Function and variable names
+
+  Function and variable names have the following syntax:
+  A _lowercase ASCII letter_ or an _underscore_, followed by any number of
+  _lowercase or uppercase ASCII letters_, _numbers_, or _underscores_.
+  Optionally they can end in either an _exclamation mark_ or a _question mark_.
+
+  For variables, any identifier starting with an underscore should indicate an
+  unused variable. For example:
+
+      def foo(bar) do
+        []
+      end
+      #=> warning: variable bar is unused
+
+      def foo(_bar) do
+        []
+      end
+      #=> no warning
+
+      def foo(_bar) do
+        _bar
+      end
+      #=> warning: the underscored variable "_bar" is used after being set
+
+  """
+  defmacro def(call, expr \\ nil) do
+    define(:def, call, expr, __CALLER__)
+  end
+
+  @doc """
+  Defines a private function with the given name and body.
+
+  Private functions are only accessible from within the module in which they are
+  defined. Trying to access a private function from outside the module it's
+  defined in results in an `UndefinedFunctionError` exception.
+
+  Check `def/2` for more information.
+
+  ## Examples
+
+      defmodule Foo do
+        def bar do
+          sum(1, 2)
+        end
+
+        defp sum(a, b), do: a + b
+      end
+
+      Foo.bar #=> 3
+      Foo.sum(1, 2) #=> ** (UndefinedFunctionError) undefined function Foo.sum/2
+
+  """
+  defmacro defp(call, expr \\ nil) do
+    define(:defp, call, expr, __CALLER__)
+  end
+
+  @doc """
+  Defines a macro with the given name and body.
+
+  ## Examples
+
+      defmodule MyLogic do
+        defmacro unless(expr, opts) do
+          quote do
+            if !unquote(expr), unquote(opts)
+          end
+        end
+      end
+
+      require MyLogic
+      MyLogic.unless false do
+        IO.puts "It works"
+      end
+
+  """
+  defmacro defmacro(call, expr \\ nil) do
+    define(:defmacro, call, expr, __CALLER__)
+  end
+
+  @doc """
+  Defines a private macro with the given name and body.
+
+  Private macros are only accessible from the same module in which they are
+  defined.
+
+  Check `defmacro/2` for more information.
+
+  """
+  defmacro defmacrop(call, expr \\ nil) do
+    define(:defmacrop, call, expr, __CALLER__)
+  end
+
+  defp define(kind, call, expr, env) do
+    assert_module_scope(env, kind, 2)
+    assert_no_function_scope(env, kind, 2)
+    line = env.line
+
+    {call, unquoted_call} = :elixir_quote.escape(call, true)
+    {expr, unquoted_expr} = :elixir_quote.escape(expr, true)
+
+    # Do not check clauses if any expression was unquoted
+    check_clauses = not(unquoted_expr or unquoted_call)
+    pos = :elixir_locals.cache_env(env)
+
+    quote do
+      :elixir_def.store_definition(unquote(line), unquote(kind), unquote(check_clauses),
+                                   unquote(call), unquote(expr), unquote(pos))
+    end
+  end
+
+  @doc """
+  Defines a struct.
+
+  A struct is a tagged map that allows developers to provide
+  default values for keys, tags to be used in polymorphic
+  dispatches and compile time assertions.
+
+  To define a struct, a developer must define both `__struct__/0` and
+  `__struct__/1` functions. `defstruct/1` is a convenience macro which
+  defines such functions with some conveniences.
+
+  For more information about structs, please check `Kernel.SpecialForms.%/2`.
+
+  ## Examples
+
+      defmodule User do
+        defstruct name: nil, age: nil
+      end
+
+  Struct fields are evaluated at compile-time, which allows
+  them to be dynamic. In the example below, `10 + 11` is
+  evaluated at compile-time and the age field is stored
+  with value `21`:
+
+      defmodule User do
+        defstruct name: nil, age: 10 + 11
+      end
+  """
+
   ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
     {:case, [{:optimize_boolean, true} | meta], args}
+  end
+
+  defp assert_module_scope(env, fun, arity) do
+    case env.module do
+      nil -> raise ArgumentError, "cannot invoke #{fun}#{arity} outside module"
+      _   -> :ok
+    end
+  end
+
+  defp assert_no_function_scope(env, fun, arity) do
+    case env.function do
+      nil -> :ok
+      _   -> raise ArgumentError, "cannot invoke #{fun}/#{arity} inside function/macro"
   end
 
   defp env_stacktrace(env) do
