@@ -3447,7 +3447,143 @@ defmodule Kernel do
       defmodule User do
         defstruct name: nil, age: 10 + 11
       end
+
+  The `fields` argument is usually a keyword list with field names
+  as atom keys and default values as corresponding values. `defstruct/1`
+  also supports a list of atoms as its argument: in that case, the atoms
+  in the list will be used as the struct's field names and they will all
+  default to `nil`.
+
+      defmodule Post do
+        defstruct [:title, :content, :author]
+      end
+
+  ## Deriving
+
+  Although structs are maps, by default structs do not implement
+  any of the protocols implemented for maps. For example, attempting
+  to use a protocol with the `User` struct leads to an error:
+
+      john = %User{name: "John"}
+      MyProtocol.call(john)
+      ** (Protocol.UndefinedError) protocol MyProtocol not implemented for %User{...}
+
+  `defstruct/1`, however, allows protocol implementations to be
+  *derived*. This can be done by defining a `@derive` attribute as a
+  list before invoking `defstruct/1`:
+
+      defmodule User do
+        @derive [MyProtocol]
+        defstruct name: nil, age: 10 + 11
+      end
+
+      MyProtocol.call(john) #=> works
+
+  For each protocol in the `@derive` list, Elixir will assert there is an
+  implementation of that protocol for any (regardless if fallback to any
+  is `true`) and check if the any implementation defines a `__deriving__/3`
+  callback. If so, the callback is invoked, otherwise an implementation
+  that simply points to the any implementation is automatically derived.
+
+  ## Enforcing keys
+
+  When building a struct, Elixir will automatically guarantee all keys
+  belongs to the struct:
+
+      %User{name: "john", unknown: :key}
+      ** (KeyError) key :unknown not found in: %User{age: 21, name: nil}
+
+  Elixir also allows developers to enforce certain keys must always be
+  given when building the struct:
+
+      defmodule User do
+        @enforce_keys [:name]
+        defstruct name: nil, age: 10 + 11
+      end
+
+  Now trying to build a struct without the name key will fail:
+
+      %User{age: 21}
+      ** (ArgumentError) the following keys must also be given when building struct User: [:name]
+
+  Keep in mind `@enforce_keys` is simply a compile-time guarantee
+  to aid developers when building structs. It is not enforced on
+  updates and it does not provide any sort of value-validation.
+
+  ## Types
+
+  It is recommended to define types for structs. By convention such type
+  is called `t`. To define a struct inside a type, the struct literal syntax
+  is used:
+
+      defmodule User do
+        defstruct name: "John" age: 25
+        @type t :: %User{name: String.t, age: non_neg_integer}
+      end
+
+  It is recommented to only use the struct syntax when defining the struct's
+  type. When referring to another struct it's better to use `User.t` instead of
+  `%User{}`.
+
+  The types of the struct fields that are not included in `%User{}` default to
+  `term`.
+
+  Structs whose internal structure is private to the local module (pattern
+  matching them or directly accessing their fields should not be allowed) should
+  use the `@opaque` attribute. Structs whose internal structure is public should
+  use `@type`.
   """
+  defmacro defstruct(fields) do
+    builder =
+      case bootstrapped?(Enum) do
+        true ->
+          quote do
+            def __struct__(kv) do
+              {map, keys} =
+                Enum.reduce(kv, {__struct__(), @enforce_keys}, fn {key, val}, {map, keys} ->
+                  {:maps.reduce(key, val, map), :lists.delete(key, keys)}
+                end)
+              case keys do
+                [] -> map
+                _ -> raise ArgumentError, "the following keys must also be given when building " <>
+                                          "struct #{inspect __MODULE__}: #{inspect keys}"
+              end
+            end
+          end
+        false ->
+          quote do
+            def __struct__(kv) do
+              :lists.foldl(fn {key, val}, acc ->
+                :map.update(key, val, acc)
+              end, __struct__(), kv)
+            end
+          end
+      end
+
+    quote do
+      if Module.get_attribute(__MODULE__, :struct) do
+        raise ArgumentError, "defstruct has already been called for " <>
+          "#{Kernel.inspect(__MODULE__)}, defstruct can only be called once per module"
+      end
+
+      {struct, keys, derive} = Kernel.Utils.defstruct(__MODULE__, unquote(fields))
+      @struct struct
+      @enforce_keys keys
+
+      case derive do
+        [] -> :ok
+        _  -> Protocol.__derive__(derive, __MODULE__, __ENV__)
+      end
+
+      def __struct__() do
+        @struct
+      end
+
+      unquote(builder)
+      Kernel.Utils.announce_struct(__MODULE__)
+      struct
+    end
+  end
 
   ## Shared functions
 
