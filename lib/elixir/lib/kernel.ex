@@ -3506,7 +3506,7 @@ defmodule Kernel do
       %User{age: 21}
       ** (ArgumentError) the following keys must also be given when building struct User: [:name]
 
-  Keep in mind `@enforce_keys` is simply a compile-time guarantee
+  Keep in mind `@enforce_keys` is a simple compile-time guarantee
   to aid developers when building structs. It is not enforced on
   updates and it does not provide any sort of value-validation.
 
@@ -3517,11 +3517,11 @@ defmodule Kernel do
   is used:
 
       defmodule User do
-        defstruct name: "John" age: 25
+        defstruct name: "John", age: 25
         @type t :: %User{name: String.t, age: non_neg_integer}
       end
 
-  It is recommented to only use the struct syntax when defining the struct's
+  It is recommended to only use the struct syntax when defining the struct's
   type. When referring to another struct it's better to use `User.t` instead of
   `%User{}`.
 
@@ -3541,12 +3541,12 @@ defmodule Kernel do
             def __struct__(kv) do
               {map, keys} =
                 Enum.reduce(kv, {__struct__(), @enforce_keys}, fn {key, val}, {map, keys} ->
-                  {:maps.reduce(key, val, map), :lists.delete(key, keys)}
+                  {:maps.update(key, val, map), :lists.delete(key, keys)}
                 end)
               case keys do
                 [] -> map
-                _ -> raise ArgumentError, "the following keys must also be given when building " <>
-                                          "struct #{inspect __MODULE__}: #{inspect keys}"
+                _  -> raise ArgumentError, "the following keys must also be given when building " <>
+                                           "struct #{inspect __MODULE__}: #{inspect keys}"
               end
             end
           end
@@ -3554,7 +3554,7 @@ defmodule Kernel do
           quote do
             def __struct__(kv) do
               :lists.foldl(fn {key, val}, acc ->
-                :map.update(key, val, acc)
+                :maps.update(key, val, acc)
               end, __struct__(), kv)
             end
           end
@@ -3585,6 +3585,615 @@ defmodule Kernel do
     end
   end
 
+  @doc ~S"""
+  Defines an exception.
+
+  Exceptions are structs backed by a module that implements
+  the `Exception` behaviour. The `Exception` behaviour requires
+  two functions to be implemented:
+
+    * `exception/1` - receives the arguments given to `raise/2`
+      and returns the exception struct. The default implementation
+      accepts either a set of keyword arguments that is merged into
+      the struct or a string to be used as the exception's message.
+
+    * `message/1` - receives the exception struct and must return its
+      message. Most commonly exceptions have a message field which
+      by default is accessed by this function. However, if an exception
+      does not have a message field, this function must be explicitly
+      implemented.
+
+  Since exceptions are structs, the API supported by `defstruct/1`
+  is also available in `defexception/1`.
+
+  ## Raising exceptions
+
+  The most common way to raise an exception is via `raise/2`:
+
+      defmodule MyAppError do
+        defexception [:message]
+      end
+
+      value = [:hello]
+
+      raise MyAppError,
+        message: "did not get what was expected, got: #{inspect value}"
+
+  In many cases it is more convenient to pass the expected value to
+  `raise/2` and generate the message in the `c:Exception.exception/1` callback:
+
+      defmodule MyAppError do
+        defexception [:message]
+
+        def exception(value) do
+          msg = "did not get what was expected, got: #{inspect value}"
+          %MyAppError{message: msg}
+        end
+      end
+
+      raise MyAppError, value
+
+  The example above shows the preferred strategy for customizing
+  exception messages.
+  """
+  defmacro defexception(fields) do
+    quote bind_quoted: [fields: fields] do
+      @behaviour Exception
+      struct = defstruct([__exception__: true] ++ fields)
+
+      if Map.has_key?(struct, :message) do
+        @spec message(Exception.t) :: String.t
+        def message(exception) do
+          exception.message
+        end
+
+        defoverridable message: 1
+
+        @spec exception(String.t) :: Exception.t
+        def exception(msg) when is_binary(msg) do
+          exception(message: msg)
+        end
+      end
+
+      @spec exception(Keyword.t) :: Exception.t
+      # TODO: Only call Kernel.struct! by Elixir v1.5
+      def exception(args) when is_list(args) do
+        struct = __struct__()
+        {valid, invalid} = Enum.split_with(args, fn {k, _} -> Map.has_key?(struct, k) end)
+
+        case invalid do
+          [] ->
+            :ok
+          _  ->
+            IO.warn "the following fields are unknown when raising " <>
+                    "#{inspect __MODULE__}: #{inspect invalid}. " <>
+                    "Please make sure to only give known fields when raising " <>
+                    "or redefine #{inspect __MODULE__}.exception/1 to " <>
+                    "discard unknown fields. Future Elixir versions will raise on " <>
+                    "unknown fields given to raise/2"
+        end
+
+        Kernel.struct!(struct, valid)
+      end
+
+      defoverridable exception: 1
+    end
+  end
+
+  @doc """
+  Defines a protocol.
+
+  A protocol specifies an API that should be defined by its
+  implementations.
+
+  ## Examples
+
+  In Elixir, only `false` and `nil` are considered falsy values.
+  Everything else evaluates to `true` in `if/2` clauses. Depending
+  on the application, it may be important to specify a `blank?`
+  protocol that returns a boolean for other data types that should
+  be considered "blank". For instance, an empty list or an empty
+  binary could be considered blank.
+
+  Such protocol could be implemented as follows:
+
+      defprotocol Blank do
+        @doc "Returns `true` if `data` is considered blank/empty"
+        def blank?(data)
+      end
+
+  Now that the protocol is defined it can be implemented. It needs to be
+  implemented for each Elixir type; for example:
+
+      # Integers are never blank
+      defimpl Blank, for: Integer do
+        def blank?(number), do: false
+      end
+
+      # The only blank list is the empty one
+      defimpl Blank, for: List do
+        def blank?([]), do: true
+        def blank?(_),  do: false
+      end
+
+      # The only blank atoms are "false" and "nil"
+      defimpl Blank, for: Atom do
+        def blank?(false), do: true
+        def blank?(nil),   do: true
+        def blank?(_),     do: false
+      end
+
+  The implementation of the `Blank` protocol would need to be defined for all
+  Elixir types. The available types are:
+
+    * Structs (see below)
+    * `Tuple`
+    * `Atom`
+    * `List`
+    * `BitString`
+    * `Integer`
+    * `Float`
+    * `Function`
+    * `PID`
+    * `Map`
+    * `Port`
+    * `Reference`
+    * `Any` (see below)
+
+  ## Protocols and Structs
+
+  The real benefit of protocols comes when mixed with structs.
+  For instance, Elixir ships with many data types implemented as
+  structs, like `MapSet`. We can implement the `Blank` protocol
+  for those types as well:
+
+      defimpl Blank, for: MapSet do
+        def blank?(enum_like), do: Enum.empty?(enum_like)
+      end
+
+  When implementing a protocol for a struct, the `:for` option can
+  be omitted if the `defimpl` call is inside the module that defines
+  the struct:
+
+      defmodule User do
+        defstruct [:email, :name]
+
+        defimpl Blank do
+          def blank?(%User{}), do: false
+        end
+      end
+
+  If a protocol is not found for a given type, it will fallback to
+  `Any`. Protocols that are implemented for maps don't work by default
+  on structs; look at `defstruct/1` for more information about deriving
+  protocols.
+
+  ## Fallback to any
+
+  In some cases, it may be convenient to provide a default
+  implementation for all types. This can be achieved by
+  setting the `@fallback_to_any` attribute to `true` in the protocol
+  definition:
+
+      defprotocol Blank do
+        @fallback_to_any true
+        def blank?(data)
+      end
+
+  The `Blank` protocol can now be implemented for `Any`:
+
+      defimpl Blank, for: Any do
+        def blank?(_), do: true
+      end
+
+  One may wonder why such behaviour (fallback to any) is not the default one.
+
+  It is two-fold: first, the majority of protocols cannot
+  implement an action in a generic way for all types; in fact,
+  providing a default implementation may be harmful, because users
+  may rely on the default implementation instead of providing a
+  specialized one.
+
+  Second, falling back to `Any` adds an extra lookup to all types,
+  which is unnecessary overhead unless an implementation for `Any` is
+  required.
+
+  ## Types
+
+  Defining a protocol automatically defines a type named `t`, which
+  can be used as follows:
+
+      @spec present?(Blank.t) :: boolean
+      def present?(blank) do
+        not Blank.blank?(blank)
+      end
+
+  The `@spec` above expresses that all types allowed to implement the
+  given protocol are valid argument types for the given function.
+
+  ## Reflection
+
+  Any protocol module contains three extra functions:
+
+    * `__protocol__/1` - returns the protocol name when `:name` is given, and a
+      keyword list with the protocol functions and their arities when
+      `:functions` is given
+
+    * `impl_for/1` - receives a structure and returns the module that
+      implements the protocol for the structure, `nil` otherwise
+
+    * `impl_for!/1` - same as above but raises an error if an implementation is
+      not found
+
+          Enumerable.__protocol__(:functions)
+          #=> [count: 1, member?: 2, reduce: 3]
+
+          Enumerable.impl_for([])
+          #=> Enumerable.List
+
+          Enumerable.impl_for(42)
+          #=> nil
+
+  ## Consolidation
+
+  In order to cope with code loading in development, protocols in
+  Elixir provide a slow implementation of protocol dispatching specific
+  to development.
+
+  In order to speed up dispatching in production environments, where
+  all implementations are known up-front, Elixir provides a feature
+  called protocol consolidation. For this reason, all protocols are
+  compiled with `debug_info` set to `true`, regardless of the option
+  set by `elixirc` compiler. The debug info though may be removed
+  after consolidation.
+
+  For more information on how to apply protocol consolidation to
+  a given project, please check the functions in the `Protocol`
+  module or the `mix compile.protocols` task.
+  """
+  defmacro defprotocol(name, do_block)
+
+  defmacro defprotocol(name, do: block) do
+    Protocol.__protocol__(name, do: block)
+  end
+
+  @doc """
+  Defines an implementation for the given protocol.
+
+  See `defprotocol/2` for more information and examples on protocols.
+
+  Inside an implementation, the name of the protocol can be accessed
+  via `@protocol` and the current target as `@for`.
+  """
+  defmacro defimpl(name, opts, do_block \\ []) do
+    merged = Keyword.merge(opts, do_block)
+    merged = Keyword.put_new(merged, :for, __CALLER__.module)
+    Protocol.__impl__(name, merged)
+  end
+
+  @doc """
+  Makes the given functions in the current module overridable.
+
+  An overridable function is lazily defined, allowing a developer to override
+  it.
+
+  ## Example
+
+      defmodule DefaultMod do
+        defmacro __using__(_opts) do
+          quote do
+            def test(x, y) do
+              x + y
+            end
+
+            defoverridable [test: 2]
+          end
+        end
+      end
+
+      defmodule InheritMod do
+        use DefaultMod
+
+        def test(x, y) do
+          x * y + super(x, y)
+        end
+      end
+
+  As seen as in the example above, `super` can be used to call the default
+  implementation.
+
+  """
+  defmacro defoverridable(keywords) do
+    quote do
+      Module.make_overridable(__MODULE__, unquote(keywords))
+    end
+  end
+
+  @doc """
+  Uses the given module in the current context.
+
+  When calling:
+
+      use MyModule, some: :options
+
+  the `__using__/1` macro from the `MyModule` module is invoked with the second
+  argument passed to `use` as its argument. Since `__using__/1` is a macro, all
+  the usual macro rules apply, and its return value should be quoted code
+  that is then inserted where `use/2` is called.
+
+  ## Examples
+
+  For example, in order to write test cases using the `ExUnit` framework
+  provided with Elixir, a developer should `use` the `ExUnit.Case` module:
+
+      defmodule AssertionTest do
+        use ExUnit.Case, async: true
+
+        test "always pass" do
+          assert true
+        end
+      end
+
+  In this example, `ExUnit.Case.__using__/1` is called with the keyword list
+  `[async: true]` as its argument; `use/2` translates to:
+
+      defmodule AssertionTest do
+        require ExUnit.Case
+        ExUnit.Case.__using__([async: true])
+
+        test "always pass" do
+          assert true
+        end
+      end
+
+  `ExUnit.Case` will then define the `__using__/1` macro:
+
+      defmodule ExUnit.Case do
+        defmacro __using__(opts) do
+          # do something with opts
+          quote do
+            # return some code to inject in the caller
+          end
+        end
+      end
+
+  ## Best practices
+
+  `__using__/1` is typically used when there is a need to set some state (via
+  module attributes) or callbacks (like `@before_compile`, see the documentation
+  for `Module` for more information) into the caller.
+
+  `__using__/1` may also be used to alias, require, or import functionality
+  from different modules:
+
+      defmodule MyModule do
+        defmacro __using__(opts) do
+          quote do
+            import MyModule.Foo
+            import MyModule.Bar
+            import MyModule.Baz
+
+            alias MyModule.Repo
+          end
+        end
+      end
+
+  However, do not provide `__using__/1` if all it does is to import,
+  alias or require the module itself. For example, avoid this:
+
+      defmodule MyModule do
+        defmacro __using__(_opts) do
+          quote do
+            import MyModule
+          end
+        end
+      end
+
+  In such cases, developers should instead import or alias the module
+  directly, so that they can customize those as they wish,
+  without the indirection behind `use/2`.
+
+  Finally, developers should also avoid defining functions inside
+  the `__using__/1` callback, unless those functions are the default
+  implementation of a previously defined `@callback` or are functions
+  meant to be overridden (see `defoverridable/1`). Even in these cases,
+  defining functions should be seen as a "last resource".
+
+  In case you want to provide some existing functionality to the user module,
+  please define it in a module which will be imported accordingly; for example,
+  `ExUnit.Case` doesn't define the `test/3` macro in the module that calls
+  `use ExUnit.Case`, but it defines `ExUnit.Case.test/3` and just imports that
+  into the caller when used.
+  """
+  defmacro use(module, opts \\ []) do
+    calls = Enum.map(expand_aliases(module, __CALLER__), fn
+      expanded when is_atom(expanded) ->
+        quote do
+          require unquote(expanded)
+          unquote(expanded).__using__(unquote(opts))
+        end
+      _otherwise ->
+        raise ArgumentError, "invalid arguments for use, expected a compile time atom or alias, got: #{Macro.to_string(module)}"
+    end)
+    quote(do: (unquote_splicing calls))
+  end
+
+  defp expand_aliases({{:., _, [base, :{}]}, _, refs}, env) do
+    base = Macro.expand(base, env)
+    Enum.map(refs, fn
+      {:__aliases__, _, ref} ->
+        Module.concat([base | ref])
+      ref when is_atom(ref) ->
+        Module.concat(base, ref)
+      other -> other
+    end)
+  end
+
+  defp expand_aliases(module, env) do
+    [Macro.expand(module, env)]
+  end
+
+  @doc """
+  Defines a function that delegates to another module.
+
+  Functions defined with `defdelegate/2` are public and can be invoked from
+  outside the module they're defined in (like if they were defined using
+  `def/2`). When the desire is to delegate as private functions, `import/2` should
+  be used.
+
+  Delegation only works with functions; delegating macros is not supported.
+
+  ## Options
+
+    * `:to` - the module to dispatch to.
+
+    * `:as` - the function to call on the target given in `:to`.
+      This parameter is optional and defaults to the name being
+      delegated (`funs`).
+
+  ## Examples
+
+      defmodule MyList do
+        defdelegate reverse(list), to: :lists
+        defdelegate other_reverse(list), to: :lists, as: :reverse
+      end
+
+      MyList.reverse([1, 2, 3])
+      #=> [3, 2, 1]
+
+      MyList.other_reverse([1, 2, 3])
+      #=> [3, 2, 1]
+
+  """
+  defmacro defdelegate(funs, opts) do
+    funs = Macro.escape(funs, unquote: true)
+    quote bind_quoted: [funs: funs, opts: opts] do
+      target = Keyword.get(opts, :to) ||
+        raise ArgumentError, "expected to: to be given as argument"
+
+      # TODO: Raise on 2.0
+      %{file: file, line: line} = __ENV__
+      if is_list(funs) do
+        :elixir_errors.warn(line, file,
+          "passing a list to Kernel.defdelegate/2 is deprecated, " <>
+          "please define each delegate separately")
+      end
+
+      # TODO: Remove on 2.0
+      if Keyword.has_key?(opts, :append_first) do
+        :elixir_errors.warn(line, file,
+          "Kernel.defdelegate/2 :append_first option is deprecated")
+      end
+
+      for fun <- List.wrap(funs),
+        {name, args, as, as_args} <- Kernel.Utils.defdelegate(fun, opts) do
+          unless Module.get_attribute(__MODULE__, :doc) do
+            @doc "See `#{inspect target}.#{as}/#{:erlang.length args}`."
+          end
+          def unquote(name)(unquote_splicing(args)) do
+            unquote(target).unquote(as)(unquote_splicing(as_args))
+          end
+      end
+    end
+  end
+
+  ## Sigils
+
+  @doc ~S"""
+  Handles the sigil `~S`.
+
+  It simply returns a string without escaping characters and without
+  interpolations.
+
+  ## Examples
+
+      iex> ~S(foo)
+      "foo"
+
+      iex> ~S(f#{o}o)
+      "f\#{o}o"
+
+  """
+  defmacro sigil_S(term, modifiers)
+  defmacro sigil_S({:<<>>, _, [binary]}, []) when is_binary(binary), do: binary
+
+  @doc ~S"""
+  Handles the sigil `~s`.
+
+  It returns a string as if it was a double quoted string, unescaping characters
+  and replacing interpolations.
+
+  ## Examples
+
+      iex> ~s(foo)
+      "foo"
+
+      iex> ~s(f#{:o}o)
+      "foo"
+
+      iex> ~s(f\#{:o}o)
+      "f\#{:o}o"
+
+  """
+  defmacro sigil_s(term, modifiers)
+  defmacro sigil_s({:<<>>, _, [piece]}, []) when is_binary(piece) do
+    Macro.unescape_string(piece)
+  end
+  defmacro sigil_s({:<<>>, line, pieces}, []) do
+    {:<<>>, line, Macro.unescape_tokens(pieces)}
+  end
+
+  @doc ~S"""
+  Handles the sigil `~C`.
+
+  It simply returns a charlist without escaping characters and without
+  interpolations.
+
+  ## Examples
+
+      iex> ~C(foo)
+      'foo'
+
+      iex> ~C(f#{o}o)
+      'f\#{o}o'
+
+  """
+  defmacro sigil_C(term, modifiers)
+  defmacro sigil_C({:<<>>, _meta, [string]}, []) when is_binary(string) do
+    String.to_charlist(string)
+  end
+
+  @doc ~S"""
+  Handles the sigil `~c`.
+
+  It returns a charlist as if it were a single quoted string, unescaping
+  characters and replacing interpolations.
+
+  ## Examples
+
+      iex> ~c(foo)
+      'foo'
+
+      iex> ~c(f#{:o}o)
+      'foo'
+
+      iex> ~c(f\#{:o}o)
+      'f\#{:o}o'
+
+  """
+  defmacro sigil_c(term, modifiers)
+
+  # We can skip the runtime conversion if we are
+  # creating a binary made solely of series of chars.
+  defmacro sigil_c({:<<>>, _meta, [string]}, []) when is_binary(string) do
+    String.to_charlist(Macro.unescape_string(string))
+  end
+
+  defmacro sigil_c({:<<>>, meta, pieces}, []) do
+    binary = {:<<>>, meta, Macro.unescape_tokens(pieces)}
+    quote do: String.to_charlist(unquote(binary))
+  end
+
   ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
@@ -3593,7 +4202,7 @@ defmodule Kernel do
 
   defp assert_module_scope(env, fun, arity) do
     case env.module do
-      nil -> raise ArgumentError, "cannot invoke #{fun}#{arity} outside module"
+      nil -> raise ArgumentError, "cannot invoke #{fun}/#{arity} outside module"
       _   -> :ok
     end
   end
@@ -3602,6 +4211,7 @@ defmodule Kernel do
     case env.function do
       nil -> :ok
       _   -> raise ArgumentError, "cannot invoke #{fun}/#{arity} inside function/macro"
+    end
   end
 
   defp env_stacktrace(env) do
