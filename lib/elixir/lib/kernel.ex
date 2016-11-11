@@ -4194,10 +4194,210 @@ defmodule Kernel do
     quote do: String.to_charlist(unquote(binary))
   end
 
+  @doc """
+  Handles the sigil `~r`.
+
+  It returns a regular expression pattern, unescaping characters and replacing
+  interpolations.
+
+  More information on regexes can be found in the `Regex` module.
+
+  ## Examples
+
+      iex> Regex.match?(~r(foo), "foo")
+      true
+
+      iex> Regex.match?(~r/a#{:b}c/, "abc")
+      true
+
+  """
+  defmacro sigil_r(term, modifiers)
+  defmacro sigil_r({:<<>>, _meta, [string]}, options) when is_binary(string) do
+    binary = Macro.unescape_string(string, fn(x) -> Regex.unescape_map(x) end)
+    regex  = Regex.compile!(binary, :binary.list_to_bin(options))
+    Macro.escape(regex)
+  end
+
+  defmacro sigil_r({:<<>>, meta, pieces}, options) do
+    binary = {:<<>>, meta, Macro.unescape_tokens(pieces, fn(x) -> Regex.unescape_map(x) end)}
+    quote do: Regex.compile!(unquote(binary), unquote(:binary.list_to_bin(options)))
+  end
+
+  @doc ~S"""
+  Handles the sigil `~R`.
+
+  It returns a regular expression pattern without escaping
+  nor interpreting interpolations.
+
+  More information on regexes can be found in the `Regex` module.
+
+  ## Examples
+
+      iex> Regex.match?(~R(f#{1,3}o), "f#o")
+      true
+
+  """
+  defmacro sigil_R(term, modifiers)
+  defmacro sigil_R({:<<>>, _meta, [string]}, options) when is_binary(string) do
+    regex = Regex.compile!(string, :binary.list_to_bin(options))
+    Macro.escape(regex)
+  end
+
+  @doc ~S"""
+  Handles the sigil `~D` for dates.
+
+  The lower case `~d` variant does not exist as interpolation
+  and escape characters are not useful for date sigils.
+
+  ## Examples
+
+      iex> ~D[2015-01-13]
+      ~D[2015-01-13]
+  """
+  defmacro sigil_D(date, modifiers)
+  defmacro sigil_D({:<<>>, _, [string]}, []) do
+    Macro.escape(Date.from_iso8601!(string))
+  end
+
+  @doc ~S"""
+  Handles the sigil `~T` for times.
+
+  The lower case `~t` variant does not exist as interpolation
+  and escape characters are not useful for time sigils.
+
+  ## Examples
+
+      iex> ~T[13:00:07]
+      ~T[13:00:07]
+      iex> ~T[13:00:07.001]
+      ~T[13:00:07.001]
+
+  """
+  defmacro sigil_T(date, modifiers)
+  defmacro sigil_T({:<<>>, _, [string]}, []) do
+    Macro.escape(Time.from_iso8601!(string))
+  end
+
+  @doc ~S"""
+  Handles the sigil `~N` for naive date times.
+
+  The lower case `~n` variant does not exist as interpolation
+  and escape characters are not useful for datetime sigils.
+
+  ## Examples
+
+      iex> ~N[2015-01-13 13:00:07]
+      ~N[2015-01-13 13:00:07]
+      iex> ~N[2015-01-13T13:00:07.001]
+      ~N[2015-01-13 13:00:07.001]
+
+  """
+  defmacro sigil_N(date, modifiers)
+  defmacro sigil_N({:<<>>, _, [string]}, []) do
+    Macro.escape(NaiveDateTime.from_iso8601!(string))
+  end
+
+  @doc ~S"""
+  Handles the sigil `~w`.
+
+  It returns a list of "words" split by whitespace. Character unescaping and
+  interpolation happens for each word.
+
+  ## Modifiers
+
+    * `s`: words in the list are strings (default)
+    * `a`: words in the list are atoms
+    * `c`: words in the list are charlists
+
+  ## Examples
+
+      iex> ~w(foo #{:bar} baz)
+      ["foo", "bar", "baz"]
+
+      iex> ~w(foo #{" bar baz "})
+      ["foo", "bar", "baz"]
+
+      iex> ~w(--source test/enum_test.exs)
+      ["--source", "test/enum_test.exs"]
+
+      iex> ~w(foo bar baz)a
+      [:foo, :bar, :baz]
+
+  """
+  defmacro sigil_w(term, modifiers)
+  defmacro sigil_w({:<<>>, _meta, [string]}, modifiers) when is_binary(string) do
+    split_words(Macro.unescape_string(string), modifiers)
+  end
+
+  defmacro sigil_w({:<<>>, meta, pieces}, modifiers) do
+    binary = {:<<>>, meta, Macro.unescape_tokens(pieces)}
+    split_words(binary, modifiers)
+  end
+
+  @doc ~S"""
+  Handles the sigil `~W`.
+
+  It returns a list of "words" split by whitespace without escaping nor
+  interpreting interpolations.
+
+  ## Modifiers
+
+    * `s`: words in the list are strings (default)
+    * `a`: words in the list are atoms
+    * `c`: words in the list are charlists
+
+  ## Examples
+
+      iex> ~W(foo #{bar} baz)
+      ["foo", "\#{bar}", "baz"]
+
+  """
+  defmacro sigil_W(term, modifiers)
+  defmacro sigil_W({:<<>>, _meta, [string]}, modifiers) when is_binary(string) do
+    split_words(string, modifiers)
+  end
+
+  defp split_words(string, []) do
+    split_words(string, [?s])
+  end
+
+  defp split_words(string, [mod])
+  when mod == ?s or mod == ?a or mod == ?c do
+    case is_binary(string) do
+      true ->
+        parts = String.split(string)
+        case mod do
+          ?s -> parts
+          ?a -> :lists.map(&String.to_atom/1, parts)
+          ?c -> :lists.map(&String.to_charlist/1, parts)
+        end
+      false ->
+        parts = quote(do: String.split(unquote(string)))
+        case mod do
+          ?s -> parts
+          ?a -> quote(do: :lists.map(&String.to_atom/1, unquote(parts)))
+          ?c -> quote(do: :lists.map(&String.to_charlist/1, unquote(parts)))
+        end
+    end
+  end
+
+  defp split_words(_string, _mods) do
+    raise ArgumentError, "modifier must be one of: s, a, c"
+  end
+
   ## Shared functions
 
   defp optimize_boolean({:case, meta, args}) do
     {:case, [{:optimize_boolean, true} | meta], args}
+  end
+
+  # We need this check only for bootstrap purposes.
+  # Once Kernel is loaded and we recompile, it is a no-op.
+  case :code.ensure_loaded(Kernel) do
+    {:module, _} ->
+      defp bootstrapped?(_), do: true
+    {:error, _} ->
+      defp bootstrapped?(module), do: :code.ensure_loaded(module) == {:module, module}
   end
 
   defp assert_module_scope(env, fun, arity) do
