@@ -406,4 +406,118 @@ defmodule KernelTest do
       """, [], __ENV__)
     end
   end
+
+  defdelegate my_reverse(list \\ []), to: :lists, as: :reverse
+  defdelegate my_get(map \\ %{}, key, default \\ ""), to: Map, as: :get
+
+  test "defdelegate/2 accepts variable with optional arguments" do
+    assert my_reverse() == []
+    assert my_reverse([1, 2, 3]) == [3, 2, 1]
+
+    assert my_get("foo") == ""
+    assert my_get(%{}, "foo") == ""
+    assert my_get(%{"foo" => "bar"}, "foo") == "bar"
+    assert my_get(%{}, "foo", "not_found") == "not_found"
+  end
+
+  test "get_in/2" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+    assert get_in(users, ["john", :age]) == 27
+    assert get_in(users, ["dave", :age]) == nil
+    assert get_in(nil, ["john", :age]) == nil
+
+    map = %{"fruits" => ["banana", "apple", "orange"]}
+    assert get_in(map, ["fruits", by_index(0)])  == "banana"
+    assert get_in(map, ["fruits", by_index(3)])  == nil
+    assert get_in(map, ["unknown", by_index(3)]) == :oops
+
+    assert_raise FunctionClauseError, fn ->
+      get_in(users, [])
+    end
+  end
+
+  test "put_in/3" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert put_in(users, ["john", :age], 28) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert_raise FunctionClauseError, fn ->
+      put_in(users, [], %{})
+    end
+
+    assert_raise ArgumentError, "could not put/update key \"john\" on a nil value", fn ->
+      put_in(nil, ["john", :age], 28)
+    end
+  end
+
+  test "put_in/2" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert put_in(users["john"][:age], 28) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert put_in(users["john"].age, 28) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert_raise BadMapError, fn ->
+      put_in(users["dave"].age, 19)
+    end
+
+    assert_raise KeyError, fn ->
+      put_in(users["meg"].unknown, "value")
+    end
+  end
+
+  test "update_in/3" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert update_in(users, ["john", :age], &(&1 + 1)) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert_raise FunctionClauseError, fn ->
+      update_in(users, [], fn _ -> %{} end)
+    end
+
+    assert_raise ArgumentError, "could not put/update key \"john\" on a nil value", fn ->
+      update_in(nil, ["john", :age], fn _ -> %{} end)
+    end
+
+    assert_raise UndefinedFunctionError, fn ->
+      pop_in(struct(Sample, []), [:name])
+    end
+  end
+
+  test "update_in/2" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert update_in(users["john"][:age], &(&1 + 1)) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert update_in(users["john"].age, &(&1 + 1)) ==
+           %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+    assert_raise BadMapError, fn ->
+      update_in(users["dave"].age, &(&1 + 1))
+    end
+
+    assert_raise KeyError, fn ->
+      put_in(users["meg"].unknown, &(&1 + 1))
+    end
+  end
+
+  def by_index(index) do
+    fn
+      _, nil, next ->
+        next.(:oops)
+      :get, data, next ->
+        next.(Enum.at(data, index))
+      :get_and_update, data, next ->
+        current = Enum.at(data, index)
+        case next.(current) do
+          {get, update} -> {get, List.replace_at(data, index, update)}
+          :pop -> {current, List.delete_at(data, index)}
+        end
+    end
+  end
 end
