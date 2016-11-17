@@ -182,8 +182,8 @@ defmodule Kernel do
       div(-99, 2)
       #=> -49
 
-      100 / 0
-      #=> ** (ArgumentError) argument error
+      div(100, 0)
+      #=> ** (ArithmeticError) bad argument in arithmetic expression
 
   """
   @spec div(integer, neg_integer | pos_integer) :: integer
@@ -968,7 +968,7 @@ defmodule Kernel do
       #=> 5.0
 
       7 / 0
-      #=> ** (ArgumentError) argument error
+      #=> ** (ArithmeticError) bad argument in arithmetic expression
 
   """
   @spec (number / number) :: float

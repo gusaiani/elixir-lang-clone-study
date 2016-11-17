@@ -506,6 +506,27 @@ defmodule KernelTest do
     end
   end
 
+  test "get_and_update_in/3" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert get_and_update_in(users, ["john", :age], &{&1, &1 + 1}) ==
+           {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+
+    map = %{"fruits" => ["banana", "apple", "orange"]}
+    assert get_and_update_in(map,["fruits", by_index(0)], &{&1, String.reverse(&1)}) ==
+           {"banana", %{"fruits" => ["ananab", "apple", "orange"]}}
+
+    assert get_and_update_in(map, ["fruits", by_index(3)], &{&1, &1}) ==
+           {nil, %{"fruits", ["banana", "apple", "orange"]}}
+
+    assert get_and_update_in(map, ["unknown", by_index(3)], &{&1, []}) ==
+           {:oops, %{"fruits" => ["banana", "apple", "orange"], "unknown" => []}}
+
+    assert_raise FunctionClauseError, fn ->
+      update_in(users, [], fn _ -> %{} end)
+    end
+  end
+
   def by_index(index) do
     fn
       _, nil, next ->
