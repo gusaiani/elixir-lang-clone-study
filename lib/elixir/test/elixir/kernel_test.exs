@@ -513,11 +513,11 @@ defmodule KernelTest do
            {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
 
     map = %{"fruits" => ["banana", "apple", "orange"]}
-    assert get_and_update_in(map,["fruits", by_index(0)], &{&1, String.reverse(&1)}) ==
+    assert get_and_update_in(map, ["fruits", by_index(0)], &{&1, String.reverse(&1)}) ==
            {"banana", %{"fruits" => ["ananab", "apple", "orange"]}}
 
     assert get_and_update_in(map, ["fruits", by_index(3)], &{&1, &1}) ==
-           {nil, %{"fruits", ["banana", "apple", "orange"]}}
+           {nil, %{"fruits" => ["banana", "apple", "orange"]}}
 
     assert get_and_update_in(map, ["unknown", by_index(3)], &{&1, []}) ==
            {:oops, %{"fruits" => ["banana", "apple", "orange"], "unknown" => []}}
@@ -526,6 +526,114 @@ defmodule KernelTest do
       update_in(users, [], fn _ -> %{} end)
     end
   end
+
+  test "get_and_update_in/2" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert get_and_update_in(users["john"].age, &{&1, &1 + 1}) ==
+           {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+
+    assert_raise ArgumentError, "could not put/update key \"john\" on a nil value", fn ->
+      get_and_update_in(nil["john"][:age], fn nil -> {:ok, 28} end)
+    end
+
+    assert_raise BadMapError, fn ->
+      get_and_update_in(users["dave"].age, &{&1, &1 + 1})
+    end
+
+    assert_raise KeyError, fn ->
+      get_and_update_in(users["meg"].unknown, &{&1, &1 + 1})
+    end
+  end
+
+  test "pop_in/2" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert pop_in(users, ["john", :age]) ==
+           {27, %{"john" => %{}, "meg" => %{age: 23}}}
+
+    assert pop_in(users, ["bob", :age]) ==
+           {nil, %{"john" => %{age: 27}, "meg" => %{age: 23}}}
+
+    assert pop_in([], [:foo, :bar]) == {nil, []}
+
+    assert_raise FunctionClauseError, fn ->
+      pop_in(users, [])
+    end
+  end
+
+  test "pop_in/2 with paths" do
+    map = %{"fruits" => ["banana", "apple", "orange"]}
+    assert pop_in(map, ["fruits", by_index(0)]) ==
+           {"banana", %{"fruits" => ["apple", "orange"]}}
+    assert pop_in(map, ["fruits", by_index(3)]) ==
+           {nil, map}
+
+    map = %{"fruits" => [%{name: "banana"}, %{name: "apple"}]}
+    assert pop_in(map, ["fruits", by_index(0), :name]) ==
+           {"banana", %{"fruits" => [%{}, %{name: "apple"}]}}
+    assert pop_in(map, ["fruits", by_index(3), :name]) ==
+           {nil, map}
+  end
+
+  test "pop_in/1" do
+    users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+
+    assert pop_in(users["john"][:age]) ==
+           {27, %{"john" => %{}, "meg" => %{age: 23}}}
+    assert pop_in(users["john"][:name]) ==
+           {nil, %{"john" => %{age: 27}, "meg" => %{age: 23}}}
+    assert pop_in(users["bob"][:age]) ==
+           {nil, %{"john" => %{age: 27}, "meg" => %{age: 23}}}
+
+    users = %{john: [age: 27], meg: [age: 23]}
+
+    assert pop_in(users.john[:age]) ==
+           {27, %{john: [], meg: [age: 23]}}
+    assert pop_in(users.john[:name]) ==
+           {nil, %{john: [age: 27], meg: [age: 23]}}
+
+    assert pop_in([][:foo][:bar]) == {nil, []}
+    assert_raise KeyError, fn -> pop_in(users.bob[:age]) end
+  end
+
+  test "pop_in/1/2 with nils" do
+    users = %{"john" => nil, "meg" => %{age: 23}}
+    assert pop_in(users["john"][:age]) ==
+           {nil, %{"meg" => %{age: 23}}}
+    assert pop_in(users, ["john", :age]) ==
+           {nil, %{"meg" => %{age: 23}}}
+
+    users = %{john: nil, meg: %{age: 23}}
+    assert pop_in(users.john[:age]) ==
+           {nil, %{john: nil, meg: %{age: 23}}}
+    assert pop_in(users, [:john, :age]) ==
+           {nil, %{meg: %{age: 23}}}
+
+    x = nil
+    assert_raise ArgumentError, fn -> pop_in(x["john"][:age]) end
+    assert_raise ArgumentError, fn -> pop_in(nil["john"][:age]) end
+    assert_raise ArgumentError, fn -> pop_in(nil, ["john", :age]) end
+  end
+
+  test "paths" do
+    map = empty_map()
+
+    assert put_in(map[:foo], "bar") == %{foo: "bar"}
+    assert put_in(empty_map()[:foo], "bar") == %{foo: "bar"}
+    assert put_in(KernelTest.empty_map()[:foo], "bar") == %{foo: "bar"}
+    assert put_in(__MODULE__.empty_map()[:foo], "bar") == %{foo: "bar"}
+
+    assert_raise ArgumentError, ~r"access at least one element,", fn ->
+      Code.eval_quoted(quote(do: put_in(map, "bar")), [])
+    end
+
+    assert_raise ArgumentError, ~r"must start with a variable, local or remote call", fn ->
+      Code.eval_quoted(quote(do: put_in(map.foo(1, 2)[:bar], "baz")), [])
+    end
+  end
+
+  def empty_map, do: %{}
 
   def by_index(index) do
     fn
@@ -540,5 +648,133 @@ defmodule KernelTest do
           :pop -> {current, List.delete_at(data, index)}
         end
     end
+  end
+
+  test "calling if with invalid keys" do
+    error_message = "invalid or duplicate keys for if, only \"do\" " <>
+    "and an optional \"else\" are permitted"
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, foo: 7")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, do: 6, boo: 7")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, do: 7, do: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, do: 8, else: 7, else: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, else: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("if true, []")
+    end
+  end
+
+  test "calling unless with invalid keys" do
+    error_message = "invalid or duplicate keys for unless, only \"do\" " <>
+      "and an optional \"else\" are permitted"
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, foo: 7")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, do: 6, boo: 7")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, do: 7, do: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, do: 8, else: 7, else: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, else: 6")
+    end
+
+    assert_raise ArgumentError, error_message, fn ->
+      Code.eval_string("unless true, []")
+    end
+  end
+
+  defmodule PipelineOp do
+    use ExUnit.Case, async: true
+
+    test "simple" do
+      assert [1, [2], 3] |> List.flatten == [1, 2, 3]
+    end
+
+    test "nested pipelines" do
+      assert [1, [2], 3] |> List.flatten |> Enum.map(&(&1 * 2)) == [2, 4, 6]
+    end
+
+    test "local call" do
+      assert [1, [2], 3] |> List.flatten |> local == [2, 4, 6]
+    end
+
+    test "pipeline with capture" do
+      assert Enum.map([1, 2, 3], &(&1 |> twice |> twice)) == [4, 8, 12]
+    end
+
+    test "anonymous functions" do
+      assert  1  |> (&(&1*2)).() == 2
+      assert [1] |> (&hd(&1)).() == 1
+    end
+
+    defp twice(a), do: a * 2
+
+    defp local(list) do
+      Enum.map(list, &(&1 * 2))
+    end
+  end
+
+  defmodule Destructure do
+    use ExUnit.Case, async: true
+
+    test "less args" do
+      destructure [x, y, z], [1, 2, 3, 4, 5]
+      assert x == 1
+      assert y == 2
+      assert z == 3
+    end
+
+    test "more args" do
+      destructure [a, b, c, d, e], [1, 2, 3]
+      assert a == 1
+      assert b == 2
+      assert c == 3
+      assert d == nil
+      assert e == nil
+    end
+
+    test "equal args" do
+      destructure [a, b, c], [1, 2, 3]
+      assert a == 1
+      assert b == 2
+      assert c == 3
+    end
+
+    test "no values" do
+      destructure [a, b, c], []
+      assert a == nil
+      assert b == nil
+      assert c == nil
+    end
+
+    test "works as match" do
+      destructure [1, b, _], [1, 2, 3]
+      assert b == 2
+    end
+
+
   end
 end
