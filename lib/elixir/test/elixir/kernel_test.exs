@@ -775,6 +775,85 @@ defmodule KernelTest do
       assert b == 2
     end
 
+    test "nil values" do
+      destructure [a, b, c], a_nil()
+      assert a == nil
+      assert b == nil
+      assert c == nil
+    end
 
+    test "invalid match" do
+      a = List.first([3])
+      assert_raise MatchError, fn ->
+        destructure [^a, _b, _c], a_list()
+      end
+    end
+
+    defp a_list, do: [1, 2, 3]
+    defp a_nil, do: nil
+  end
+
+  defmodule UseMacro do
+    use ExUnit.Case, async: true
+
+    import ExUnit.CaptureIO
+
+    defmodule SampleA do
+      defmacro __using__(opts) do
+        prefix = Keyword.get(opts, :prefix, "")
+        IO.puts(prefix <> "A")
+      end
+    end
+
+    defmodule SampleB do
+      defmacro __using__(_) do
+        IO.puts("B")
+      end
+    end
+
+    test "invalid argument is literal" do
+      message = "invalid arguments for use, expected a compile time atom or alias, got: 42"
+      assert_raise ArgumentError, message, fn ->
+        Code.eval_string("use 42")
+      end
+    end
+
+    test "invalid argument is variable" do
+      message = "invalid arguments for use, expected a compile time atom or alias, got: variable"
+      assert_raise ArgumentError, message, fn ->
+        Code.eval_string("use variable")
+      end
+    end
+
+    test "multi-call" do
+      assert capture_io(fn ->
+        Code.eval_string("use UseMacro.{SampleA, SampleB,}", [], __ENV__)
+      end) == "A\nB\n"
+    end
+
+    test "multi-call with options" do
+      assert capture_io(fn ->
+        Code.eval_string(~S|use UseMacro.{SampleA}, prefix: "-"|, [], __ENV__)
+      end) == "-A\n"
+    end
+
+    test "multi-call with unquote" do
+      assert capture_io(fn ->
+        Code.eval_string("""
+          defmodule TestMod do
+            def main() do
+              use UseMacro.{SampleB, unquote(:SampleA)}
+            end
+          end
+          """, [], __ENV__)
+      end) == "B\nA\n"
+    after
+      KernelTest.purge(UseMacro.TestMod)
+    end
+  end
+
+  def purge(module) do
+    :code.delete(module)
+    :code.purge(module)
   end
 end
