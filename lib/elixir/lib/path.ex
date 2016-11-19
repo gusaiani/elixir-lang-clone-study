@@ -88,7 +88,7 @@ defmodule Path do
 
   # Joins a list
   defp absname_join([name1, name2 | rest]), do:
-    adsname_join([absname_join(name1, name2) | rest])
+    absname_join([absname_join(name1, name2) | rest])
   defp absname_join([name]), do:
     do_absname_join(IO.chardata_to_string(name), <<>>, [], major_os_type())
 
@@ -515,7 +515,100 @@ defmodule Path do
     FN.split(IO.chardata_to_string(path))
   end
 
+  defmodule Wildcard do
+    @moduledoc false
 
+    def read_link_info(file) do
+      call({:read_link_info, file})
+    end
+
+    def list_dir(dir) do
+      case call({:list_dir, dir}) do
+        {:ok, files} ->
+          {:ok, for(file <- files, hd(file) != ?., do: file)}
+        other ->
+          other
+      end
+    end
+
+    @compile {:inline, call: 1}
+
+    defp call(tuple) do
+      x = :erlang.dt_spread_tag(true)
+      y = :gen_server.call(:file_server_2, tuple)
+      :erlang.dt_restore_tag(x)
+      y
+    end
+  end
+
+  @doc """
+  Traverses paths according to the given `glob` expression, and returns a
+  list of matches.
+
+  The wildcard looks like an ordinary path, except that certain
+  "wildcard characters" are interpreted in a special way. The
+  following characters are special:
+
+    * `?` - matches one character
+
+    * `*` - matches any number of characters up to the end of the filename, the
+      next dot, or the next slash
+
+    * `**` - two adjacent `*`'s used as a single pattern will match all
+      files and zero or more directories and subdirectories
+
+    * `[char1,char2,...]` - matches any of the characters listed; two
+      characters separated by a hyphen will match a range of characters.
+      Do not add spaces before and after the comma as it would then match
+      paths containing the space character itself.
+
+    * `{item1,item2,...}` - matches one of the alternatives
+      Do not add spaces before and after the comma as it would then match
+      paths containing the space character itself.
+
+  Other characters represent themselves. Only paths that have
+  exactly the same character in the same position will match. Note
+  that matching is case-sensitive; i.e. "a" will not match "A".
+
+  By default, the patterns `*` and `?` do not match files starting
+  with a dot `.` unless `match_dot: true` is given in `opts`.
+
+  ## Examples
+
+  Imagine you have a directory called `projects` with three Elixir projects
+  inside of it: `elixir`, `ex_doc` and `dynamo`. You can find all `.beam` files
+  inside the `ebin` directory of each project as follows:
+
+      Path.wildcard("projects/*/ebin/**/*.beam")
+
+  If you want to search for both `.beam` and `.app` files, you could do:
+
+      Path.wildcard("projects/*/ebin/**/*.{beam,app}")
+
+  """
+  @spec wildcard(t, Keyword.t) :: [binary]
+  def wildcard(glob, opts \\ []) do
+    mod = if Keyword.get(opts, :match_dot), do: :file, else: Path.Wildcard
+    glob
+    |> chardata_to_list()
+    |> :filelib.wildcard(mod)
+    |> Enum.map(&IO.chardata_to_string/1)
+  end
+
+  # expand_dot the given path by expanding "..", "." and "~".
+
+  defp chardata_to_list(chardata) do
+    case :unicode.characters_to_list(chardata) do
+      result when is_list(result) ->
+        result
+
+      {:error, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :invalid
+
+      {:incomplete, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :incomplete
+    end
+  end
 
   defp expand_home(type) do
     case IO.chardata_to_string(type) do
@@ -546,10 +639,10 @@ defmodule Path do
   defp do_expand_dot(path),
     do: do_expand_dot(:binary.split(path, "/", [:global]), [])
 
-  defp do_expand_dot([".." | t], [_, _, | acc]),
+  defp do_expand_dot([".." | t], [_, _ | acc]),
     do: do_expand_dot(t, acc)
   defp do_expand_dot([".." | t], []),
-    do: do_expand_dot(t, ;[])
+    do: do_expand_dot(t, [])
   defp do_expand_dot(["." | t], acc),
     do: do_expand_dot(t, acc)
   defp do_expand_dot([h | t], acc),
