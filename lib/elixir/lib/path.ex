@@ -29,9 +29,9 @@ defmodule Path do
 
   ## Windows
 
-      Path.absname("foo")
+      Path.absname("foo").
       "D:/usr/local/foo"
-      Path.absname("../x")
+      Path.absname("../x").
       "D:/usr/local/../x"
 
   """
@@ -45,7 +45,7 @@ defmodule Path do
   an absolute path, `relative_to` is ignored. See also `relative_to/2`.
 
   Unlike `expand/2`, no attempt is made to
-  resolve `..`, `.`, or `~`.
+  resolve `..`, `.` or `~`.
 
   ## Examples
 
@@ -77,9 +77,9 @@ defmodule Path do
     do: absname(absname_join(rest), relative)
 
   # Relative to current directory on another drive.
-  defp absname_vr([<<x ?:>> | name], _, _relative) do
+  defp absname_vr([<<x, ?:>> | name], _, _relative) do
     cwd =
-      case :file.get_cwd[x, ?:] do
+      case :file.get_cwd([x, ?:]) do
         {:ok, dir}  -> IO.chardata_to_string(dir)
         {:error, _} -> <<x, ?:, ?/>>
       end
@@ -102,8 +102,8 @@ defmodule Path do
     do_absname_join(<<?/, rest::binary>>, relativename, result, :win32)
   defp do_absname_join(<<?/, rest::binary>>, relativename, [?., ?/ | result], os_type), do:
     do_absname_join(rest, relativename, [?/ | result], os_type)
-  defp do_absname_join(<<?/, rest::binary>>, [?/ | result], os_type), do:
-    do_absname_join(rest, relativename, [?/ | result], os_type)
+  defp do_absname_join(<<?/, rest::binary>>, relativename, [?/ | result], os_type), do:
+    do_absname_join(rest, relativename, [?/ | result], os_type)
   defp do_absname_join(<<>>, <<>>, result, os_type), do:
     IO.iodata_to_binary(reverse_maybe_remove_dir_sep(result, os_type))
   defp do_absname_join(<<>>, relativename, [?: | rest], :win32), do:
@@ -190,6 +190,34 @@ defmodule Path do
     pathtype(name, major_os_type()) |> elem(0)
   end
 
+  @doc """
+  Forces the path to be a relative path.
+
+  ## Unix examples
+
+      Path.relative("/usr/local/bin")   #=> "usr/local/bin"
+      Path.relative("usr/local/bin")    #=> "usr/local/bin"
+      Path.relative("../usr/local/bin") #=> "../usr/local/bin"
+
+  ## Windows examples
+
+      Path.relative("D:/usr/local/bin") #=> "usr/local/bin"
+      Path.relative("usr/local/bin")    #=> "usr/local/bin"
+      Path.relative("D:bar.ex")         #=> "bar.ex"
+      Path.relative("/bar/foo.ex")      #=> "bar/foo.ex"
+
+  """
+  @spec relative(t) :: binary
+  def relative(name) do
+    relative(name, major_os_type())
+  end
+
+  defp relative(name, os_type) do
+    pathtype(name, os_type)
+    |> elem(1)
+    |> IO.chardata_to_string
+  end
+
   defp pathtype(name, os_type) do
     case os_type do
       :win32 -> win32_pathtype(name)
@@ -201,7 +229,7 @@ defmodule Path do
     {:absolute, relative}
   defp unix_pathtype([?/ | relative]), do:
     {:absolute, relative}
-  defp unix_pathtype([list | rest]) when is_list(list) do:
+  defp unix_pathtype([list | rest]) when is_list(list), do:
     unix_pathtype(list ++ rest)
   defp unix_pathtype(relative), do:
     {:relative, relative}
@@ -216,9 +244,9 @@ defmodule Path do
     {:absolute, relative}
   defp win32_pathtype(<<c, relative::binary>>) when c in @slash, do:
     {:volumerelative, relative}
-  defp win32_pathtype(<<_letter, ?:, c, relative::binary) when c in @slash, do:
+  defp win32_pathtype(<<_letter, ?:, c, relative::binary>>) when c in @slash, do:
     {:absolute, relative}
-  defp win32_pathtype(<<_letter, ?:, relative::binary), do:
+  defp win32_pathtype(<<_letter, ?:, relative::binary>>), do:
     {:volumerelative, relative}
 
   defp win32_pathtype([c1, c2 | relative]) when c1 in @slash and c2 in @slash, do:
@@ -234,13 +262,236 @@ defmodule Path do
   defp win32_pathtype(relative), do:
     {:relative, relative}
 
+  @doc """
+  Returns the given `path` relative to the given `from` path.
+  In other words, it tries to strip the `from` prefix from `path`.
+
+  This function does not query the file system, so it assumes
+  no symlinks between the paths.
+
+  In case a direct relative path cannot be found, it returns
+  the original path.
+
+  ## Examples
+
+      iex> Path.relative_to("/usr/local/foo", "/usr/local")
+      "foo"
+
+      iex> Path.relative_to("/usr/local/foo", "/")
+      "usr/local/foo"
+
+      iex> Path.relative_to("/usr/local/foo", "/etc")
+      "/usr/local/foo"
+
+  """
+  @spec relative_to(t, t) :: binary
+  def relative_to(path, from) do
+    path = IO.chardata_to_string(path)
+    relative_to(split(path), split(from), path)
+  end
+
+  defp relative_to([h | t1], [h | t2], original) do
+    relative_to(t1, t2, original)
+  end
+
+  defp relative_to([_ | _] = l1, [], _original) do
+    join(l1)
+  end
+
+  defp relative_to(_, _, original) do
+    original
+  end
+
+  @doc """
+  Convenience to get the path relative to the current working
+  directory. If, for some reason, the current working directory
+  cannot be retrieved, returns the full path.
+  """
+  @spec relative_to_cwd(t) :: binary
+  def relative_to_cwd(path) do
+    case :file.get_cwd do
+      {:ok, base} -> relative_to(path, IO.chardata_to_string(base))
+      _ -> path
+    end
+  end
+
+  @doc """
+  Returns the last component of the path or the path
+  itself if it does not contain any directory separators.
+
+  ## Examples
+
+      iex> Path.basename("foo")
+      "foo"
+
+      iex> Path.basename("foo/bar")
+      "bar"
+
+      iex> Path.basename("/")
+      ""
+
+  """
+  @spec basename(t) :: binary
+  def basename(path) do
+    FN.basename(IO.chardata_to_string(path))
+  end
+
+  @doc """
+  Returns the last component of `path` with the `extension`
+  stripped. This function should be used to remove a specific
+  extension which may, or may not, be there.
+
+  ## Examples
+
+      iex> Path.basename("~/foo/bar.ex", ".ex")
+      "bar"
+
+      iex> Path.basename("~/foo/bar.exs", ".ex")
+      "bar.exs"
+
+      iex> Path.basename("~/foo/bar.old.ex", ".ex")
+      "bar.old"
+
+  """
+  @spec basename(t, t) :: binary
+  def basename(path, extension) do
+    FN.basename(IO.chardata_to_string(path), IO.chardata_to_string(extension))
+  end
+
+  @doc """
+  Returns the directory component of `path`.
+
+  ## Examples
+
+      iex> Path.dirname("/foo/bar.ex")
+      "/foo"
+
+      iex> Path.dirname("/foo/bar/baz.ex")
+      "/foo/bar"
+
+  """
+  @spec dirname(t) :: binary
+  def dirname(path) do
+    FN.dirname(IO.chardata_to_string(path))
+  end
+
+  @doc """
+  Returns the extension of the last component of `path`.
+
+  ## Examples
+
+      iex> Path.extname("foo.erl")
+      ".erl"
+
+      iex> Path.extname("~/foo/bar")
+      ""
+
+  """
+  @spec extname(t) :: binary
+  def extname(path) do
+    FN.extension(IO.chardata_to_string(path))
+  end
+
+  @doc """
+  Returns the `path` with the `extension` stripped.
+
+  ## Examples
+
+      iex> Path.rootname("/foo/bar")
+      "/foo/bar"
+
+      iex> Path.rootname("/foo/bar.ex")
+      "/foo/bar"
+
+  """
+  @spec rootname(t) :: binary
+  def rootname(path) do
+    FN.rootname(IO.chardata_to_string(path))
+  end
+
+  @doc """
+  Returns the `path` with the `extension` stripped. This function should be used to
+  remove a specific extension which might, or might not, be there.
+
+  ## Examples
+
+      iex> Path.rootname("/foo/bar.erl", ".erl")
+      "/foo/bar"
+
+      iex> Path.rootname("/foo/bar.erl", ".ex")
+      "/foo/bar.erl"
+
+  """
+  @spec rootname(t, t) :: binary
+  def rootname(path, extension) do
+    FN.rootname(IO.chardata_to_string(path), IO.chardata_to_string(extension))
+  end
+
+  @doc """
+  Joins a list of strings.
+
+  This function should be used to convert a list of strings to a path.
+  Note that any trailing slash is removed on join.
+
+  ## Examples
+
+      iex> Path.join(["~", "foo"])
+      "~/foo"
+
+      iex> Path.join(["foo"])
+      "foo"
+
+      iex> Path.join(["/", "foo", "bar/"])
+      "/foo/bar"
+
+  """
+  @spec join([t]) :: binary
+  def join([name1, name2 | rest]), do:
+    join([join(name1, name2) | rest])
+  def join([name]), do:
+    name
+
+  @doc """
+  Joins two paths.
+
+  The right path will always be expanded to its relative format
+  and any trailing slash is removed on join.
+
+  ## Examples
+
+      iex> Path.join("foo", "bar")
+      "foo/bar"
+
+  """
+  @spec join(t, t) :: binary
+  def join(left, right) do
+    left    = IO.chardata_to_string(left)
+    os_type = major_os_type()
+    do_join(left, right, os_type) |> remove_dir_sep(os_type)
+  end
+
+  defp do_join("", right, os_type),   do: relative(right, os_type)
+  defp do_join("/", right, os_type),  do: "/" <> relative(right, os_type)
+  defp do_join(left, right, os_type), do: remove_dir_sep(left, os_type) <> "/" <> relative(right, os_type)
+
+  defp remove_dir_sep("", _os_type), do: ""
+  defp remove_dir_sep("/", _os_type), do: "/"
+  defp remove_dir_sep(bin, os_type) do
+    last = :binary.last(bin)
+    if last == ?/ or (last == ?\\ and os_type == :win32) do
+      binary_part(bin, 0, byte_size(bin) - 1)
+    else
+      bin
+    end
+  end
+
   @doc ~S"""
   Splits the path into a list at the path separator.
 
   If an empty string is given, returns an empty list.
 
   On Windows, path is split on both "\" and "/" separators
-  and the driver letter, if there is one, is always returnd
+  and the driver letter, if there is one, is always returned
   in lowercase.
 
   ## Examples
@@ -253,6 +504,7 @@ defmodule Path do
 
       iex> Path.split("/foo/bar")
       ["/", "foo", "bar"]
+
   """
   @spec split(t) :: [binary]
 
@@ -262,6 +514,8 @@ defmodule Path do
   def split(path) do
     FN.split(IO.chardata_to_string(path))
   end
+
+
 
   defp expand_home(type) do
     case IO.chardata_to_string(type) do
