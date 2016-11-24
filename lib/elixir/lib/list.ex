@@ -576,6 +576,190 @@ defmodule List do
     end
   end
 
+  @doc """
+  Converts a charlist to an atom.
+
+  Currently Elixir does not support conversions from charlists
+  which contains Unicode codepoints greater than 0xFF.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> List.to_atom('elixir')
+      :elixir
+
+  """
+  @spec to_atom(charlist) :: atom
+  def to_atom(charlist) do
+    :erlang.list_to_atom(charlist)
+  end
+
+  @doc """
+  Converts a charlist to an existing atom. Raises an `ArgumentError`
+  if the atom does not exist.
+
+  Currently Elixir does not support conversions from charlists
+  which contains Unicode codepoints greater than 0xFF.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> _ = :my_atom
+      iex> List.to_existing_atom('my_atom')
+      :my_atom
+
+      iex> List.to_existing_atom('this_atom_will_never_exist')
+      ** (ArgumentError) argument error
+
+  """
+  @spec to_existing_atom(charlist) :: atom
+  def to_existing_atom(charlist) do
+    :erlang.list_to_existing_atom(charlist)
+  end
+
+  @doc """
+  Returns the float whose text representation is `charlist`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> List.to_float('2.2017764e+0')
+      2.2017764
+
+  """
+  @spec to_float(charlist) :: float
+  def to_float(charlist) do
+    :erlang.list_to_float(charlist)
+  end
+
+  @doc """
+  Returns an integer whose text representation is `charlist`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> List.to_integer('123')
+      123
+
+  """
+  @spec to_integer(charlist) :: integer
+  def to_integer(charlist) do
+    :erlang.list_to_integer(charlist)
+  end
+
+  @doc """
+  Returns an integer whose text representation is `charlist` in base `base`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> List.to_integer('3FF', 16)
+      1023
+
+  """
+  @spec to_integer(charlist, 2..36) :: integer
+  def to_integer(charlist, base) do
+    :erlang.list_to_integer(charlist, base)
+  end
+
+  @doc """
+  Converts a list to a tuple.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> List.to_tuple([:share, [:elixir, 163]])
+      {:share, [:elixir, 163]}
+
+  """
+  @spec to_tuple(list) :: tuple
+  def to_tuple(list) do
+    :erlang.list_to_tuple(list)
+  end
+
+  @doc """
+  Converts a list of integers representing codepoints, lists or
+  strings into a string.
+
+  Notice that this function expects a list of integers representing
+  UTF-8 codepoints. If you have a list of bytes, you must instead use
+  the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+
+  ## Examples
+
+      iex> List.to_string([0x00E6, 0x00DF])
+      "æß"
+
+      iex> List.to_string([0x0061, "bc"])
+      "abc"
+
+  """
+  @spec to_string(:unicode.charlist) :: String.t
+  def to_string(list) when is_list(list) do
+    try do
+      :unicode.characters_to_binary(list)
+    rescue
+      ArgumentError ->
+        raise ArgumentError, """
+        cannot convert the given list to a string.
+
+        To be converted to a string, a list must contain only:
+
+          * strings
+          * integers representing Unicode codepoints
+          * or a list containing one of these three elements
+
+        Please check the given list or call inspect/1 to get the list representation, got:
+
+        #{inspect list}
+        """
+    else
+      result when is_binary(result) ->
+        result
+
+      {:error, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :invalid
+
+      {:incomplete, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :incomplete
+    end
+  end
+
+  @doc """
+  Returns a keyword list that represents an *edit script*.
+
+  The algorithm is outlined in the
+  "An O(ND) Difference Algorithm and Its Variations" paper by E. Myers.
+
+  An *edit script* is a keyword list. Each key describes the "editing action" to
+  take in order to bring `list1` closer to being equal to `list2`; a key can be
+  `:eq`, `:ins`, or `:del`. Each value is a sublist of either `list1` or `list2`
+  that should be inserted (if the corresponding key `:ins`), deleted (if the
+  corresponding key is `:del`), or left alone (if the corresponding key is
+  `:eq`) in `list1` in order to be closer to `list2`.
+
+  ## Examples
+
+      iex> List.myers_difference([1, 4, 2, 3], [1, 2, 3, 4])
+      [eq: [1], del: [4], eq: [2, 3], ins: [4]]
+
+  """
+  @spec myers_difference(list, list) :: [{:eq | :ins | :del, list}] | nil
+  def myers_difference(list1, list2) when is_list(list1) and is_list(list2) do
+    path = {0, 0, list1, list2, []}
+    find_script(0, length(list1) + length(list2), [path])
+  end
+
+  defp find_script(envelope, max, _paths) when envelope > max do
+    nil
+  end
+
   ## Helpers
 
   # replace_at
