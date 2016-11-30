@@ -60,7 +60,7 @@ defmodule Integer do
   end
 
   @doc """
-  Computes the module remainder of an integer division.
+  Computes the modulo remainder of an integer division.
 
   `Integer.mod/2` uses floored division, which means that
   the result will always have the sign of the `divisor`.
@@ -111,7 +111,7 @@ defmodule Integer do
   @spec floor_div(integer, neg_integer | pos_integer) :: integer
   def floor_div(dividend, divisor) do
     if (dividend * divisor < 0) and rem(dividend, divisor) != 0 do
-      div(dividend, divisor) -1
+      div(dividend, divisor) - 1
     else
       div(dividend, divisor)
     end
@@ -141,7 +141,7 @@ defmodule Integer do
     do_digits(integer, base, [])
   end
 
-  defp do_digits(digits, base, []) when abs(digit) < base,
+  defp do_digits(digit, base, []) when abs(digit) < base,
     do: [digit]
   defp do_digits(digit, base, []) when digit == -base,
     do: [-1, 0]
@@ -150,7 +150,7 @@ defmodule Integer do
   defp do_digits(0, _base, acc),
     do: acc
   defp do_digits(integer, base, acc),
-     do: do_digits(div(integer, base), base, [rem(integer, base) | acc])
+    do: do_digits(div(integer, base), base, [rem(integer, base) | acc])
 
   @doc """
   Returns the integer represented by the ordered `digits`.
@@ -197,7 +197,7 @@ defmodule Integer do
   An optional `base` to the corresponding integer can be provided.
   If `base` is not given, 10 will be used.
 
-  If successful, returns a tuple in the form of `{intger, remaind_of_binary}`.
+  If successful, returns a tuple in the form of `{integer, remainder_of_binary}`.
   Otherwise `:error`.
 
   Raises an error if `base` is less than 2 or more than 36.
@@ -223,7 +223,7 @@ defmodule Integer do
       {244, ""}
 
       iex> Integer.parse("Awww++", 36)
-      {509216, "++r"}
+      {509216, "++"}
 
       iex> Integer.parse("fab", 10)
       :error
@@ -237,4 +237,172 @@ defmodule Integer do
 
   def parse("", base) when base in 2..36,
     do: :error
+
+  def parse(binary, base) when is_binary(binary) and base in 2..36 do
+    parse_in_base(binary, base)
+  end
+
+  def parse(binary, base) when is_binary(binary) do
+    raise ArgumentError, "invalid base #{base}"
+  end
+
+  defp parse_in_base("-" <> bin, base) do
+    case do_parse(bin, base) do
+      {number, remainder} -> {-number, remainder}
+      :error -> :error
+    end
+  end
+
+  defp parse_in_base("+" <> bin, base) do
+    do_parse(bin, base)
+  end
+
+  defp parse_in_base(binary, base) when is_binary(binary) do
+    do_parse(binary, base)
+  end
+
+  defp do_parse(<<char, rest::binary>>, base) do
+    if valid_digit_in_base?(char, base) do
+      do_parse(rest, base, parse_digit(char))
+    else
+      :error
+    end
+  end
+
+  defp do_parse(_, _) do
+    :error
+  end
+
+  defp do_parse(<<char, rest::binary>> = bin, base, acc) do
+    if valid_digit_in_base?(char, base) do
+      do_parse(rest, base, base * acc + parse_digit(char))
+    else
+      {acc, bin}
+    end
+  end
+
+  defp do_parse(bitstring, _, acc) do
+    {acc, bitstring}
+  end
+
+  defp parse_digit(char) do
+    cond do
+      char in ?0..?9 -> char - ?0
+      char in ?A..?Z -> char - ?A + 10
+      true           -> char - ?a + 10
+    end
+  end
+
+  defp valid_digit_in_base?(char, base) do
+    if base <= 10 do
+      char in ?0..(?0 + base - 1)
+    else
+      char in ?0..?9 or char in ?A..(?A + base - 11) or char in ?a..(?a + base - 11)
+    end
+  end
+
+  @doc """
+  Returns a binary which corresponds to the text representation
+  of `integer`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> Integer.to_string(123)
+      "123"
+
+      iex> Integer.to_string(+456)
+      "456"
+
+      iex> Integer.to_string(-789)
+      "-789"
+
+      iex> Integer.to_string(0123)
+      "123"
+
+  """
+  @spec to_string(integer) :: String.t
+  def to_string(integer) do
+    :erlang.integer_to_binary(integer)
+  end
+
+  @doc """
+  Returns a binary which corresponds to the text representation
+  of `integer` in the given `base`.
+
+  `base` can be an integer between 2 and 36.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> Integer.to_string(100, 16)
+      "64"
+
+      iex> Integer.to_string(-100, 16)
+      "-64"
+
+      iex> Integer.to_string(882681651, 36)
+      "ELIXIR"
+
+  """
+  @spec to_string(integer, 2..36) :: String.t
+  def to_string(integer, base) do
+    :erlang.integer_to_binary(integer, base)
+  end
+
+  @doc """
+  Returns a charlist which corresponds to the text representation of the given `integer`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> Integer.to_charlist(123)
+      '123'
+
+      iex> Integer.to_charlist(+456)
+      '456'
+
+      iex> Integer.to_charlist(-789)
+      '-789'
+
+      iex> Integer.to_charlist(0123)
+      '123'
+
+  """
+  @spec to_charlist(integer) :: charlist
+  def to_charlist(integer) do
+    :erlang.integer_to_list(integer)
+  end
+
+  @doc """
+  Returns a charlist which corresponds to the text representation of `integer` in the given `base`.
+
+  `base` can be an integer between 2 and 36.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> Integer.to_charlist(100, 16)
+      '64'
+
+      iex> Integer.to_charlist(-100, 16)
+      '-64'
+
+      iex> Integer.to_charlist(882681651, 36)
+      'ELIXIR'
+
+  """
+  @spec to_charlist(integer, 2..36) :: charlist
+  def to_charlist(integer, base) do
+    :erlang.integer_to_list(integer, base)
+  end
+
+  # TODO: Deprecate by v1.5
+  @doc false
+  @spec to_char_list(integer) :: charlist
+  def to_char_list(integer), do: Integer.to_charlist(integer)
 end
