@@ -397,5 +397,145 @@ defmodule Application do
     :application.unload(app)
   end
 
+  @doc """
+  Gets the directory for app.
 
+  This information is returned based on the code path. Here is an
+  example:
+
+      File.mkdir_p!("foo/ebin")
+      Code.prepend_path("foo/ebin")
+      Application.app_dir(:foo)
+      #=> "foo"
+
+  Even though the directory is empty and there is no `.app` file
+  it is considered the application directory based on the name
+  "foo/ebin". The name may contain a dash `-` which is considered
+  to be the app version and it is removed for the lookup purposes:
+
+      File.mkdir_p!("bar-123/ebin")
+      Code.prepend_path("bar-123/ebin")
+      Application.app_dir(:bar)
+      #=> "bar-123"
+
+  For more information on code paths, check the `Code` module in
+  Elixir and also Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html).
+  """
+  @spec app_dir(app) :: String.t
+  def app_dir(app) when is_atom(app) do
+    case :code.lib_dir(app) do
+      lib when is_list(lib) -> IO.chardata_to_string(lib)
+      {:error, :bad_name} -> raise ArgumentError, "unknown application: #{inspect app}"
+    end
+  end
+
+  @doc """
+  Returns the given path inside `app_dir/1`.
+  """
+  @spec app_dir(app, String.t | [String.t]) :: String.t
+  def app_dir(app, path) when is_binary(path) do
+    Path.join(app_dir(app), path)
+  end
+  def app_dir(app, path) when is_list(path) do
+    Path.join([app_dir(app) | path])
+  end
+
+  @doc """
+  Returns a list with information about the applications which are currently running.
+  """
+  @spec started_applications(timeout) :: [tuple]
+  def started_applications(timeout \\ 5000) do
+    :application.which_applications(timeout)
+  end
+
+  @doc """
+  Returns a list with information about the applications which have been loaded.
+  """
+  @spec loaded_applications :: [tuple]
+  def loaded_applications do
+    :application.loaded_applications
+  end
+
+  @doc """
+  Formats the error reason returned by `start/2`,
+  `ensure_started/2`, `stop/1`, `load/1` and `unload/1`,
+  returns a string.
+  """
+  @spec format_error(any) :: String.t
+  def format_error(reason) do
+    try do
+      do_format_error(reason)
+    catch
+      # A user could create an error that looks like a built-in one
+      # causing an error.
+      :error, _ ->
+        inspect(reason)
+    end
+  end
+
+  # exit(:normal) call is special cased, undo the special case.
+  defp do_format_error({{:EXIT, :normal}, {mod, :start, args}}) do
+    Exception.format_exit({:normal, {mod, :start, args}})
+  end
+
+  # {:error, reason} return value
+  defp do_format_error({reason, {mod, :start, args}}) do
+    Exception.format_mfa(mod, :start, args) <> " returned an error: " <>
+      Exception.format_exit(reason)
+  end
+
+  # error or exit(reason) call, use exit reason as reason.
+  defp do_format_error({:bad_return, {{mod, :start, args}, {:EXIT, reason}}}) do
+    Exception.format_exit({reason, {mod, :start, args}})
+  end
+
+  # bad return value
+  defp do_format_error({:bad_return, {{mod, :start, args}, return}}) do
+    Exception.format_mfa(mod, :start, args) <>
+      " returned a bad value: " <> inspect(return)
+  end
+
+  defp do_format_error({:already_started, app}) when is_atom(app) do
+    "already started application #{app}"
+  end
+
+  defp do_format_error({:not_started, app}) when is_atom(app) do
+    "not started application #{app}"
+  end
+
+  defp do_format_error({:bad_application, app}) do
+    "bad application: #{inspect(app)}"
+  end
+
+  defp do_format_error({:already_loaded, app}) when is_atom(app) do
+    "already loaded application #{app}"
+  end
+
+  defp do_format_error({:not_loaded, app}) when is_atom(app) do
+    "not loaded application #{app}"
+  end
+
+  defp do_format_error({:invalid_restart_type, restart}) do
+    "invalid application restart type: #{inspect(restart)}"
+  end
+
+  defp do_format_error({:invalid_name, name}) do
+    "invalid application name: #{inspect(name)}"
+  end
+
+  defp do_format_error({:invalid_options, opts}) do
+    "invalid application options: #{inspect(opts)}"
+  end
+
+  defp do_format_error({:badstartspec, spec}) do
+    "bad application start specs: #{inspect(spec)}"
+  end
+
+  defp do_format_error({'no such file or directory', file}) do
+    "could not find application file: #{file}"
+  end
+
+  defp do_format_error(reason) do
+    Exception.format_exit(reason)
+  end
 end
