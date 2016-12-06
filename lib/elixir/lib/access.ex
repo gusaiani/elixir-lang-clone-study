@@ -355,4 +355,280 @@ defmodule Access do
     raise ArgumentError,
       "could not pop key #{inspect key} on a nil value"
   end
+
+  ## Accessors
+
+  @doc """
+  Returns a function that accesses the given key in a map/struct.
+
+  The returned function is typically passed as an accessor to `Kernel.get_in/2`,
+  `Kernel.get_and_update_in/3`, and friends.
+
+  The returned function uses the default value if the key does not exist.
+  This can be used to specify defaults and safely traverse missing keys:
+
+      iex> get_in(%{}, [Access.key(:user, %{}), Access.key(:name)])
+      nil
+
+  Such is also useful when using update functions, allowing us to introduce
+  values as we traverse the data-structure for updates:
+
+      iex> put_in(%{}, [Access.key(:user, %{}), Access.key(:name)], "Mary")
+      %{user: %{name: "Mary"}}
+
+  ## Examples
+
+      iex> map = %{user: %{name: "john"}}
+      iex> get_in(map, [Access.key(:unknown, %{}), Access.key(:name, "john")])
+      "john"
+      iex> get_and_update_in(map, [Access.key(:user), Access.key(:name)], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {"john", %{user: %{name: "JOHN"}}}
+      iex> pop_in(map, [Access.key(:user), Access.key(:name)])
+      {"john", %{user: %{}}}
+
+  An error is raised if the accessed structure is not a map or a struct:
+
+      iex> get_in(nil, [Access.key(:foo)])
+      ** (BadMapError) expected a map, got: nil
+
+      iex> get_in([], [Access.key(:foo)])
+      ** (BadMapError) expected a map, got: []
+
+  """
+  def key(key, default \\ nil) do
+    fn
+      :get, data, next ->
+        next.(Map.get(data, key, default))
+      :get_and_update, data, next ->
+        value = Map.get(data, key, default)
+        case next.(value) do
+          {get, update} -> {get, Map.put(data, key, update)}
+          :pop -> {value, Map.delete(data, key)}
+        end
+    end
+  end
+
+  @doc """
+  Returns a function that accesses the given key in a map/struct.
+
+  The returned function is typically passed as an accessor to `Kernel.get_in/2`,
+  `Kernel.get_and_update_in/3`, and friends.
+
+  Raises if the key does not exist.
+
+  ## Examples
+
+      iex> map = %{user: %{name: "john"}}
+      iex> get_in(map, [Access.key!(:user), Access.key!(:name)])
+      "john"
+      iex> get_and_update_in(map, [Access.key!(:user), Access.key!(:name)], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {"john", %{user: %{name: "JOHN"}}}
+      iex> pop_in(map, [Access.key!(:user), Access.key!(:name)])
+      {"john", %{user: %{}}}
+      iex> get_in(map, [Access.key!(:user), Access.key!(:unknown)])
+      ** (KeyError) key :unknown not found in: %{name: \"john\"}
+
+  An error is raised if the accessed structure is not a map/struct:
+
+      iex> get_in([], [Access.key!(:foo)])
+      ** (RuntimeError) Access.key!/1 expected a map/struct, got: []
+
+  """
+  def key!(key) do
+    fn
+      :get, %{} = data, next ->
+        next.(Map.fetch!(data, key))
+      :get_and_update, %{} = data, next ->
+        value = Map.fetch!(data, key)
+        case next.(value) do
+          {get, update} -> {get, Map.put(data, key, update)}
+          :pop -> {value, Map.delete(data, key)}
+        end
+      _op, data, _next ->
+        raise "Access.key!/1 expected a map/struct, got: #{inspect data}"
+    end
+  end
+
+  @doc ~S"""
+  Returns a function that accesses the element at the given index in a tuple.
+
+  The returned function is typically passed as an accessor to `Kernel.get_in/2`,
+  `Kernel.get_and_update_in/3`, and friends.
+
+  Raises if the index is out of bounds.
+
+  ## Examples
+
+      iex> map = %{user: {"john", 27}}
+      iex> get_in(map, [:user, Access.elem(0)])
+      "john"
+      iex> get_and_update_in(map, [:user, Access.elem(0)], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {"john", %{user: {"JOHN", 27}}}
+      iex> pop_in(map, [:user, Access.elem(0)])
+      ** (RuntimeError) cannot pop data from a tuple
+
+  An error is raised if the accessed structure is not a tuple:
+
+      iex> get_in(%{}, [Access.elem(0)])
+      ** (RuntimeError) Access.elem/1 expected a tuple, got: %{}
+
+  """
+  def elem(index) when is_integer(index) do
+    pos = index + 1
+
+    fn
+      :get, data, next when is_tuple(data) ->
+        next.(:erlang.element(pos, data))
+      :get_and_update, data, next when is_tuple(data) ->
+        value = :erlang.element(pos, data)
+        case next.(value) do
+          {get, update} -> {get, :erlang.setelement(pos, data, update)}
+          :pop -> raise "cannot pop data from a tuple"
+        end
+      _op, data, _next ->
+        raise "Access.elem/1 expected a tuple, got: #{inspect data}"
+    end
+  end
+
+  @doc ~S"""
+  Returns a function that accesses all the elements in a list.
+
+  The returned function is typically passed as an accessor to `Kernel.get_in/2`,
+  `Kernel.get_and_update_in/3`, and friends.
+
+  ## Examples
+
+      iex> list = [%{name: "john"}, %{name: "mary"}]
+      iex> get_in(list, [Access.all(), :name])
+      ["john", "mary"]
+      iex> get_and_update_in(list, [Access.all(), :name], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {["john", "mary"], [%{name: "JOHN"}, %{name: "MARY"}]}
+      iex> pop_in(list, [Access.all(), :name])
+      {["john", "mary"], [%{}, %{}]}
+
+  Here is an example that traverses the list dropping even
+  numbers and multiplying odd numbers by 2:
+
+      iex> require Integer
+      iex> get_and_update_in([1, 2, 3, 4, 5], [Access.all], fn
+      ...>   num -> if Integer.is_even(num), do: :pop, else: {num, num * 2}
+      ...> end)
+      {[1, 2, 3, 4, 5], [2, 6, 10]}
+
+  An error is raised if the accessed structure is not a list:
+
+      iex> get_in(%{}, [Access.all()])
+      ** (RuntimeError) Access.all/0 expected a list, got: %{}
+
+  """
+  def all() do
+    &all/3
+  end
+
+  defp all(:get, data, next) when is_list(data) do
+    Enum.map(data, next)
+  end
+
+  defp all(:get_and_update, data, next) when is_list(data) do
+    all(data, next, [], [])
+  end
+
+  defp all(_op, data, _next) do
+    raise "Access.all/0 expected a list, got: #{inspect data}"
+  end
+
+  defp all([head | rest], next, gets, updates) do
+    case next.(head) do
+      {get, update} -> all(rest, next, [get | gets], [update | updates])
+      :pop -> all(rest, next, [head | gets], updates)
+    end
+  end
+
+  defp all([], _next, gets, updates) do
+    {:lists.reverse(gets), :lists.reverse(updates)}
+  end
+
+  @doc ~S"""
+  Returns a function that accesses the element at `index` (zero based) of a list.
+
+  The returned function is typically passed as an accessor to `Kernel.get_in/2`,
+  `Kernel.get_and_update_in/3`, and friends.
+
+  ## Examples
+
+      iex> list = [%{name: "john"}, %{name: "mary"}]
+      iex> get_in(list, [Access.at(1), :name])
+      "mary"
+      iex> get_and_update_in(list, [Access.at(0), :name], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {"john", [%{name: "JOHN"}, %{name: "mary"}]}
+
+  `at/1` can also be used to pop elements out of a list or
+  a key inside of a list:
+
+      iex> list = [%{name: "john"}, %{name: "mary"}]
+      iex> pop_in(list, [Access.at(0)])
+      {%{name: "john"}, [%{name: "mary"}]}
+      iex> pop_in(list, [Access.at(0), :name])
+      {"john", [%{}, %{name: "mary"}]}
+
+  When the index is out of bounds, `nil` is returned and the update function is never called:
+
+      iex> list = [%{name: "john"}, %{name: "mary"}]
+      iex> get_in(list, [Access.at(10), :name])
+      nil
+      iex> get_and_update_in(list, [Access.at(10), :name], fn
+      ...>   prev -> {prev, String.upcase(prev)}
+      ...> end)
+      {nil, [%{name: "john"}, %{name: "mary"}]}
+
+  An error is raised for negative indexes:
+
+      iex> get_in([], [Access.at(-1)])
+      ** (FunctionClauseError) no function clause matching in Access.at/1
+
+  An error is raised if the accessed structure is not a list:
+
+      iex> get_in(%{}, [Access.at(1)])
+      ** (RuntimeError) Access.at/1 expected a list, got: %{}
+  """
+  def at(index) when index >= 0 do
+    fn(op, data, next) -> at(op, data, index, next) end
+  end
+
+  defp at(:get, data, index, next) when is_list(data) do
+    data |> Enum.at(index) |> next.()
+  end
+
+  defp at(:get_and_update, data, index, next) when is_list(data) do
+    get_and_update_at(data, index, next, [])
+  end
+
+  defp at(_op, data, _index, _next) do
+    raise "Access.at/1 expected a list, got: #{inspect data}"
+  end
+
+  defp get_and_update_at([head | rest], 0, next, updates) do
+    case next.(head) do
+      {get, update} -> {get, :lists.reverse([update | updates], rest)}
+      :pop -> {head, :lists.reverse(updates, rest)}
+    end
+  end
+
+  defp get_and_update_at([head | rest], index, next, updates) do
+    get_and_update_at(rest, index - 1, next, [head | updates])
+  end
+
+  defp get_and_update_at([], _index, _next, updates) do
+    {nil, :lists.reverse(updates)}
+  end
 end
