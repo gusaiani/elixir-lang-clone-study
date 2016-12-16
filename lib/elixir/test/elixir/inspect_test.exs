@@ -78,3 +78,60 @@ defmodule Inspect.AtomTest do
     assert inspect(:hello, opts) == ":hello"
   end
 end
+
+defmodule Inspect.BitStringTest do
+  use ExUnit.Case, async: true
+
+  test "bitstring" do
+    assert inspect(<<1::12-integer-signed>>) == "<<0, 1::size(4)>>"
+  end
+
+  test "binary" do
+    assert inspect("foo") == "\"foo\""
+    assert inspect(<<?a, ?b, ?c>>) == "\"abc\""
+  end
+
+  test "escape" do
+    assert inspect("f\no") == "\"f\\no\""
+    assert inspect("f\\o") == "\"f\\\\o\""
+    assert inspect("f\ao") == "\"f\\ao\""
+  end
+
+  test "UTF-8" do
+    assert inspect(" ゆんゆん") == "\" ゆんゆん\""
+  end
+
+  test "all escapes" do
+    assert inspect("\a\b\d\e\f\n\r\s\t\v") ==
+           "\"\\a\\b\\d\\e\\f\\n\\r \\t\\v\""
+  end
+
+  test "opt infer" do
+    assert inspect(<<"john", 193, "doe">>, binaries: :infer) == ~s(<<106, 111, 104, 110, 193, 100, 111, 101>>)
+    assert inspect(<<"john">>, binaries: :infer) == ~s("john")
+    assert inspect(<<193>>, binaries: :infer) == ~s(<<193>>)
+  end
+
+  test "opt as strings" do
+    assert inspect(<<"john", 193, "doe">>, binaries: :as_strings) == ~s("john\\xC1doe")
+    assert inspect(<<"john">>, binaries: :as_strings) == ~s("john")
+    assert inspect(<<193>>, binaries: :as_strings) == ~s("\\xC1")
+  end
+
+  test "opt as binaries" do
+    assert inspect(<<"john", 193, "doe">>, binaries: :as_binaries) == "<<106, 111, 104, 110, 193, 100, 111, 101>>"
+    assert inspect(<<"john">>, binaries: :as_binaries) == "<<106, 111, 104, 110>>"
+    assert inspect(<<193>>, binaries: :as_binaries) == "<<193>>"
+    # base: :hex is recognized
+    assert inspect("abc", binaries: :as_binary, base: :hex) == "<<0x61, 0x62, 0x63>>"
+    # any base other than :decimal implies binaries: :as_binaries
+    assert inspect("abc", base: :hex) == "<<0x61, 0x62, 0x63>>"
+    assert inspect("abc", base: :octal) == "<<0o141, 0o142, 0o143>>"
+    # size is still represented as decimal
+    assert inspect(<<10, 11, 12::4>>, base: :hex) == "<<0xA, 0xB, 0xC::size(4)>>"
+  end
+
+  test "unprintable with opts" do
+    assert inspect(<<193, 193, 193, 193>>, limit: 3) == "<<193, 193, 193, ...>>"
+  end
+end
