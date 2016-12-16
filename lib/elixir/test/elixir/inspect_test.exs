@@ -135,3 +135,48 @@ defmodule Inspect.BitStringTest do
     assert inspect(<<193, 193, 193, 193>>, limit: 3) == "<<193, 193, 193, ...>>"
   end
 end
+
+defmodule Inspect.NumberTest do
+  use ExUnit.Case, async: true
+
+  test "integer" do
+    assert inspect(100) == "100"
+  end
+
+  test "decimal" do
+    assert inspect(100, base: :decimal) == "100"
+  end
+
+  test "hex" do
+    assert inspect(100, base: :hex) == "0x64"
+  end
+
+  test "octal" do
+    assert inspect(100, base: :octal) == "0o144"
+  end
+
+  test "binary" do
+    assert inspect(86, base: :binary) == "0b1010110"
+  end
+
+  test "float" do
+    assert inspect(1.0) == "1.0"
+    assert inspect(1.0E10) == "1.0e10"
+    assert inspect(1.0e10) == "1.0e10"
+    assert inspect(1.0e-10) == "1.0e-10"
+  end
+
+  test "integer colors" do
+    opts = [syntax_colors: [number: :red]]
+    assert inspect(123, opts) == "\e[31m123\e[0m"
+    opts = [syntax_colors: [reset: :cyan]]
+    assert inspect(123, opts) == "123"
+  end
+
+  test "float colors" do
+    opts = [syntax_colors: [number: :red]]
+    assert inspect(1.3, opts) == "\e[31m1.3\e[0m"
+    opts = [syntax_colors: [reset: :cyan]]
+    assert inspect(1.3, opts) == "1.3"
+  end
+end
