@@ -180,3 +180,43 @@ defmodule Inspect.NumberTest do
     assert inspect(1.3, opts) == "1.3"
   end
 end
+
+defmodule Inspect.TupleTest do
+  use ExUnit.Case
+
+  test "basic" do
+    assert inspect({1, "b", 3}) == "{1, \"b\", 3}"
+    assert inspect({1, "b", 3}, [pretty: true, width: 1]) == "{1,\n \"b\",\n 3}"
+  end
+
+  test "empty" do
+    assert inspect({}) == "{}"
+  end
+
+  test "with limit" do
+    assert inspect({1, 2, 3, 4}, limit: 3) == "{1, 2, 3, ...}"
+  end
+
+  test "colors" do
+    opts = [syntax_colors: []]
+    assert inspect({}, opts) == "{}"
+
+    opts = [syntax_colors: [reset: :cyan]]
+    assert inspect({}, opts) == "{}"
+    assert inspect({:x, :y}, opts) == "{:x, :y}"
+
+    opts = [syntax_colors: [reset: :cyan, atom: :red]]
+    assert inspect({}, opts) == "{}"
+    assert inspect({:x, :y}, opts) ==
+      "{\e[31m:x\e[36m, \e[31m:y\e[36m}"
+
+    opts = [syntax_colors: [tuple: :green, reset: :cyan, atom: :red]]
+    assert inspect({}, opts) == "\e[32m{\e[36m\e[32m}\e[36m"
+    assert inspect({:x, :y}, opts) ==
+           "\e[32m{\e[36m" <>
+           "\e[31m:x\e[36m" <>
+           "\e[32m,\e[36m " <>
+           "\e[31m:y\e[36m" <>
+           "\e[32m}\e[36m"
+  end
+end
