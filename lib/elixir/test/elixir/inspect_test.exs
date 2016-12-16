@@ -220,3 +220,126 @@ defmodule Inspect.TupleTest do
            "\e[32m}\e[36m"
   end
 end
+
+defmodule Inspect.ListTest do
+  use ExUnit.Case, async: true
+
+  test "basic" do
+    assert inspect([ 1, "b", 3 ]) == "[1, \"b\", 3]"
+    assert inspect([ 1, "b", 3 ], [pretty: true, width: 1]) == "[1,\n \"b\",\n 3]"
+  end
+
+  test "printable" do
+    assert inspect('abc') == "'abc'"
+  end
+
+  test "keyword" do
+    assert inspect([a: 1]) == "[a: 1]"
+    assert inspect([a: 1, b: 2]) == "[a: 1, b: 2]"
+    assert inspect([a: 1, a: 2, b: 2]) == "[a: 1, a: 2, b: 2]"
+    assert inspect(["123": 1]) == ~s(["123": 1])
+
+    assert inspect([foo: [1, 2, 3, :bar], bazzz: :bat], [pretty: true, width: 30]) ==
+           "[foo: [1, 2, 3, :bar],\n bazzz: :bat]"
+  end
+
+  test "opt infer" do
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :infer) == "[106, 111, 104, 110, 0, 100, 111, 101]"
+    assert inspect('john', charlists: :infer) == "'john'"
+    assert inspect([0], charlists: :infer) == "[0]"
+  end
+
+  test "opt as strings" do
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :as_charlists) == "'john\\0doe'"
+    assert inspect('john', charlists: :as_charlists) == "'john'"
+    assert inspect([0], charlists: :as_charlists) == "'\\0'"
+  end
+
+  test "opt as lists" do
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :as_lists) == "[106, 111, 104, 110, 0, 100, 111, 101]"
+    assert inspect('john', charlists: :as_lists) == "[106, 111, 104, 110]"
+    assert inspect([0], charlists: :as_lists) == "[0]"
+  end
+
+  test "non printable" do
+    assert inspect([{:b, 1}, {:a, 1}]) == "[b: 1, a: 1]"
+  end
+
+  test "improper" do
+    assert inspect([:foo | :bar]) == "[:foo | :bar]"
+
+    assert inspect([1, 2, 3, 4, 5 | 42], [pretty: true, width: 1]) == "[1,\n 2,\n 3,\n 4,\n 5 |\n 42]"
+  end
+
+  test "nested" do
+    assert inspect(Enum.reduce(1..100, [0], &[&2, Integer.to_string(&1)]), [limit: 5]) ==
+           "[[[[[[...], ...], \"97\"], \"98\"], \"99\"], \"100\"]"
+    assert inspect(Enum.reduce(1..100, [0], &[&2 | Integer.to_string(&1)]), [limit: 5]) ==
+           "[[[[[[...] | \"96\"] | \"97\"] | \"98\"] | \"99\"] | \"100\"]"
+  end
+
+  test "codepoints" do
+    assert inspect('é') == "[233]"
+  end
+
+  test "empty" do
+    assert inspect([]) == "[]"
+  end
+
+  test "with limit" do
+    assert inspect([ 1, 2, 3, 4 ], limit: 3) == "[1, 2, 3, ...]"
+  end
+
+  test "colors" do
+    opts = [syntax_colors: []]
+    assert inspect([], opts) == "[]"
+
+    opts = [syntax_colors: [reset: :cyan]]
+    assert inspect([], opts) == "[]"
+    assert inspect([:x, :y], opts) ==
+           "[:x, :y]"
+
+    opts = [syntax_colors: [reset: :cyan, atom: :red]]
+    assert inspect([], opts) == "[]"
+    assert inspect([:x, :y], opts) ==
+           "[\e[31m:x\e[36m, \e[31m:y\e[36m]"
+
+    opts = [syntax_colors: [reset: :cyan, atom: :red, list: :green]]
+    assert inspect([], opts) == "\e[32m[]\e[36m"
+    assert inspect([:x, :y], opts) ==
+           "\e[32m[\e[36m" <>
+           "\e[31m:x\e[36m" <>
+           "\e[32m,\e[36m " <>
+           "\e[31m:y\e[36m" <>
+           "\e[32m]\e[36m"
+  end
+
+  test "keyword with colors" do
+    opts = [syntax_colors: [reset: :cyan, list: :green, number: :blue]]
+    assert inspect([], opts) == "\e[32m[]\e[36m"
+    assert inspect([a: 9999], opts) ==
+           "\e[32m[\e[36m" <>
+           "a: " <>
+           "\e[34m9999\e[36m" <>
+           "\e[32m]\e[36m"
+
+    opts = [syntax_colors: [reset: :cyan, atom: :red, list: :green, number: :blue]]
+    assert inspect([], opts) == "\e[32m[]\e[36m"
+    assert inspect([a: 9999], opts) ==
+           "\e[32m[\e[36m" <>
+           "\e[31ma: \e[36m" <>
+           "\e[34m9999\e[36m" <>
+           "\e[32m]\e[36m"
+  end
+
+  test "limit with colors" do
+    opts = [limit: 1, syntax_colors: [reset: :cyan, list: :green, atom: :red]]
+    assert inspect([], opts) == "\e[32m[]\e[36m"
+    assert inspect([:x, :y], opts) ==
+           "\e[32m[\e[36m" <>
+           "\e[31m:x\e[36m" <>
+           "\e[32m,\e[36m " <>
+           "..." <>
+           "\e[32m]\e[36m"
+  end
+end
