@@ -438,3 +438,82 @@ defmodule Inspect.MapTest do
            "\e[32m}\e[36m"
   end
 end
+
+defmodule Inspect.OthersTest do
+  use ExUnit.Case, async: true
+
+  def fun() do
+    fn() -> :ok end
+  end
+
+  test "external Elixir funs" do
+    bin = inspect(&Enum.map/2)
+    assert bin == "&Enum.map/2"
+  end
+
+  test "external Erlang funs" do
+    bin = inspect(&:lists.map/2)
+    assert bin == "&:lists.map/2"
+  end
+
+  test "outdated functions" do
+    defmodule V do
+      def fun do
+        fn -> 1 end
+      end
+    end
+
+    Application.put_env(:elixir, :anony, V.fun)
+    Application.put_env(:elixir, :named, &V.fun/0)
+
+    :code.delete(V)
+    :code.purge(V)
+
+    anony = Application.get_env(:elixir, :anony)
+    named = Application.get_env(:elixir, :named)
+
+    assert inspect(anony) =~ ~r"#Function<0.\d+/0 in Inspect.OthersTest.V>"
+    assert inspect(named) =~ ~r"&Inspect.OthersTest.V.fun/0"
+  after
+    Application.delete_env(:elixir, :anony)
+    Application.delete_env(:elixir, :named)
+  end
+
+  test "other funs" do
+    assert "#Function<" <> _ = inspect(fn(x) -> x + 1 end)
+    assert "#Function<" <> _ = inspect(fun())
+    opts = [syntax_colors: []]
+    assert "#Function<" <> _ = inspect(fun(), opts)
+    opts = [syntax_colors: [reset: :red]]
+    assert "#Function<" <> rest = inspect(fun(), opts)
+    assert String.ends_with?(rest, ">")
+  end
+
+  test "map set" do
+    assert "#MapSet<" <> _ = inspect(MapSet.new)
+  end
+
+  test "PIDs" do
+    assert "#PID<" <> _ = inspect(self())
+    opts = [syntax_colors: []]
+    assert "#PID<" <> _ = inspect(self(), opts)
+    opts = [syntax_colors: [reset: :cyan]]
+    assert "#PID<" <> rest = inspect(self(), opts)
+    assert String.ends_with?(rest, ">")
+  end
+
+  test "references" do
+    assert "#Reference<" <> _ = inspect(make_ref())
+  end
+
+  test "regex" do
+    assert inspect(~r(foo)m) == "~r/foo/m"
+    assert inspect(Regex.compile!("\a\b\d\e\f\n\r\s\t\v/")) ==
+           "~r/\\a\\x08\\x7F\\x1B\\f\\n\\r \\t\\v\\//"
+    assert inspect(~r<\a\b\d\e\f\n\r\s\t\v/>) ==
+           "~r/\\a\\b\\d\\e\\f\\n\\r\\s\\t\\v\\//"
+    opts = [syntax_colors: [regex: :red]]
+    assert inspect(~r/hi/, opts) ==
+           "\e[31m~r/hi/\e[0m"
+  end
+end
