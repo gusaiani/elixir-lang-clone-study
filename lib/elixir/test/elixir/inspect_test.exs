@@ -343,3 +343,98 @@ defmodule Inspect.ListTest do
            "\e[32m]\e[36m"
   end
 end
+
+defmodule Inspect.MapTest do
+  use ExUnit.Case
+
+  test "basic" do
+    assert inspect(%{1 => "b"}) == "%{1 => \"b\"}"
+    assert inspect(%{1 => "b", 2 => "c"}, [pretty: true, width: 1]) == "%{1 => \"b\",\n  2 => \"c\"}"
+  end
+
+  test "keyword" do
+    assert inspect(%{a: 1}) == "%{a: 1}"
+    assert inspect(%{a: 1, b: 2}) == "%{a: 1, b: 2}"
+    assert inspect(%{a: 1, b: 2, c: 3}) == "%{a: 1, b: 2, c: 3}"
+  end
+
+  test "with limit" do
+    assert inspect(%{1 => 1, 2 => 2, 3 => 3, 4 => 4}, limit: 3) == "%{1 => 1, 2 => 2, 3 => 3, ...}"
+  end
+
+  defmodule Public do
+    defstruct key: 0
+  end
+
+  defmodule Private do
+  end
+
+  test "public struct" do
+    assert inspect(%Public{key: 1}) == "%Inspect.MapTest.Public{key: 1}"
+  end
+
+  test "public modified struct" do
+    public = %Public{key: 1}
+    assert inspect(Map.put(public, :foo, :bar)) ==
+           "%{__struct__: Inspect.MapTest.Public, foo: :bar, key: 1}"
+  end
+
+  test "private struct" do
+    assert inspect(%{__struct__: Private, key: 1}) == "%{__struct__: Inspect.MapTest.Private, key: 1}"
+  end
+
+  defmodule Failing do
+    defstruct key: 0
+
+    defimpl Inspect do
+      def inspect(struct, _) do
+        struct.unknown
+      end
+    end
+  end
+
+  test "bad implementation unsafe" do
+    msg = "got KeyError with message \"key :unknown not found in: " <>
+          "%{__struct__: Inspect.MapTest.Failing, key: 0}\" while " <>
+          "inspecting %{__struct__: Inspect.MapTest.Failing, key: 0}"
+
+    assert_raise Inspect.Error, msg, fn ->
+      inspect(%Failing{}, safe: false)
+    end
+
+    assert [{Inspect.Inspect.MapTest.Failing, :inspect, 2, _} | _] = System.stacktrace
+  end
+
+  test "bad implementation safe" do
+    msg = "got KeyError with message \"key :unknown not found in: " <>
+          "%{__struct__: Inspect.MapTest.Failing, key: 0}\" while " <>
+          "inspecting %{__struct__: Inspect.MapTest.Failing, key: 0}"
+
+    assert inspect(%Failing{}) ==
+           inspect(%Inspect.Error{message: "#{msg}"})
+  end
+
+  test "exception" do
+    assert inspect(%RuntimeError{message: "runtime error"}) ==
+           "%RuntimeError{message: \"runtime error\"}"
+  end
+
+  test "colors" do
+    opts = [syntax_colors: [reset: :cyan, atom: :red, number: :magenta]]
+    assert inspect(%{1 => 2}, opts) ==
+           "%{\e[35m1\e[36m => \e[35m2\e[36m}"
+
+    assert inspect(%{a: 1}, opts) ==
+           "%{\e[31ma: \e[36m\e[35m1\e[36m}"
+
+    assert inspect(%Public{key: 1}, opts) ==
+           "%Inspect.MapTest.Public{\e[31mkey: \e[36m\e[35m1\e[36m}"
+
+    opts = [syntax_colors: [reset: :cyan, atom: :red, map: :green, number: :blue]]
+    assert inspect(%{a: 9999}, opts) ==
+           "\e[32m%{\e[36m" <>
+           "\e[31ma: \e[36m" <>
+           "\e[34m9999\e[36m" <>
+           "\e[32m}\e[36m"
+  end
+end
