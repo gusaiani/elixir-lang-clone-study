@@ -700,4 +700,102 @@ defmodule Map do
         raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
     end
   end
+
+  def get_and_update(map, _key, _fun), do: :erlang.error({:badmap, map})
+
+  @doc """
+  Gets the value from `key` and updates it. Raises if there is no `key`.
+
+  Behaves exactly like `get_and_update/3`, but raises a `KeyError` exception if
+  `key` is not present in `map`.
+
+  ## Examples
+
+      iex> Map.get_and_update!(%{a: 1}, :a, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      {1, %{a: "new value!"}}
+
+      iex> Map.get_and_update!(%{a: 1}, :b, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      ** (KeyError) key :b not found in: %{a: 1}
+
+      iex> Map.get_and_update!(%{a: 1}, :a, fn _ ->
+      ...>   :pop
+      ...> end)
+      {1, %{}}
+
+  """
+  @spec get_and_update!(map, key, (value -> {get, value})) :: {get, map} | no_return when get: term
+  def get_and_update!(%{} = map, key, fun) when is_function(fun, 1) do
+    case :maps.find(key, map) do
+      {:ok, value} ->
+        case fun.(value) do
+          {get, update} ->
+            {get, :maps.put(key, update, map)}
+          :pop ->
+            {value, :maps.remove(key, map)}
+          other ->
+            raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
+        end
+      :error ->
+        raise KeyError, term: map, key: key
+    end
+  end
+
+  def get_and_update!(map, _key, _fun), do: :erlang.error({:badmap, map})
+
+  @doc """
+  Converts a `struct` to map.
+
+  It accepts the struct module or a struct itself and
+  simply removes the `__struct__` field from the given struct
+  or from a new struct generated from the given module.
+
+  ## Example
+
+      defmodule User do
+        defstruct [:name]
+      end
+
+      Map.from_struct(User)
+      #=> %{name: nil}
+
+      Map.from_struct(%User{name: "john"})
+      #=> %{name: "john"}
+
+  """
+  @spec from_struct(atom | struct) :: map
+  def from_struct(struct) when is_atom(struct) do
+    :maps.remove(:__struct__, struct.__struct__)
+  end
+
+  def from_struct(%{__struct__: _} = struct) do
+    :maps.remove(:__struct__, struct)
+  end
+
+  @doc """
+  Checks if two maps are equal.
+
+  Two maps are considered to be equal if they contain
+  the same keys and those keys contain the same values.
+
+  ## Examples
+
+      iex> Map.equal?(%{a: 1, b: 2}, %{b: 2, a: 1})
+      true
+      iex> Map.equal?(%{a: 1, b: 2}, %{b: 1, a: 2})
+      false
+
+  """
+  @spec equal?(map, map) :: boolean
+  def equal?(%{} = map1, %{} = map2), do: map1 === map2
+
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def size(map) do
+    map_size(map)
+  end
 end
