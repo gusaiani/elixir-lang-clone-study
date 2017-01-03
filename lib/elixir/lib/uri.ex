@@ -126,4 +126,152 @@ defmodule URI do
   """
   @spec decode_query(binary, map) :: map
   def decode_query(query, map \\ %{})
+
+  # TODO: Remove on 2.0
+  def decode_query(query, %{__struct__: _} = dict) when is_binary(query) do
+    IO.warn "URI.decode_query/2 is deprecated, please use URI.decode_query/1"
+    decode_query_into_dict(query, dict)
+  end
+
+  def decode_query(query, map) when is_binary(query) and is_map(map) do
+    decode_query_into_map(query, map)
+  end
+
+  # TODO: Remove on 2.0
+  def decode_query(query, dict) when is_binary(query) do
+    IO.warn "URI.decode_query/2 is deprecated, please use URI.decode_query/1"
+    decode_query_into_dict(query, dict)
+  end
+
+  defp decode_query_into_map(query, map) do
+    case decode_next_query_pair(query) do
+      nil ->
+        map
+      {{key, value}, rest} ->
+        decode_query_into_map(rest, Map.put(map, key, value))
+    end
+  end
+
+  defp decode_query_into_dict(query, dict) do
+    case decode_next_query_pair(query) do
+      nil ->
+        dict
+      {{key, value}, rest} ->
+        decode_query_into_dict(rest, Dict.put(dict, key, value))
+    end
+  end
+
+  @doc """
+  Returns a stream of two-elemet tuples representing key-value pairs in the
+  given `query`.
+
+  Key and value in each tuple will be binaries and will be percent-unescaped.
+
+  ## Examples
+
+      iex> URI.query_decoder("foo=1&bar=2") |> Enum.to_list()
+      [{"foo", "1"}, {"bar", "2"}]
+
+  """
+  @spec query_decoder(binary) :: Enumerable.t
+  def query_decoder(query) when is_binary(query) do
+    Stream.unfold(query, &decode_next_query_pair/1)
+  end
+
+  defp decode_next_query_pair("") do
+    nil
+  end
+
+  defp decode_next_query_pair(query) do
+    {undecoded_next_pair, rest} =
+      case :binary.split(query, "&") do
+        [next_pair, rest] -> {next_pair, rest}
+        [next_pair]       -> {next_pair, ""}
+      end
+
+    next_pair =
+      case :binary.split(undecoded_next_pair, "=") do
+        [key, value] -> {decode_www_form(key), decode_www_form(value)}
+        [key]        -> {decode_www_form(key), nil}
+      end
+
+    {next_pair, rest}
+  end
+
+  @doc """
+  Checks if the character is a "reserved" character in a URI.
+
+  Reserved characters are specified in
+  [RFC 3986, section 2.2](https://tools.ietf.org/html/rfc3986#section-2.2).
+
+  ## Examples
+
+      iex> URI.char_reserved?(?+)
+      true
+
+  """
+  @spec char_reserved?(char) :: boolean
+  def char_reserved?(char) when char in 0..0x10FFFF do
+    char in ':/?#[]@!$&\'()*+,;='
+  end
+
+  @doc """
+  Checks if the character is a "unreserved" character in a URI.
+
+  Unreserved characters are specified in
+  [RFC 3986, section 2.3](https://tools.ietf.org/html/rfc3986#section-2.3).
+
+  ## Examples
+
+      iex> URI.char_unreserved?(?_)
+      true
+
+  """
+  @spec char_unreserved?(char) :: boolean
+  def char_unreserved?(char) when char in 0..0x10FFFF do
+    char in ?0..?9 or
+      char in ?a..?z or
+      char in ?A..?Z or
+      char in '~_-.'
+  end
+
+  @doc """
+  Checks if the character is allowed unescaped in a URI.
+
+  This is the default used by `URI.encode/2` where both
+  reserved and unreserved characters are kept unescaped.
+
+  ## Examples
+
+      iex> URI.char_unescaped?(?{)
+      false
+
+  """
+  @spec char_unescaped?(char) :: boolean
+  def char_unescaped?(char) when char in 0..0x10FFFF do
+    char_reserved?(char) or char_unreserved?(char)
+  end
+
+  @doc """
+  Percent-escapes the given string.
+
+  This function accepts a `predicate` function as an optional argument; if
+  passed, this function will be called with each character (byte) in `string` as
+  its argument and should return `true` if that character should not be escaped
+  and left as is.
+
+  ## Examples
+
+      iex> URI.encode("ftp://s-ite.tld/?value=put it+й")
+      "ftp://s-ite.tld?value=put%20it+%D0%B9"
+
+      iex> URI.encode("a string", &(&1 != ?i))
+      "a str%69ng"
+
+  """
+  @spec encode(binary, (byte -> boolean)) :: binary
+  def encode(string, predicate \\ &char_unescaped?/1)
+      when is_binary(string) and is_function(predicate, 1) do
+    for <<char <- string>>, into: "", do: percent(char, predicate)
+  end
 end
