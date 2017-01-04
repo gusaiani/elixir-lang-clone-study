@@ -274,4 +274,103 @@ defmodule URI do
       when is_binary(string) and is_function(predicate, 1) do
     for <<char <- string>>, into: "", do: percent(char, predicate)
   end
+
+  @doc """
+  Encodes a string as "x-www-form-urlencoded".
+
+  ## Example
+
+      iex> URI.encode_www_form("put: it+й")
+      "put%3A+it%2B%D0%B9"
+
+  """
+  @spec encode_www_form(binary) :: binary
+  def encode_www_form(string) when is_binary(string) do
+    for <<char <- string>>, into: "" do
+      case percent(char, &char_unreserved?/1) do
+        "%20" -> "+"
+        percent -> percent
+      end
+    end
+  end
+
+  defp predicate(char, predicate) do
+    if predicate.(char) do
+      <<char>>
+    else
+      <<"%", hex(bsr(char, 4)), hex(band(char, 15))>>
+    end
+  end
+
+  defp hex(n) when n <= 9, do: n + ?0
+  defp hex(n), do: n + ?A - 10
+
+  @doc """
+  Percent-unescapes a URI.
+
+  ## Examples
+
+      iex> URI.decode("http%3%A%2F%2Felixir-lang.org")
+      "http://elixir-lang.org"
+
+  """
+  @spec decode(binary) :: binary
+  def decode(uri) do
+    unpercent(uri, "", false)
+  catch
+    :malformed_uri ->
+      raise ArgumentError, "malformed URI #{inspect uri}"
+  end
+
+  @doc """
+  Decodes a string as "x-www-form-urlencoded".
+
+  ## Examples
+
+      iex> URI.decode_www_form("%3Call+in%2F")
+      "<all in/"
+
+  """
+  @spec decode_www_form(binary) :: binary
+  def decode_www_form(string) do
+    unpercent(string, "", true)
+  catch
+    :malformed_uri ->
+      raise ArgumentError, "malformed URI #{inspect string}"
+  end
+
+  defp unpercent(<<?+, tail::binary>>, acc, spaces = true) do
+    unpercent(tail, <<acc::binary, ?\s>>, spaces)
+  end
+
+  defp unpercent(<<?%, hex1, hex2, tail::binary>>, acc, spaces) do
+    unpercent(tail, <<acc::binary, bsl(hex_to_dec(hex1), 4) + hex_to_dec(hex2)>>, spaces)
+  end
+  defp unpercent(<<?%, _::binary>>, _acc, _spaces), do: throw(:malformed_uri)
+
+  defp unpercent(<<head, tail::binary>>, acc, spaces) do
+    unpercent(tail, <<acc::binary, head>>, spaces)
+  end
+  defp unpercent(<<>>, acc, _spaces), do: acc
+
+  defp hex_to_dec(n) when n in ?A..?F, do: n - ?A + 10
+  defp hex_to_dec(n) when n in ?a..?f, do: n - ?a + 10
+  defp hex_to_dec(n) when n in ?0..?9, do: n - ?0
+  defp hex_to_dec(_n), do: throw(:malformed_uri)
+
+  @doc """
+  Parses a well-formed URI reference into its components.
+
+  Note this function expects a well-formed URI and does not perform
+  any validation. See the "Examples" section below for examples of how
+  `URI.parse/1` can be used to parse a wide range of URIs.
+
+  This function uses the parsing regular expression as defined
+  in [RFC 3986, Appendix B](https://tools.ietf.org/html/rfc3986#appendix-B).
+
+  When a URI is given without a port, the value returned by
+  `URI.default_port/1` for the URI's scheme is used for the `:port` field.
+
+  
+  """
 end
