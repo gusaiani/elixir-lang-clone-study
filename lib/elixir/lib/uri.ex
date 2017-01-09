@@ -70,7 +70,7 @@ defmodule URI do
   in the form of `key1=value1&key2=value2...` where keys and
   values are URL encoded as per `encode_www_form/1`.
 
-  Keys and values can be any term that implements te `String.Chars`
+  Keys and values can be any term that implements the `String.Chars`
   protocol, except lists which are explicitly forbidden.
 
   ## Examples
@@ -162,7 +162,7 @@ defmodule URI do
   end
 
   @doc """
-  Returns a stream of two-elemet tuples representing key-value pairs in the
+  Returns a stream of two-element tuples representing key-value pairs in the
   given `query`.
 
   Key and value in each tuple will be binaries and will be percent-unescaped.
@@ -263,7 +263,7 @@ defmodule URI do
   ## Examples
 
       iex> URI.encode("ftp://s-ite.tld/?value=put it+й")
-      "ftp://s-ite.tld?value=put%20it+%D0%B9"
+      "ftp://s-ite.tld/?value=put%20it+%D0%B9"
 
       iex> URI.encode("a string", &(&1 != ?i))
       "a str%69ng"
@@ -294,7 +294,7 @@ defmodule URI do
     end
   end
 
-  defp predicate(char, predicate) do
+  defp percent(char, predicate) do
     if predicate.(char) do
       <<char>>
     else
@@ -310,7 +310,7 @@ defmodule URI do
 
   ## Examples
 
-      iex> URI.decode("http%3%A%2F%2Felixir-lang.org")
+      iex> URI.decode("http%3A%2F%2Felixir-lang.org")
       "http://elixir-lang.org"
 
   """
@@ -371,6 +371,188 @@ defmodule URI do
   When a URI is given without a port, the value returned by
   `URI.default_port/1` for the URI's scheme is used for the `:port` field.
 
-  
+  If a `%URI{}` struct is given to this function, this function returns it
+  unmodified.
+
+  ## Examples
+
+      iex> URI.parse("http://elixir-lang.org/")
+      %URI{scheme: "http", path: "/", query: nil, fragment: nil,
+           authority: "elixir-lang.org", userinfo: nil,
+           host: "elixir-lang.org", port: 80}
+
+      iex> URI.parse("//elixir-lang.org/")
+      %URI{authority: "elixir-lang.org", fragment: nil, host: "elixir-lang.org",
+           path: "/", port: nil, query: nil, scheme: nil, userinfo: nil}
+
+      iex> URI.parse("/foo/bar")
+      %URI{authority: nil, fragment: nil, host: nil, path: "/foo/bar",
+           port: nil, query: nil, scheme: nil, userinfo: nil}
+
+      iex> URI.parse("foo/bar")
+      %URI{authority: nil, fragment: nil, host: nil, path: "foo/bar",
+           port: nil, query: nil, scheme: nil, userinfo: nil}
+
   """
+  @spec parse(t | binary) :: t
+  def parse(uri)
+
+  def parse(%URI{} = uri), do: uri
+
+  def parse(string) when is_binary(string) do
+    # From https://tools.ietf.org/html/rfc3986#appendix-B
+    regex = ~r/^(([a-z][a-z0-9\+\-\.]*):)?(\/\/([^\/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?/i
+    parts = nillify(Regex.run(regex, string))
+
+    destructure [_, _, scheme, _, authority, path, _, query, _, fragment], parts
+    {userinfo, host, port} = split_authority(authority)
+
+    scheme = scheme && String.downcase(scheme)
+    port   = port || (scheme && default_port(scheme))
+
+    %URI{
+      scheme: scheme, path: path, query: query,
+      fragment: fragment, authority: authority,
+      userinfo: userinfo, host: host, port: port
+    }
+  end
+
+  # Split an authority into its userinfo, host and port parts.
+  defp split_authority(string) do
+    components = Regex.run(~r/(^(.*)@)?(\[[a-zA-Z0-9:.]*\]|[^:]*)(:(\d*))?/, string || "")
+
+    destructure [_, _, userinfo, host, _, port], nillify(components)
+    host = if host, do: host |> String.trim_leading("[") |> String.trim_trailing("]")
+    port = if port, do: String.to_integer(port)
+
+    {userinfo, host, port}
+  end
+
+  # Regex.run returns empty strings sometimes. We want
+  # to replace those with nil for consistency.
+  defp nillify(list) do
+    for string <- list do
+      if byte_size(string) > 0, do: string
+    end
+  end
+
+  @doc """
+  Returns the string representation of the given `URI` struct.
+
+      iex> URI.to_string(URI.parse("http://google.com"))
+      "http://google.com"
+
+      iex> URI.to_string(%URI{scheme: "foo", host: "bar.baz"})
+      "foo://bar.baz"
+
+  """
+  @spec to_string(t) :: binary
+  defdelegate to_string(uri), to: String.Chars.URI
+
+  @doc ~S"""
+  Merges two URIs.
+
+  This function merges two URIs as per
+  [RFC 3986, section 5.2](https://tools.ietf.org/html/rfc3986#section-5.2).
+
+  ## Examples
+
+      iex> URI.merge(URI.parse("http://google.com"), "/query") |> to_string
+      "http://google.com/query"
+
+      iex> URI.merge("http://example.com", "http://google.com") |> to_string
+      "http://google.com"
+
+  """
+  @spec merge(t | binary, t | binary) :: t
+  def merge(uri, rel)
+
+  def merge(%URI{authority: nil}, _rel) do
+    raise ArgumentError, "you must merge onto an absolute URI"
+  end
+  def merge(_base, %URI{scheme: rel_scheme} = rel) when rel_scheme != nil do
+    rel
+  end
+  def merge(%URI{} = base, %URI{path: rel_path} = rel) when rel_path in ["", nil] do
+    %{base | query: rel.query || base.query, fragment: rel.fragment}
+  end
+  def merge(%URI{} = base, %URI{} = rel) do
+    new_path = merge_paths(base.path, rel.path)
+    %{base | path: new_path, query: rel.query, fragment: rel.fragment}
+  end
+  def merge(base, rel) do
+    merge(parse(base), parse(rel))
+  end
+
+  defp merge_paths(nil, rel_path),
+    do: merge_paths("/", rel_path)
+  defp merge_paths(_, "/" <> _ = rel_path),
+    do: rel_path
+  defp merge_paths(base_path, rel_path) do
+    [_ | base_segments] = path_to_segments(base_path)
+    path_to_segments(rel_path)
+    |> Kernel.++(base_segments)
+    |> remove_dot_segments([])
+    |> Enum.join("/")
+  end
+
+  defp remove_dot_segments([], [head, ".." | acc]),
+    do: remove_dot_segments([], [head | acc])
+  defp remove_dot_segments([], acc),
+    do: acc
+  defp remove_dot_segments(["." | tail], acc),
+    do: remove_dot_segments(tail, acc)
+  defp remove_dot_segments([head | tail], ["..", ".." | _] = acc),
+    do: remove_dot_segments(tail, [head | acc])
+  defp remove_dot_segments(segments, [_, ".." | acc]),
+    do: remove_dot_segments(segments, acc)
+  defp remove_dot_segments([head | tail], acc),
+    do: remove_dot_segments(tail, [head | acc])
+
+  def path_to_segments(path) do
+    [head | tail] = String.split(path, "/")
+    reverse_and_discard_empty(tail, [head])
+  end
+
+  defp reverse_and_discard_empty([], acc),
+    do: acc
+  defp reverse_and_discard_empty([head], acc),
+    do: [head | acc]
+  defp reverse_and_discard_empty(["" | tail], acc),
+    do: reverse_and_discard_empty(tail, acc)
+  defp reverse_and_discard_empty([head | tail], acc),
+    do: reverse_and_discard_empty(tail, [head | acc])
+end
+
+defimpl String.Chars, for: URI do
+  def to_string(%{scheme: scheme, port: port, path: path,
+                  query: query, fragment: fragment} = uri) do
+    uri =
+      case scheme && URI.default_port(scheme) do
+        ^port -> %{uri | port: nil}
+        _     -> uri
+      end
+
+    # Based on https://tools.ietf.org/html/rfc3986#section-5.3
+    authority = extract_authority(uri)
+
+    if(scheme, do: scheme <> ":", else: "") <>
+      if(authority, do: "//" <> authority, else: "") <>
+      if(path, do: path, else: "") <>
+      if(query, do: "?" <> query, else: "") <>
+      if(fragment, do: "#" <> fragment, else: "")
+  end
+
+  defp extract_authority(%{host: nil, authority: authority}) do
+    authority
+  end
+  defp extract_authority(%{host: host, userinfo: userinfo, port: port}) do
+    # According to the grammar at
+    # https://tools.ietf.org/html/rfc3986#appendix-A, a "host" can have a colon
+    # in it only if it's an IPv6 or "IPvFuture" address, so if there's a colon
+    # in the host we can safely surround it with [].
+    if(userinfo, do: userinfo <> "@", else: "") <>
+      if(String.contains?(host, ":"), do: "[" <> host <> "]", else: host) <>
+      if(port, do: ":" <> Integer.to_string(port), else: "")
+  end
 end
