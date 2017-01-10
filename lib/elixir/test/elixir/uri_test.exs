@@ -90,5 +90,117 @@ defmodule URITest do
                   authority: "foo.com", userinfo: nil} ==
              URI.parse("http://foo.com/path/to/something?foo=bar&bar=foo#fragment")
     end
+
+    test "works with HTTPS scheme" do
+      assert %URI{scheme: "https", host: "foo.com", authority: "foo.com",
+                  query: nil, fragment: nil, port: 443, path: nil, userinfo: nil} ==
+             URI.parse("https://foo.com")
+    end
+
+    test "works with \"file\" scheme" do
+      assert %URI{scheme: "file", host: nil, path: "/foo/bar/baz", userinfo: nil,
+                  query: nil, fragment: nil, port: nil, authority: nil} ==
+             URI.parse("file:///foo/bar/baz")
+    end
+
+    test "works with FTP scheme" do
+      assert %URI{scheme: "ftp", host: "private.ftp-server.example.com",
+                  userinfo: "user001:password", authority: "user001:password@private.ftp-server.example.com",
+                  path: "/my_directory/my_file.txt", query: nil, fragment: nil,
+                  port: 21} ==
+             URI.parse("ftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt")
+    end
+
+    test "works with SFTP schema" do
+      assert %URI{scheme: "sftp", host: "private.ftp-server.example.com",
+                  userinfo: "user001:password", authority: "user001:password@private.ftp-server.example.com",
+                  path: "/my_directory/my_file.txt", query: nil, fragment: nil, port: 22} ==
+             URI.parse("sftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt")
+    end
+
+    test "works with TFTP scheme" do
+      assert %URI{scheme: "tftp", host: "private.ftp-server.example.com",
+                  userinfo: "user001:password", authority: "user001:password@private.ftp-server.example.com",
+                  path: "/my_directory/my_file.txt", query: nil, fragment: nil, port: 69} ==
+             URI.parse("tftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt")
+    end
+
+
+    test "works with LDAP scheme" do
+      assert %URI{scheme: "ldap", host: nil, authority: nil, userinfo: nil,
+                  path: "/dc=example,dc=com", query: "?sub?(givenName=John)",
+                  fragment: nil, port: 389} ==
+             URI.parse("ldap:///dc=example,dc=com??sub?(givenName=John)")
+      assert %URI{scheme: "ldap", host: "ldap.example.com", authority: "ldap.example.com",
+                  userinfo: nil, path: "/cn=John%20Doe,dc=example,dc=com", fragment: nil,
+                  port: 389, query: nil} ==
+             URI.parse("ldap://ldap.example.com/cn=John%20Doe,dc=example,dc=com")
+    end
+
+    test "splits authority" do
+      assert %URI{scheme: "http", host: "foo.com", path: nil,
+                  query: nil, fragment: nil, port: 4444,
+                  authority: "foo:bar@foo.com:4444",
+                  userinfo: "foo:bar"} ==
+             URI.parse("http://foo:bar@foo.com:4444")
+      assert %URI{scheme: "https", host: "foo.com", path: nil,
+                  query: nil, fragment: nil, port: 443,
+                  authority: "foo:bar@foo.com", userinfo: "foo:bar"} ==
+             URI.parse("https://foo:bar@foo.com")
+      assert %URI{scheme: "http", host: "foo.com", path: nil,
+                  query: nil, fragment: nil, port: 4444,
+                  authority: "foo.com:4444", userinfo: nil} ==
+             URI.parse("http://foo.com:4444")
+    end
+
+    test "can parse bad URIs" do
+      assert URI.parse("")
+      assert URI.parse("https:??@?F?@#>F//23")
+
+      assert URI.parse(":https").path == ":https"
+      assert URI.parse("https").path == "https"
+      assert URI.parse("ht\0tps://foo.com").path == "ht\0tps://foo.com"
+    end
+
+    test "can parse IPv6 addresses" do
+      addresses = [
+        "::",                                      # undefined
+        "::1",                                     # loopback
+        "1080::8.800:200C:417A",                   # unicast
+        "FF01::101",                               # multicast
+        "2607:f3f0:2:0:216:3cff:fef0:174a",        # abbreviated
+        "2607:f3F0:2:0:216:3cFf:Fef0:174A",        # mixed hex case
+        "2051:0db8:2d5a:3521:8313:ffad:1242:8e2e", # complete
+        "::00:192.168.10.184"                      # embedded IPv4
+      ]
+
+      Enum.each(addresses, fn(addr) ->
+        simple_uri = URI.parse("http://[#{addr}]/")
+        assert simple_uri.authority == "[#{addr}]"
+        assert simple_uri.host == addr
+
+        userinfo_uri = URI.parse("http://user:pass@[#{addr}]")
+        assert userinfo_uri.authority == "user:pass@[#{addr}]"
+        assert userinfo_uri.host == addr
+        assert userinfo_uri.userinfo == "user:pass"
+
+        port_uri = URI.parse("http://[#{addr}]:2222/")
+        assert port_uri.authority == "[#{addr}]:2222"
+        assert port_uri.host == addr
+        assert port_uri.port == 2222
+
+        userinfo_port_uri = URI.parse("http://user:pass@[#{addr}]:2222/")
+        assert userinfo_port_uri.authority == "user:pass@[#{addr}]:222"
+        assert userinfo_port_uri.host == addr
+        assert userinfo_port_uri.userinfo == "user:pass"
+        assert userinfo_port_uri.port == 2222
+      end)
+    end
+
+    test "downcases the scheme" do
+      assert URI.parse("hTtP://google.com").scheme == "http"
+    end
   end
+
+  
 end
