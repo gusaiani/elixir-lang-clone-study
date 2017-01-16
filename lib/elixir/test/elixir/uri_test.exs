@@ -111,7 +111,7 @@ defmodule URITest do
              URI.parse("ftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt")
     end
 
-    test "works with SFTP schema" do
+    test "works with SFTP scheme" do
       assert %URI{scheme: "sftp", host: "private.ftp-server.example.com",
                   userinfo: "user001:password", authority: "user001:password@private.ftp-server.example.com",
                   path: "/my_directory/my_file.txt", query: nil, fragment: nil, port: 22} ==
@@ -155,7 +155,7 @@ defmodule URITest do
 
     test "can parse bad URIs" do
       assert URI.parse("")
-      assert URI.parse("https:??@?F?@#>F//23")
+      assert URI.parse("https:??@?F?@#>F//23/")
 
       assert URI.parse(":https").path == ":https"
       assert URI.parse("https").path == "https"
@@ -166,7 +166,7 @@ defmodule URITest do
       addresses = [
         "::",                                      # undefined
         "::1",                                     # loopback
-        "1080::8.800:200C:417A",                   # unicast
+        "1080::8:800:200C:417A",                   # unicast
         "FF01::101",                               # multicast
         "2607:f3f0:2:0:216:3cff:fef0:174a",        # abbreviated
         "2607:f3F0:2:0:216:3cFf:Fef0:174A",        # mixed hex case
@@ -179,7 +179,7 @@ defmodule URITest do
         assert simple_uri.authority == "[#{addr}]"
         assert simple_uri.host == addr
 
-        userinfo_uri = URI.parse("http://user:pass@[#{addr}]")
+        userinfo_uri = URI.parse("http://user:pass@[#{addr}]/")
         assert userinfo_uri.authority == "user:pass@[#{addr}]"
         assert userinfo_uri.host == addr
         assert userinfo_uri.userinfo == "user:pass"
@@ -190,7 +190,7 @@ defmodule URITest do
         assert port_uri.port == 2222
 
         userinfo_port_uri = URI.parse("http://user:pass@[#{addr}]:2222/")
-        assert userinfo_port_uri.authority == "user:pass@[#{addr}]:222"
+        assert userinfo_port_uri.authority == "user:pass@[#{addr}]:2222"
         assert userinfo_port_uri.host == addr
         assert userinfo_port_uri.userinfo == "user:pass"
         assert userinfo_port_uri.port == 2222
@@ -202,5 +202,91 @@ defmodule URITest do
     end
   end
 
-  
+  test "default_port/1,2" do
+    assert URI.default_port("http") == 80
+    try do
+      URI.default_port("http", 8000)
+      assert URI.default_port("http") == 8000
+    after
+      URI.default_port("http", 80)
+    end
+
+    assert URI.default_port("unknown") == nil
+    URI.default_port("unknown", 13)
+    assert URI.default_port("unknown") == 13
+  end
+
+  test "to_string/1 and Kernel.to_string/1" do
+    assert to_string(URI.parse("http://google.com")) == "http://google.com"
+    assert to_string(URI.parse("http://google.com:443")) == "http://google.com:443"
+    assert to_string(URI.parse("https://google.com:443")) == "https://google.com"
+    assert to_string(URI.parse("http://lol:wut@google.com")) == "http://lol:wut@google.com"
+    assert to_string(URI.parse("http://google.com/elixir")) == "http://google.com/elixir"
+    assert to_string(URI.parse("http://google.com?q=lol")) == "http://google.com?q=lol"
+    assert to_string(URI.parse("http://google.com?q=lol#omg")) == "http://google.com?q=lol#omg"
+    assert to_string(URI.parse("//google.com/elixir")) == "//google.com/elixir"
+    assert to_string(URI.parse("//google.com:8080/elixir")) == "//google.com:8080/elixir"
+    assert to_string(URI.parse("//user:password@google.com/")) == "//user:password@google.com/"
+    assert to_string(URI.parse("http://[2001:db8::]:8080")) == "http://[2001:db8::]:8080"
+    assert to_string(URI.parse("http://[2001:db8::]")) == "http://[2001:db8::]"
+
+    assert URI.to_string(URI.parse("http://google.com")) == "http://google.com"
+    assert URI.to_string(URI.parse("//user:password@google.com/")) == "//user:password@google.com/"
+  end
+
+  test "merge/2" do
+    assert_raise ArgumentError, "you must merge onto an absolute URI", fn ->
+      URI.merge("/relative", "")
+    end
+
+    assert URI.merge("http://google.com/foo", "http://example.com/baz") |> to_string == "http://example.com/baz"
+
+    assert URI.merge("http://example.com", URI.parse("/foo")) |> to_string == "http://example.com/foo"
+
+    base = URI.parse("http://example.com/foo/bar")
+    assert URI.merge(base, "") |> to_string == "http://example.com/foo/bar"
+    assert URI.merge(base, "#fragment") |> to_string == "http://example.com/foo/bar#fragment"
+    assert URI.merge(base, "?query") |> to_string == "http://example.com/foo/bar?query"
+    assert URI.merge(base, %URI{path: ""}) |> to_string == "http://example.com/foo/bar"
+    assert URI.merge(base, %URI{path: "", fragment: "fragment"}) |> to_string == "http://example.com/foo/bar#fragment"
+
+    base = URI.parse("http://example.com")
+    assert URI.merge(base, "/foo") |> to_string == "http://example.com/foo"
+    assert URI.merge(base, "foo") |> to_string == "http://example.com/foo"
+
+    base = URI.parse("http://example.com/foo/bar")
+    assert URI.merge(base, "/baz") |> to_string == "http://example.com/baz"
+    assert URI.merge(base, "baz") |> to_string == "http://example.com/foo/baz"
+    assert URI.merge(base, "../baz") |> to_string == "http://example.com/baz"
+    assert URI.merge(base, ".././baz") |> to_string == "http://example.com/baz"
+    assert URI.merge(base, "./baz") |> to_string == "http://example.com/foo/baz"
+    assert URI.merge(base, "bar/./baz") |> to_string == "http://example.com/foo/bar/baz"
+
+    base = URI.parse("http://example.com/foo/bar/")
+    assert URI.merge(base, "/baz") |> to_string == "http://example.com/baz"
+    assert URI.merge(base, "baz") |> to_string == "http://example.com/foo/bar/baz"
+    assert URI.merge(base, "../baz") |> to_string == "http://example.com/foo/baz"
+    assert URI.merge(base, ".././baz") |> to_string == "http://example.com/foo/baz"
+    assert URI.merge(base, "./baz") |> to_string == "http://example.com/foo/bar/baz"
+    assert URI.merge(base, "bar/./baz") |> to_string == "http://example.com/foo/bar/bar/baz"
+
+    base = URI.parse("http://example.com/foo/bar/baz")
+    assert URI.merge(base, "../../foobar") |> to_string == "http://example.com/foobar"
+    assert URI.merge(base, "../../../foobar") |> to_string == "http://example.com/foobar"
+    assert URI.merge(base, "../../../../../../foobar") |> to_string == "http://example.com/foobar"
+
+    base = URI.parse("http://example.com/foo/../bar")
+    assert URI.merge(base, "baz") |> to_string == "http://example.com/baz"
+
+    base = URI.parse("http://example.com/foo/./bar")
+    assert URI.merge(base, "baz") |> to_string == "http://example.com/foo/baz"
+
+    base = URI.parse("http://example.com/foo?query1")
+    assert URI.merge(base, "?query2") |> to_string == "http://example.com/foo?query2"
+    assert URI.merge(base, "") |> to_string == "http://example.com/foo?query1"
+
+    base = URI.parse("http://example.com/foo#fragment1")
+    assert URI.merge(base, "#fragment2") |> to_string == "http://example.com/foo#fragment2"
+    assert URI.merge(base, "") |> to_string == "http://example.com/foo"
+  end
 end
