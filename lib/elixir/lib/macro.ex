@@ -196,4 +196,245 @@ defmodule Macro do
     "piping into a unary operator is deprecated. You could use e.g. Kernel.+(5) instead of +5"
   end
   def pipe_warning(_), do: nil
+
+  @doc """
+  Applies the given function to the node metadata if it contains one.
+
+  This is often useful when used with `Macro.prewalk/2` to remove
+  information like lines and hygienic counters from the expression
+  for either storage or comparison.
+
+  ## Examples
+
+      iex> quoted = quote line: 10, do: sample()
+      {:sample, [line: 10], []}
+      iex> Macro.update_meta(quoted, &Keyword.delete(&1, :line))
+      {:sample, [], []}
+
+  """
+  @spec update_meta(t, (Keyword.t -> Keyword.t)) :: t
+  def update_meta(quoted, fun)
+
+  def update_meta({left, meta, right}, fun) when is_list(meta) do
+    {left, fun.(meta), right}
+  end
+
+  def update_meta(other, _fun) do
+    other
+  end
+
+  @doc """
+  Generates an AST node representing the variable given
+  by the atoms `var` and `context`.
+
+  ## Examples
+
+  In order to build a variable, a context is expected.
+  Most of the times, in order to preserve hygiene, the
+  context must be `__MODULE__/0`:
+
+      iex> Macro.var(:foo, __MODULE__)
+      {:foo, [], __MODULE__}
+
+  However, if there is a need to access the user variable,
+  nil can be given:
+
+      iex> Macro.var(:foo, nil)
+      {:foo, [], nil}
+
+  """
+  @spec var(var, context) :: {var, [], context} when var: atom, context: atom
+  def var(var, context) when is_atom(var) and is_atom(context) do
+    {var, [], context}
+  end
+
+  @doc """
+  Performs a depth-first traversal of quoted expressions
+  using an accumulator.
+  """
+  @spec traverse(t, any, (t, any -> {t, any}), (t, any -> {t, any})) :: {t, any}
+  def traverse(ast, acc, pre, post) when is_function(pre, 2) and is_function(post, 2) do
+    {ast, acc} = pre.(ast, acc)
+    do_traverse(st, ac, pre, post)
+  end
+
+  defp do_traverse({form, meta, args}, acc, pre, post) when is_atom(form) do
+    {args, acc} = do_traverse_args(args, acc, pre, post)
+    post.({form, meta, args}, acc)
+  end
+
+  defp do_traverse({form, meta, args}, acc, pre, post) do
+    {form, acc} = pre.(form, acc)
+    {form, acc} = do_traverse(form, acc, pre, post)
+    {args, acc} = do_traverse_args(args, acc, pre, post)
+    post.({form, meta, args}, acc)
+  end
+
+  defp do_traverse({left, right}, acc, pre, post) do
+    {left, acc} = pre.(left, acc)
+    {left, acc} = do_traverse(left, acc, pre, post)
+    {right, acc} = pre.(right, acc)
+    {right, acc} = do_traverse(right, acc, pre, post)
+    post.({left, right}, acc)
+  end
+
+  defp do_traverse(list, acc, pre, post) when is_list(list) do
+    {list, acc} = do_traverse_args(list, acc, pre, post)
+    post.(list, acc)
+  end
+
+  defp do_traverse(x, acc, _pre, post) do
+    post.(x, acc)
+  end
+
+  defp do_traverse_args(args, acc, _pre, _post) when is_atom(args) do
+    {args, acc}
+  end
+
+  defp do_traverse_args(args, acc, pre, post) when is_list(args) do
+    Enum.map_reduce(args, acc, fn x, acc ->
+      {x, acc} = pre.(x, acc)
+      do_traverse(x, acc, pre, post)
+    end)
+  end
+
+  @doc """
+  Performs a depth-first, pre-order traversal of quoted expressions.
+  """
+  @spec prewalk(t, (t -> t)) :: t
+  def prewalk(ast, fun) when is_function(fun, 1) do
+    elem(prewalk(ast, nil, fn x, nil -> {fun.(x), nil} end), 0)
+  end
+
+  @doc """
+  Performs a depth-first, pre-order traversal of quoted expressions
+  using an accumulator.
+  """
+  @spec prewalk(t, any, (t, any -> {t, any})) :: {t, any}
+  def prewalk(ast, acc, fun) when is_function(fun, 2) do
+    traverse(ast, acc, fun, fn x, a, -> {x, a} end)
+  end
+
+  @doc """
+  Performs a depth-first, post-order traversal of quoted expressions.
+  """
+  @spec postwalk(t, (t -> t)) :: t
+  def postwalk(ast, fun) when is_function(fun, 1) do
+    elem(postwalk(ast, nil, fn x, nil -> {fun.(x), nil} end), 0)
+  end
+
+  @doc """
+  Performs a depth-first, post-order traversal of quoted expressions
+  using an accumulator.
+  """
+  @spec postwalk(t, any, (t, any -> {t, any})) :: {t, any}
+  def postwalk(ast, acc, fun) when is_function(fun, 2) do
+    traverse(ast, acc, fn x, a -> {x, a} end, fun)
+  end
+
+  @doc """
+  Decomposes a local or remote call into its remote part (when provided),
+  function name and argument list.
+
+  Returns `:error` when an invalid call syntax is provided.
+
+  ## Examples
+
+      iex> Macro.decompose_call(quote(do: foo))
+      {:foo, []}
+
+      iex> Macro.decompose_call(quote(do: foo()))
+      {:foo, []}
+
+      iex> Macro.decompose_call(quote(do: foo(1, 2, 3)))
+      {:foo, [1, 2, 3]}
+
+      iex> Macro.decompose_call(quote(do: Elixir.M.foo(1, 2, 3)))
+      {{:__aliases__, [], [:Elixir, :M]}, :foo, [1, 2, 3]}
+
+      iex> Macro.decompose_call(quote(do: 42))
+      :error
+
+  """
+  @spec decompose_call(Macro.t) :: {atom, [Macro.t] | {Macro.t, atom, [Macro.t]} | :error}
+  def decompose_call(ast)
+
+  def decompose_call({{:., _, [remote, function]}, _, args}) when is_tuple(remote) or is_atom(remote),
+    do: {remote, function, args}
+
+  def decompose_call({name, _, args}) when is_atom(name) and is_atom(args),
+    do: {name, []}
+
+  def decompose_call({name, _, args}) when is_atom(name) and is_list(args),
+    do: {name, args}
+
+  def decompose_call(_),
+    do: :error
+
+  @doc """
+  Recursively escapes a value so it can be inserted
+  into a syntax tree.
+
+  One may pass `unquote: true` to `escape/2`
+  which leaves `unquote/1` statements unescaped, effectively
+  unquoting the contents on escape.
+
+  ## Examples
+
+      iex> Macro.escape(:foo)
+      :foo
+
+      iex> Macro.escape({:a, :b, :c})
+      {:{}, [], [:a, :b, :c]}
+
+      iex> Macro.escape({:unquote, [], [1]}, unquote: true)
+      1
+
+  """
+  @spec escape(term) :: Macro.t
+  @spec escape(term, Keyword.t) :: Macro.t
+  def escape(expr, opts \\ []) do
+    elem(:elixir_quote.escape(expr, Keyword.get(opts, :unquote, false)), 0)
+  end
+
+  @doc """
+  Validates the given expressions are valid quoted expressions.
+
+  Checks the `t:Macro.t/0` for the specification of a valid
+  quoted expression.
+
+  It returns `:ok` if the expression is valid. Otherwise it returns a tuple in the form of
+  `{:error, remainder}` where `remainder` is the invalid part of the quoted expression.
+
+  ## Examples
+
+      iex> Macro.validate({:two_element, :tuple})
+      :ok
+      iex> Macro.validate({:three, :element, :tuple})
+      {:error, {:three, :element, :tuple}}
+
+      iex> Macro.validate([1, 2, 3])
+      :ok
+      iex> Macro.validate([1, 2, 3, {4}])
+      {:error, {4}}
+
+  """
+  @spec validate(term) :: :ok | {:error, term}
+  def validate(expr) do
+    find_invalid(expr) || :ok
+  end
+
+  defp find_invalid({left, right}), do:
+    find_invalid(left) || find_invalid(right)
+
+  defp find_invalid({left, meta, right}) when is_list(meta) and (is_atom(right) or is_list(right)), do:
+    find_invalid(left) || find_invalid(right)
+
+  defp find_invalid(list) when is_list(list), do:
+    Enum.find_value(list, &find_invalid/1)
+
+  defp find_invalid(pid)  when is_pid(pid),    do: nil
+  defp find_invalid(atom) when is_atom(atom),  do: nil
+  defp find_invalid(num)  when is_number(num), do: nil
+  defp find_invalid(bin)  when is_binary(bin), do: nil
 end
