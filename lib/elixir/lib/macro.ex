@@ -437,4 +437,139 @@ defmodule Macro do
   defp find_invalid(atom) when is_atom(atom),  do: nil
   defp find_invalid(num)  when is_number(num), do: nil
   defp find_invalid(bin)  when is_binary(bin), do: nil
+
+  defp find_invalid(fun) when is_function(fun) do
+    unless :erlang.fun_info(fun, :env) == {:env, []} and
+           :erlang.fun_info(fun, :type) == {:type, :external} do
+      {:error, fun}
+    end
+  end
+
+  defp find_invalid(other), do: {:error, other}
+
+  @doc ~S"""
+  Unescapes the given chars.
+
+  This is the unescaping behaviour used by default in Elixir
+  single- and double-quoted strings. Check `unescape_string/2`
+  for information on how to customize the escaping map.
+
+  In this setup, Elixir will escape the following: `\0`, `\a`, `\b`,
+  `\d`, `\e`, `\f`, `\n`, `\r`, `\s`, `\t` and `\v`. Bytes can be
+  given as hexadecimals via `\xNN` and Unicode Codepoints as
+  `\uNNNN` escapes.
+
+  This function is commonly used on sigil implementations
+  (like `~r`, `~s` and others) which receive a raw, unescaped
+  string.
+
+  ## Examples
+
+      iex> Macro.unescape_string("example\\n")
+      "example\n"
+
+  In the example above, we pass a string with `\n` escaped
+  and return a version with it unescaped.
+  """
+  @spec unescape_string(String.t) :: String.t
+  def unescape_string(chars) do
+    :elixir_interpolation.unescape_chars(chars)
+  end
+
+  @doc ~S"""
+  Unescapes the given chars according to the map given.
+
+  Check `unescape_string/1` if you want to use the same map
+  as Elixir single- and double-quoted strings.
+
+  ## Map
+
+  The map must be a function. The function receives an integer
+  representing the codepoint of the character it wants to unescape.
+  Here is the default mapping function implemented by Elixir:
+
+      def unescape_map(?0), do: ?0
+      def unescape_map(?a), do: ?\a
+      def unescape_map(?b), do: ?\b
+      def unescape_map(?d), do: ?\d
+      def unescape_map(?e), do: ?\e
+      def unescape_map(?f), do: ?\f
+      def unescape_map(?n), do: ?\n
+      def unescape_map(?r), do: ?\r
+      def unescape_map(?s), do: ?\s
+      def unescape_map(?t), do: ?\t
+      def unescape_map(?v), do: ?\v
+      def unescape_map(?x), do: true
+      def unescape_map(?u), do: true
+      def unescape_map(e),  do: e
+
+  If the `unescape_map/1` function returns `false`, the char is
+  not escaped and the backslash is kept in the string.
+
+  Hexadecimals and Unicode codepoints will be escaped if the map
+  function returns `true` for `?x`. Unicode codepoints if the map
+  function return `true` for `?u`.
+
+  ## Examples
+
+  Using the `unescape_map/1` function defined above is easy:
+
+      Macro.unescape_string "example\\n", &unescape_map(&1)
+
+  """
+  @spec unescape_string(String.t, (non_neg_integer -> non_neg_integer | false)) :: String.t
+  def unescape_string(chars, map) do
+    :elixir_interpolation.unescape_chars(chars, map)
+  end
+
+  @doc """
+  Unescapes the given tokens according to the default map.
+
+  Check `unescape_string/1` and `unescape_string/2` for more
+  information about unescaping.
+
+  Only tokens that are binaries are unescaped, all others are
+  ignored. This function is useful when implementing your own
+  sigils. Check the implementation of `Kernel.sigil_s/2`
+  for examples.
+  """
+  @spec unescape_tokens([Macro.t]) :: [Macro.t]
+  def unescape_tokens(tokens) do
+    :elixir_interpolation.unescape_tokens(tokens)
+  end
+
+  @doc """
+  Unescapes the given tokens according to the given map.
+
+  Check `unescape_tokens/1` and `unescape_string/2` for more information.
+  """
+  @spec unescape_tokens([Macro.t], (non_neg_integer -> non_neg_integer | false)) :: [Macro.t]
+  def unescape_tokens(tokens, map) do
+    :elixir_interpolation.unescape_tokens(tokens, map)
+  end
+
+  @doc """
+  Converts the given expression to a binary.
+
+  The given `fun` is called for every node in the AST with two arguments: the
+  AST of the node being printed and the string representation of that same
+  node. The return value of this function is used as the final string
+  representation for that AST node.
+
+  ## Examples
+
+      iex> Macro.to_string(quote(do: foo.bar(1, 2, 3)))
+      "foo.bar(1, 2, 3)"
+
+      iex> Macro.to_string(quote(do: 1 + 2), fn
+      ...>   1, _string -> "one"
+      ...>   2, _string -> "two"
+      ...>   _ast, string -> string
+      ...> end)
+      "one + two"
+
+  """
+  @spec to_string(Macro.t) :: String.t
+  @spec to_string(Macro.t, (Macro.t, String.t -> String.t)) :: String.t
+  def to_string(tree, fun \\ fn(_ast, string) -> string end)
 end
