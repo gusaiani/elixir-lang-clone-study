@@ -88,6 +88,12 @@ defmodule Application do
   by `use Application`) which does any application cleanup. It receives the
   application state and can return any value. Note that shutting down the
   supervisor is automatically handled by the VM.
+
+  An application without a supervision tree doesn't define an application
+  module callback in the application definition in `mix.exs` file. Even though
+  there is no module with application callbacks such as `start/2` and
+  `stop/1`, the application can be started and stopped the same way as an
+  application with a supervision tree.
   """
 
   @doc """
@@ -144,6 +150,20 @@ defmodule Application do
   nothing and just returns `:ok`.
   """
   @callback stop(state) :: term
+
+  @doc """
+  Start an application in synchronous phases.
+
+  This function is called after `start/2` finishes but before
+  `Application.start/2` returns. It will be called once for every start phase
+  defined in the application's (and any included applications') specification,
+  in the order they are listed in.
+  """
+  @callback start_phase(phase :: term, start_type, phase_args :: term) ::
+    :ok |
+    {:error, reason :: term}
+
+  @optional_callbacks start_phase: 3
 
   @doc false
   defmacro __using__(_) do
