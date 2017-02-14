@@ -98,5 +98,51 @@ defmodule Base do
   b32hex_alphabet = Enum.with_index '0123456789ABCDEFGHIJKLMNOPQRSTUV'
 
   Enum.each [{:enc16,    :dec16,    b16_alphabet},
-  ]
+             {:enc32,    :dec32,    b32_alphabet},
+             {:enc64,    :dec64,    b64_alphabet},
+             {:enc64url, :dec64url, b64url_alphabet},
+             {:enc32hex, :dec32hex, b32hex_alphabet}], fn({enc, dec, alphabet}) ->
+    for {encoding, value} <- alphabet do
+      defp unquote(enc)(unquote(value)), do: unquote(encoding)
+      defp unquote(dec)(unquote(encoding)), do: unquote(value)
+    end
+    defp unquote(dec)(c) do
+      raise ArgumentError, "non-alphabet digit found: #{inspect <<c>>, binaries: :as_strings} (byte #{c})"
+    end
+  end
+
+  @compile {:inline, from_upper: 1, from_lower: 1, from_mixed: 1,
+                     to_lower: 1, to_upper: 1, enc16: 1, dec16: 1,
+                     enc32: 1, dec32: 1, enc32hex: 1, dec32hex: 1,
+                     enc64: 1, dec64: 1, enc64url: 1, dec64url: 1}
+
+  defp to_lower(char) when char in ?A..?Z,
+    do: char + (?a - ?A)
+  defp to_lower(char),
+    do: char
+
+  defp to_upper(char), do: char
+
+  defp from_upper(char), do: char
+
+  defp from_lower(char) when char in ?a..?z,
+    do: char - (?a - ?A)
+  defp from_lower(char) when char not in ?A..?Z,
+    do: char
+  defp from_lower(char),
+    do: raise(ArgumentError, "non-alphabet digit found: \"#{<<char>>}\" (byte #{char})")
+
+  defp from_mixed(char) when char in ?a..?z,
+    do: char - (?a - ?A)
+  defp from_mixed(char),
+    do: char
+
+  defp maybe_pad(subject, false, _, _),
+    do: subject
+  defp maybe_pad(subject, _, group_size, pad) do
+    case rem(byte_size(subject), group_size) do
+      0 -> subject
+      x -> subject <> String.duplicate(pad, group_size - x)
+    end
+  end
 end
