@@ -91,6 +91,7 @@ defmodule Base do
       |     16|         Q|     33|         h|     50|         y|       |          |
 
   """
+
   b16_alphabet    = Enum.with_index '0123456789ABCDEF'
   b64_alphabet    = Enum.with_index 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
   b64url_alphabet = Enum.with_index 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
@@ -145,4 +146,130 @@ defmodule Base do
       x -> subject <> String.duplicate(pad, group_size - x)
     end
   end
+
+  @doc """
+  Encodes a binary string into a base 16 encoded string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+
+  The values for `:case` can be:
+
+    * `:upper` - uses upper case characters (default)
+    * `:lower` - uses lower case characters
+
+  ## Examples
+
+      iex> Base.encode16("foobar")
+      "666F6F626172"
+
+      iex> Base.encode16("foobar", case: :lower)
+      "666f6f626172"
+
+  """
+  @spec encode16(binary) :: binary
+  @spec encode16(binary, Keyword.t) :: binary
+  def encode16(data, opts \\ []) when is_binary(data) do
+    case = Keyword.get(opts, :case, :upper)
+    do_encode16(case, data)
+  end
+
+  @doc """
+  Decodes a base 16 encoded string into a binary string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  ## Examples
+
+      iex> Base.decode16("666F6F626172")
+      {:ok, "foobar"}
+
+      iex> Base.decode16("666f6f626172", case: :lower)
+      {:ok, "foobar"}
+
+      iex> Base.decode16("666f6F626172", case: :mixed)
+      {:ok, "foobar"}
+
+  """
+  @spec decode16(binary) :: {:ok, binary} | :error
+  @spec decode16(binary, Keyword.t) :: {:ok, binary} | :error
+  def decode16(string, opts \\ []) do
+    {:ok, decode16!(string, opts)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  @doc """
+  Decodes a base 16 encoded string into a binary string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  An `ArgumentError` exception is raised if the padding is incorrect or
+  a non-alphabet character is present in the string.
+
+  ## Examples
+
+      iex> Base.decode16!("666F6F626172")
+      "foobar"
+
+      iex> Base.decode16!("666f6f626172", case: :lower)
+      "foobar"
+
+      iex> Base.decode16!("666f6F626172", case: :mixed)
+      "foobar"
+
+  """
+  @spec decode16!(binary) :: binary
+  @spec decode16!(binary, Keyword.t) :: binary
+  def decode16!(string, opts \\ [])
+
+  def decode16!(string, opts) when is_binary(string) and rem(byte_size(string), 2) == 0 do
+    case = Keyword.get(opts, :case, :upper)
+    do_decode16(case, string)
+  end
+
+  def decode16!(string, _opts) when is_binary(string) do
+    raise ArgumentError, "odd-length string"
+  end
+
+  @doc """
+  Encodes a binary string into a base 64 encoded string.
+
+  Accepts `padding: false` option which will omit padding from
+  the output string.
+
+  ## Examples
+
+      iex> Base.encode64("foobar")
+      "Zm9vYmFy"
+
+      iex> Base.encode64("foob")
+      "Zm9vYg=="
+
+      iex> Base.encode64("foob", padding: false)
+      "Zm9vYg"
+  """
 end
