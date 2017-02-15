@@ -271,5 +271,163 @@ defmodule Base do
 
       iex> Base.encode64("foob", padding: false)
       "Zm9vYg"
+
   """
+  @spec encode64(binary) :: binary
+  @spec encode64(binary, Keyword.t) :: binary
+  def encode64(data, opts \\ []) when is_binary(data) do
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode64(data, pad?)
+  end
+
+  @doc """
+  Decodes a base 64 encoded string into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
+
+  ## Examples
+
+      iex> Base.decode64("Zm9vYmFy")
+      {:ok, "foobar"}
+
+      iex> Base.decode64("Zm9vYmFy\\n", ignore: :whitespace)
+      {:ok, "foobar"}
+
+      iex> Base.decode64("Zm9vYg==")
+      {:ok, "foob"}
+
+      iex> Base.decode64("Zm9vYg", padding: false)
+      {:ok, "foob"}
+
+  """
+  @spec decode64(binary) :: {:ok, binary} | :error
+  @spec decode64(binary, Keyword.t) :: {:ok, binary} | :error
+  def decode64(string, opts \\ []) when is_binary(string) do
+    {:ok, decode64!(string, opts)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  @doc """
+  Decodes a base 64 encoded string into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
+
+  An `ArgumentError` exception is raised if the padding is incorrect or
+  a non-alphabet character is present in the string.
+
+  ## Examples
+
+      iex> Base.decode64!("Zm9vYmFy")
+      "foobar"
+
+      iex> Base.decode64!("Zm9vYmFy\\n", ignore: :whitespace)
+      "foobar"
+
+      iex> Base.decode64!("Zm9vYg==")
+      "foob"
+
+      iex> Base.decode64!("Zm9vYg", padding: false)
+      "foob"
+
+  """
+  @spec decode64!(binary) :: binary
+  @spec decode64!(binary, Keyword.t) :: binary
+  def decode64!(string, opts \\ []) when is_binary(string) do
+    pad? = Keyword.get(opts, :padding, true)
+    string |> remove_ignored(opts[:ignore]) |> do_decode64(pad?)
+  end
+
+  @doc """
+  Encodes a binary string into a base 64 encoded string with URL and filename
+  safe alphabet.
+
+  Accepts `padding: false` option which will omit padding from
+  the output string.
+
+  ## Examples
+
+      iex> Base.url_encode64(<<255, 127, 254, 252>>)
+      "_3_-_A=="
+
+      iex> Base.url_encode64(<<255, 127, 254, 252>>, padding: false)
+      "_3_-_A"
+
+  """
+  @spec url_encode64(binary) :: binary
+  @spec url_encode64(binary, Keyword.t) :: binary
+  def url_encode64(data, opts \\ []) when is_binary(data) do
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode64url(data, pad?)
+  end
+
+  @doc """
+  Decodes a base 64 encoded string with URL and filename safe alphabet
+  into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
+
+  ## Examples
+
+      iex> Base.url_decode64("_3_-_A==")
+      {:ok, <<255, 127, 254, 252>>}
+
+      iex> Base.url_decode64("_3_-_A==\\n", ignore: :whitespace)
+      {:ok, <<255, 127, 254, 252>>}
+
+      iex> Base.url_decode64("_3_-_A", padding: false)
+      {:ok, <<255, 127, 254, 252>>}
+
+  """
+  @spec url_decode64(binary) :: {:ok, binary} | :error
+  @spec url_decode64(binary, Keyword.t) :: {:ok, binary} | :error
+  def url_decode64(string, opts \\ []) when is_binary(string) do
+    {:ok, url_decode64!(string, opts)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  @doc """
+  Decodes a base 64 encoded string with URL and filename safe alphabet
+  into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
+
+  An `ArgumentError` exception is raised if the padding is incorrect or
+  a non-alphabet character is present in the string.
+
+  ## Examples
+
+      iex> Base.url_decode64!("_3_-_A==")
+      <<255, 127, 254, 252>>
+
+      iex> Base.url_decode64!("_3_-_A==\\n", ignore: :whitespace)
+      <<255, 127, 254, 252>>
+
+      iex> Base.url_decode64!("_3_-_A", padding: false)
+      <<255, 127, 254, 252>>
+
+  """
+  @spec url_decode64!(binary) :: binary
+  @spec url_decode64!(binary, Keyword.t) :: binary
+  def url_decode64!(string, opts \\ []) when is_binary(string)  do
+    pad? = Keyword.get(opts, :padding, true)
+    string |> remove_ignored(opts[:ignore]) |> do_decode64url(pad?)
+  end
 end
