@@ -708,4 +708,61 @@ defmodule Base do
   defp do_encode16(:lower, data) do
     for <<c::4 <- data>>, into: <<>>, do: <<to_lower(enc16(c))::8>>
   end
+
+  defp do_decode16(_, <<>>), do: <<>>
+  defp do_decode16(:upper, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(c1)::4, dec16(c2)::4>>
+    end
+  end
+  defp do_decode16(:lower, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(from_lower(c1))::4, dec16(from_lower(c2))::4>>
+    end
+  end
+  defp do_decode16(:mixed, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(from_mixed(c1))::4, dec16(from_mixed(c2))::4>>
+    end
+  end
+
+  defp do_encode64(<<>>, _), do: <<>>
+  defp do_encode64(data, pad?) do
+    split =  3 * div(byte_size(data), 3)
+    <<main::size(split)-binary, rest::binary>> = data
+    main = for <<c::6 <- main>>, into: <<>>, do: <<enc64(c)::8>>
+    tail = case rest do
+      <<c1::6, c2::6, c3::4>> ->
+        <<enc64(c1)::8, enc64(c2)::8, enc64(bsl(c3, 2))::8>>
+      <<c1::6, c2::2>> ->
+        <<enc64(c1)::8, enc64(bsl(c2, 4))::8>>
+      <<>> ->
+        <<>>
+    end
+    main <> maybe_pad(tail, pad?, 4, "=")
+  end
+
+  defp do_decode64(<<>>, _), do: <<>>
+  defp do_decode64(string, false) do
+    maybe_pad(string, true, 4, "=") |> do_decode64(true)
+  end
+  defp do_decode64(string, _pad?) when rem(byte_size(string), 4) == 0 do
+    split = byte_size(string) - 4
+    <<main::size(split)-binary, rest::binary>> = string
+    main = for <<c::8 <- main>>, into: <<>>, do: <<dec64(c)::6>>
+    tail = case rest do
+      <<c1::8, c2::8, ?=, ?=>> ->
+        <<dec64(c1)::6, bsr(dec64(c2), 4)::2>>
+      <<c1::8, c2::8, c3::8, ?=>> ->
+        <<dec64(c1)::6, dec64(c2)::6, bsr(dec64(c3), 2)::4>>
+      <<c1::8, c2::8, c3::8, c4::8>> ->
+        <<dec64(c1)::6, dec64(c2)::6, dec64(c3)::6, dec64(c4)::6>>
+      <<>> ->
+        <<>>
+    end
+    main <> tail
+  end
+  defp do_decode64(_, _) do
+    raise ArgumentError, "incorrect padding"
+  end
 end
