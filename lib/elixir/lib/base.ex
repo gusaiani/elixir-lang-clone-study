@@ -430,4 +430,282 @@ defmodule Base do
     pad? = Keyword.get(opts, :padding, true)
     string |> remove_ignored(opts[:ignore]) |> do_decode64url(pad?)
   end
+
+  @doc """
+  Encodes a binary string into a base 32 encoded string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+    * `:padding` - specifies whether to apply padding
+
+  The values for `:case` can be:
+
+    * `:upper` - uses upper case characters (default)
+    * `:lower` - uses lower case characters
+
+  The values for `:padding` can be:
+
+    * `true` - pad the output string to the nearest multiple of 8 (default)
+    * `false` - omit padding from the output string
+
+  ## Examples
+
+      iex> Base.encode32("foobar")
+      "MZXW6YTBOI======"
+
+      iex> Base.encode32("foobar", case: :lower)
+      "mzxw6ytboi======"
+
+      iex> Base.encode32("foobar", padding: false)
+      "MZXW6YTBOI"
+
+  """
+  @spec encode32(binary) :: binary
+  @spec encode32(binary, Keyword.t) :: binary
+  def encode32(data, opts \\ []) when is_binary(data) do
+    case = Keyword.get(opts, :case, :upper)
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode32(case, data, pad?)
+  end
+
+  @doc """
+  Decodes a base 32 encoded string into a binary string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows  upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - requires the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignores padding from the input string
+
+  ## Examples
+
+      iex> Base.decode32("MZXW6YTBOI======")
+      {:ok, "foobar"}
+
+      iex> Base.decode32("mzxw6ytboi======", case: :lower)
+      {:ok, "foobar"}
+
+      iex> Base.decode32("mzXW6ytBOi======", case: :mixed)
+      {:ok, "foobar"}
+
+      iex> Base.decode32("MZXW6YTBOI", padding: false)
+      {:ok, "foobar"}
+
+  """
+  @spec decode32(binary) :: {:ok, binary} | :error
+  @spec decode32(binary, Keyword.t) :: {:ok, binary} | :error
+  def decode32(string, opts \\ []) do
+    {:ok, decode32!(string, opts)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  @doc """
+  Decodes a base 32 encoded string into a binary string.
+
+  An `ArgumentError` exception is raised if the padding is incorrect or
+  a non-alphabet character is present in the string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - requires the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignores padding from the input string
+
+  ## Examples
+
+      iex> Base.decode32!("MZXW6YTBOI======")
+      "foobar"
+
+      iex> Base.decode32!("mzxw6ytboi======", case: :lower)
+      "foobar"
+
+      iex> Base.decode32!("mzXW6ytBOi======", case: :mixed)
+      "foobar"
+
+      iex> Base.decode32!("MZXW6YTBOI", padding: false)
+      "foobar"
+
+  """
+  @spec decode32!(binary) :: binary
+  @spec decode32!(binary, Keyword.t) :: binary
+  def decode32!(string, opts \\ []) when is_binary(string) do
+    case = Keyword.get(opts, :case, :upper)
+    pad? = Keyword.get(opts, :padding, true)
+    do_decode32(case, string, pad?)
+  end
+
+  @doc """
+  Encodes a binary string into a base 32 encoded string with an
+  extended hexadecimal alphabet.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+    * `:padding` - specifies whether to apply padding
+
+  The values for `:case` can be:
+
+    * `:upper` - uses upper case characters (default)
+    * `:lower` - uses lower case characters
+
+  The values for `:padding` can be:
+
+    * `true` - pad the output string to the nearest multiple of 8 (default)
+    * `false` - omit padding from the output string
+
+  ## Examples
+
+      iex> Base.hex_encode32("foobar")
+      "CPNMUOJ1E8======"
+
+      iex> Base.hex_encode32("foobar", case: :lower)
+      "cpnmuoj1e8======"
+
+      iex> Base.hex_encode32("foobar", padding: false)
+      "CPNMUOJ1E8"
+
+  """
+  @spec hex_encode32(binary) :: binary
+  @spec hex_encode32(binary, Keyword.t) :: binary
+  def hex_encode32(data, opts \\ []) when is_binary(data) do
+    case = Keyword.get(opts, :case, :upper)
+    pad? = Keyword.get(opts, :padding, true)
+    do_hex_encode32(case, data, pad?)
+  end
+
+  @doc """
+  Decodes a base 32 encoded string with extended hexadecimal alphabet
+  into a binary string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - requires the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignores padding from the input string
+
+  ## Examples
+
+      iex> Base.hex_decode32("CPNMUOJ1E8======")
+      {:ok, "foobar"}
+
+      iex> Base.hex_decode32("cpnmuoj1e8======", case: :lower)
+      {:ok, "foobar"}
+
+      iex> Base.hex_decode32("cpnMuOJ1E8======", case: :mixed)
+      {:ok, "foobar"}
+
+      iex> Base.hex_decode32("CPNMUOJ1E8", padding: false)
+      {:ok, "foobar"}
+
+  """
+  @spec hex_decode32(binary) :: {:ok, binary} | :error
+  @spec hex_decode32(binary, Keyword.t) :: {:ok, binary} | :error
+  def hex_decode32(string, opts \\ []) do
+    {:ok, hex_decode32!(string, opts)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  @doc """
+  Decodes a base 32 encoded string with extended hexadecimal alphabet
+  into a binary string.
+
+  An `ArgumentError` exception is raised if the padding is incorrect or
+  a non-alphabet character is present in the string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allows upper case characters (default)
+    * `:lower` - only allows lower case characters
+    * `:mixed` - allows mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - requires the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignores padding from the input string
+
+  ## Examples
+
+      iex> Base.hex_decode32!("CPNMUOJ1E8======")
+      "foobar"
+
+      iex> Base.hex_decode32!("cpnmuoj1e8======", case: :lower)
+      "foobar"
+
+      iex> Base.hex_decode32!("cpnMuOJ1E8======", case: :mixed)
+      "foobar"
+
+      iex> Base.hex_decode32!("CPNMUOJ1E8", padding: false)
+      "foobar"
+
+  """
+  @spec hex_decode32!(binary) :: binary
+  @spec hex_decode32!(binary, Keyword.t) :: binary
+  def hex_decode32!(string, opts \\ []) when is_binary(string) do
+    case = Keyword.get(opts, :case, :upper)
+    pad? = Keyword.get(opts, :padding, true)
+    do_hex_decode32(case, string, pad?)
+  end
+
+  defp remove_ignored(string, nil), do: string
+  defp remove_ignored(string, :whitespace) do
+    for <<char::8 <- string>>, char not in '\s\t\r\n', into: <<>>, do: <<char::8>>
+  end
+
+  defp do_encode16(_, <<>>), do: <<>>
+  defp do_encode16(:upper, data) do
+    for <<c::4 <- data>>, into: <<>>, do: <<enc16(c)::8>>
+  end
+  defp do_encode16(:lower, data) do
+    for <<c::4 <- data>>, into: <<>>, do: <<to_lower(enc16(c))::8>>
+  end
 end
