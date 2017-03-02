@@ -870,4 +870,75 @@ defmodule Base do
       main <> tail
     end
   end
+
+  defp do_decode32(_, _, _),
+    do: raise ArgumentError, "incorrect padding"
+
+  defp do_hex_encode32(_, <<>>, _), do: <<>>
+
+  for {case, fun} <- [upper: :to_upper, lower: :to_lower] do
+    defp do_hex_encode32(unquote(case), data, pad?) do
+      split =  5 * div(byte_size(data), 5)
+      <<main::size(split)-binary, rest::binary>> = data
+      main = for <<c::5 <- main>>, into: <<>>, do: <<unquote(fun)(enc32hex(c))::8>>
+      tail = case rest do
+        <<c1::5, c2::5, c3::5, c4::5, c5::5, c6::5, c7::2>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(c4))::8,
+            unquote(fun)(enc32hex(c5))::8, unquote(fun)(enc32hex(c6))::8,
+            unquote(fun)(enc32hex(bsl(c7, 3)))::8>>
+        <<c1::5, c2::5, c3::5, c4::5, c5::4>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(c4))::8,
+            unquote(fun)(enc32hex(bsl(c5, 1)))::8>>
+        <<c1::5, c2::5, c3::5, c4::1>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(bsl(c4, 4)))::8>>
+        <<c1::5, c2::3>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(bsl(c2, 2)))::8>>
+        <<>> ->
+          <<>>
+      end
+      main <> maybe_pad(tail, pad?, 8, "=")
+    end
+  end
+
+  defp do_hex_decode32(_, <<>>, _), do: <<>>
+  defp do_hex_decode32(case, string, false),
+    do: do_hex_decode32(case, maybe_pad(string, true, 8, "="), true)
+
+  for {case, fun} <- [upper: :from_upper, lower: :from_lower, mixed: :from_mixed] do
+    defp do_hex_decode32(unquote(case), string, _pad?) when rem(byte_size(string), 8) == 0 do
+      split = byte_size(string) - 8
+      <<main::size(split)-binary, rest::binary>> = string
+      main = for <<c::8 <- main>>, into: <<>>, do: <<dec32hex(unquote(fun)(c))::5>>
+      tail = case rest do
+        <<c1::8, c2::8, ?=, ?=, ?=, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, bsr(dec32hex(unquote(fun)(c2)), 2)::3>>
+        <<c1::8, c2::8, c3::8, c4::8, ?=, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, bsr(dec32hex(unquote(fun)(c4)), 4)::1>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            bsr(dec32hex(unquote(fun)(c5)), 1)::4>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
+            bsr(dec32hex(unquote(fun)(c7)), 3)::2>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
+            dec32hex(unquote(fun)(c7))::5, dec32hex(unquote(fun)(c8))::5>>
+        <<>> ->
+          <<>>
+      end
+      main <> tail
+    end
+  end
+
+  defp do_hex_decode32(_, _, _),
+    do: raise ArgumentError, "incorrect padding"
 end
