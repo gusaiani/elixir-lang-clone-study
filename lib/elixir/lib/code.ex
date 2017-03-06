@@ -201,6 +201,18 @@ defmodule Code do
       {3, [a: 1, b: 2]}
 
   """
+  defp eval_quoted(quoted, binding \\ [], opts \\ [])
+
+  def eval_quoted(quoted, binding, %Macro.Env{} = env) do
+    {value, binding, _env, _scope} = :elixir.eval_quoted quoted, binding, Map.to_list(env)
+    {value, binding}
+  end
+
+  def eval_quoted(quoted, binding, opts) when is_list(opts) do
+    validate_eval_opts(opts)
+    {value, binding, _env, _scope} = :elixir.eval_quoted quoted, binding, opts
+    {value, binding}
+  end
 
   defp validate_eval_opts(opts) do
     if f = opts[:functions], do: validate_imports(:functions, f)
@@ -239,4 +251,131 @@ defmodule Code do
     end
   end
 
+  @doc """
+  Converts the given string to its quoted form.
+
+  Returns `{:ok, quoted_form}`
+  if it succeeds, `{:error, {line, error, token}}` otherwise.
+
+  ## Options
+
+    * `:file` - the filename to be used in stacktraces
+      and the file reported in the `__ENV__/0` macro
+
+    * `:line` - the line reported in the `__ENV__/0` macro
+
+    * `:existing_atoms_only` - when `true`, raises an error
+      when non-existing atoms are found by the tokenizer
+
+  ## Macro.to_string/2
+
+  The opposite of converting a string to its quoted form is
+  `Macro.to_string/2`, which converts a quoted form to a string/binary
+  representation.
+  """
+  def string_to_quoted(string, opts \\ []) when is_list(opts) do
+    file = Keyword.get opts, :file, "nofile"
+    line = Keyword.get opts, :line, 1
+    :elixir.string_to_quoted(to_charlist(string), line, file, opts)
+  end
+
+  @doc """
+  Converts the given string to its quoted form.
+
+  It returns the ast if it succeeds,
+  raises an exception otherwise. The exception is a `TokenMissingError`
+  in case a token is missing (usually because the expression is incomplete),
+  `SyntaxError` otherwise.
+
+  Check `string_to_quoted/2` for options information.
+  """
+  def string_to_quoted!(string, opts \\ []) when is_list(opts) do
+    file = Keyword.get opts, :file, "nofile"
+    line = Keyword.get opts, :line, 1
+    :elixir.string_to_quoted!(to_charlist(string), line, file, opts)
+  end
+
+  @doc """
+  Evals the given file.
+
+  Accepts `relative_to` as an argument to tell where the file is located.
+
+  While `load_file` loads a file and returns the loaded modules and their
+  byte code, `eval_file` simply evaluates the file contents and returns the
+  evaluation result and its bindings.
+  """
+  def eval_file(file, relative_to \\ nil) do
+    file = find_file(file, relative_to)
+    eval_string File.read!(file), [], [file: file, line: 1]
+  end
+
+  @doc """
+  Loads the given file.
+
+  Accepts `relative_to` as an argument to tell where the file is located.
+  If the file was already required/loaded, loads it again.
+
+  It returns a list of tuples `{ModuleName, <<byte_code>>}`, one tuple for
+  each module defined in the file.
+
+  Notice that if `load_file` is invoked by different processes concurrently,
+  the target file will be loaded concurrently many times. Check `require_file/2`
+  if you don't want a file to be loaded concurrently.
+
+  ## Examples
+
+      Code.load_file("eex_test.exs", "../eex/test") |> List.first
+      #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
+
+  """
+  def load_file(file, relative_to \\ nil) when is_binary(file) do
+    file = find_file(file, relative_to)
+    :elixir_code_server.call {:acquire, file}
+    loaded = :elixir_compiler.file file
+    :elixir_code_server.cast {:loaded, file}
+    loaded
+  end
+
+  @doc """
+  Requires the given `file`.
+
+  Accepts `relative_to` as an argument to tell where the file is located.
+  The return value is the same as that of `load_file/2`. If the file was already
+  required/loaded, doesn't do anything and returns `nil`.
+
+  Notice that if `require_file` is invoked by different processes concurrently,
+  the first process to invoke `require_file` acquires a lock and the remaining
+  ones will block until the file is available. I.e. if `require_file` is called
+  N times with a given file, it will be loaded only once. The first process to
+  call `require_file` will get the list of loaded modules, others will get `nil`.
+
+  Check `load_file/2` if you want a file to be loaded multiple times. See also
+  `unload_files/1`
+
+  ## Examples
+
+  If the code is already loaded, it returns `nil`:
+
+      Code.require_file("eex_test.exs", "../eex/test") #=> nil
+
+  If the code is not loaded yet, it returns the same as `load_file/2`:
+
+      Code.require_file("eex_test.exs", "../eex/test") |> List.first
+      #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
+
+  """
+  def require_file(file, relative_to \\ nil) when is_binary(file) do
+    file = find_file(file, relative_to)
+
+    case :elixir_code_server.call({:acquire, file}) do
+      :loaded  ->
+        nil
+      {:queued, ref}  ->
+        receive do {:elixir_code_server, ^ref, :loaded} -> nil end
+      :proceed ->
+        loaded = :elixir_compiler.file file
+        :elixir_code_server.cast {:loaded, file}
+        loaded
+    end
+  end
 end
