@@ -36,7 +36,7 @@ defmodule Code do
 
   """
   def unload_files(files) do
-    :elixir_code_server.cast {:unload_files, file}
+    :elixir_code_server.cast {:unload_files, files}
   end
 
   @doc """
@@ -120,5 +120,123 @@ defmodule Code do
   Additionally, the following scope values can be configured:
 
     * `:aliases` - a list of tuples with the alias and its target
+
+    * `:requires` - a list of modules required
+
+    * `:functions` - a list of tuples where the first element is a module
+      and the second a list of imported function names and arity; the list
+      of function names and arity must be sorted
+
+    * `:macros` - a list of tuples where the first element is a module
+      and the second a list of imported macro names and arity; the list
+      of function names and arity must be sorted
+
+  Notice that setting any of the values above overrides Elixir's default
+  values. For example, setting `:requires` to `[]`, will no longer
+  automatically require the `Kernel` module; in the same way setting
+  `:macros` will no longer auto-import `Kernel` macros like `if/2`, `case/2`,
+  etc.
+
+  Returns a tuple of the form `{value, binding}`,
+  where `value` is the value returned from evaluating `string`.
+  If an error occurs while evaluating `string` an exception will be raised.
+
+  `binding` is a keyword list with the value of all variable bindings
+  after evaluating `string`. The binding key is usually an atom, but it
+  may be a tuple for variables defined in a different context.
+
+  ## Examples
+
+      iex> Code.eval_string("a + b", [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
+      {3, [a: 1, b: 2]}
+
+      iex> Code.eval_string("c = a + b", [a: 1, b: 2], __ENV__)
+      {3, [a: 1, b: 2, c: 3]}
+
+      iex> Code.eval_string("a = a + b", [a: 1, b: 2])
+      {3, [a: 3, b: 2]}
+
+  For convenience, you can pass `__ENV__/0` as the `opts` argument and
+  all imports, requires and aliases defined in the current environment
+  will be automatically carried over:
+
+      iex> Code.eval_string("a + b", [a: 1, b: 2], __ENV__)
+      {3, [a: 1, b: 2]}
+
   """
+  def eval_string(string, binding \\ [], opts \\ [])
+
+  def eval_string(string, binding, %Macro.Env{} = env) do
+    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, Map.to_list(env)
+    {value, binding}
+  end
+
+  def eval_string(string, binding, opts) when is_list(opts) do
+    validate_eval_opts(opts)
+    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, opts
+    {value, binding}
+  end
+
+  @doc """
+  Evaluates the quoted contents.
+
+  **Warning**: Calling this function inside a macro is considered bad
+  practice as it will attempt to evaluate runtime values at compile time.
+  Macro arguments are typically transformed by unquoting them into the
+  returned quoted expressions (instead of evaluated).
+
+  See `eval_string/3` for a description of bindings and options.
+
+  ## Examples
+
+      iex> contents = quote(do: var!(a) + var!(b))
+      iex> Code.eval_quoted(contents, [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
+      {3, [a: 1, b: 2]}
+
+  For convenience, you can pass `__ENV__/0` as the `opts` argument and
+  all options will be automatically extracted from the current environment:
+
+      iex> contents = quote(do: var!(a) + var!(b))
+      iex> Code.eval_quoted(contents, [a: 1, b: 2], __ENV__)
+      {3, [a: 1, b: 2]}
+
+  """
+
+  defp validate_eval_opts(opts) do
+    if f = opts[:functions], do: validate_imports(:functions, f)
+    if m = opts[:macros],    do: validate_imports(:macros, m)
+    if a = opts[:aliases],   do: validate_aliases(:aliases, a)
+    if r = opts[:requires],  do: validate_requires(:requires, r)
+  end
+
+  defp validate_requires(kind, requires) do
+    valid = is_list(requires) and Enum.all?(requires, &is_atom(&1))
+
+    unless valid do
+      raise ArgumentError, "expected :#{kind} option given to eval in the format: [module]"
+    end
+  end
+
+  defp validate_aliases(kind, aliases) do
+    valid = is_list(aliases) and Enum.all?(aliases, fn {k, v} ->
+      is_atom(k) and is_atom(v)
+    end)
+
+    unless valid do
+      raise ArgumentError, "expected :#{kind} option given to eval in the format: [{module, module}]"
+    end
+  end
+
+  defp validate_imports(kind, imports) do
+    valid = is_list(imports) and Enum.all?(imports, fn {k, v} ->
+      is_atom(k) and is_list(v) and Enum.all?(v, fn {name, arity} ->
+        is_atom(name) and is_integer(arity)
+      end)
+    end)
+
+    unless valid do
+      raise ArgumentError, "expected :#{kind} option given to eval in the format: [{module, [{name, arity}]}]"
+    end
+  end
+
 end
