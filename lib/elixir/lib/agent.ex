@@ -6,16 +6,18 @@ defmodule Agent do
   must be accessed from different processes or by the same process
   at different points in time.
 
-  The Agent module provides a basic server implementation that
+  The `Agent` module provides a basic server implementation that
   allows state to be retrieved and updated via a simple API.
 
   ## Examples
 
   For example, in the Mix tool that ships with Elixir, we need
   to keep a set of all tasks executed by a given project. Since
-  this set is shared, we can implement it with an Agent:
+  this set is shared, we can implement it with an agent:
 
       defmodule Mix.TasksServer do
+        use Agent
+
         def start_link do
           Agent.start_link(fn -> MapSet.new end, name: __MODULE__)
         end
@@ -42,12 +44,11 @@ defmodule Agent do
         end
       end
 
-  Note that agents still provide a segregation between the
-  client and server APIs, as seen in GenServers. In particular,
-  all code inside the function passed to the agent is executed
-  by the agent. This distinction is important because you may
-  want to avoid expensive operations inside the agent, as it will
-  effectively block the agent until the request is fulfilled.
+  Agents provide a segregation between the client and server APIs (similar
+  to GenServers). In particular, the anonymous functions given to the `Agent`
+  are executed inside the agent (the server). This distinction is important
+  because you may want to avoid expensive operations inside the agent,
+  as they will effectively block the agent until the request is fulfilled.
 
   Consider these two examples:
 
@@ -61,16 +62,36 @@ defmodule Agent do
         Agent.get(agent, &(&1)) |> do_something_expensive()
       end
 
-  The first function blocks the agent. The second function copies
-  all the state to the client and then executes the operation in the
-  client. The difference is whether the data is large enough to require
-  processing in the server, at least initially, or small enough to be
-  sent to the client cheaply.
+  The first function blocks the agent. The second function copies all the state
+  to the client and then executes the operation in the client. One aspect to
+  consider is whether the data is large enough to require processing in the server,
+  at least initially, or small enough to be sent to the client cheaply. Another
+  factor is whether the data needs to be processed atomically: getting the
+  state and calling `do_something_expensive(state)` outside of the agent means
+  that the agent's state can be updated in the meantime. This is specially
+  important in case of updates as computing the new state in the client rather
+  than in the server can lead to race conditions if multiple clients are trying
+  to update the same state to different values.
 
-  ## Name Registration
+  Finally note `use Agent` defines a `child_spec/1` function, allowing the
+  defined module to be put under a supervision tree. The generated
+  `child_spec/1` can be customized with the following options:
 
-  An Agent is bound to the same name registration rules as GenServers.
-  Read more about it in the `GenServer` docs.
+    * `:id` - the child specification id, defaults to the current module
+    * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
+    * `:restart` - when the child should be restarted, defaults to `:permanent`
+    * `:shutdown` - how to shut down the child
+
+  For example:
+
+      use Agent, restart: :transient, shutdown: 10_000
+
+  See the `Supervisor` docs for more information.
+
+  ## Name registration
+
+  An agent is bound to the same name registration rules as GenServers.
+  Read more about it in the `GenServer` documentation.
 
   ## A word on distributed agents
 
@@ -95,14 +116,15 @@ defmodule Agent do
   ## Hot code swapping
 
   An agent can have its code hot swapped live by simply passing a module,
-  function, and args tuple to the update instruction. For example, imagine
+  function, and arguments tuple to the update instruction. For example, imagine
   you have an agent named `:sample` and you want to convert its inner state
-  from some dict structure to a map. It can be done with the following
+  from a keyword list to a map. It can be done with the following
   instruction:
 
       {:update, :sample, {:advanced, {Enum, :into, [%{}]}}}
 
-  The agent's state will be added to the given list as the first argument.
+  The agent's state will be added to the given list of arguments (`[%{}]`) as
+  the first argument.
   """
 
   @typedoc "Return values of `start*` functions"
@@ -117,6 +139,8 @@ defmodule Agent do
   @typedoc "The agent state"
   @type state :: term
 
+  @doc false
+  def child_spec(arg) do
   @doc """
   Starts an agent linked to the current process with the given function.
 
