@@ -141,13 +141,39 @@ defmodule Agent do
 
   @doc false
   def child_spec(arg) do
+    %{
+      id: Agent,
+      start: {Agent, :start_link, [arg]}
+    }
+  end
+
+  @doc false
+  defmacro __using__(opts) do
+    quote location: :keep, bind_quoted: [opts: opts] do
+      spec = [
+        id: opts[:id] || __MODULE__,
+        start: Macro.escape(opts[:start]) || quote(do: {__MODULE__, :start_link, [arg]}),
+        restart: opts[:restart] || :permanent,
+        shutdown: opts[:shutdown] || 5000,
+        type: :worker
+      ]
+
+      @doc false
+      def child_spec(arg) do
+        %{unquote_splicing(spec)}
+      end
+
+      defoverridable child_spec: 1
+    end
+  end
+
   @doc """
   Starts an agent linked to the current process with the given function.
 
   This is often used to start the agent as part of a supervision tree.
 
-  Once the agent is spawned, the given function is invoked and its return
-  value is used as the agent state. Note that `start_link` does not return
+  Once the agent is spawned, the given function `fun` is invoked and its return
+  value is used as the agent state. Note that `start_link/2` does not return
   until the given function has returned.
 
   ## Options
@@ -172,13 +198,12 @@ defmodule Agent do
   specified name already exists, the function returns
   `{:error, {:already_started, pid}}` with the PID of that process.
 
-  If the given function callback fails with `reason`, the function returns
-  `{:error, reason}`.
+  If the given function callback fails, the function returns `{:error, reason}`.
 
   ## Examples
 
       iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
-      iex> Agent.get(pid, fn(state) -> state end)
+      iex> Agent.get(pid, fn state -> state end)
       42
 
   """
