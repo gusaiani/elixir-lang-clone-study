@@ -60,7 +60,7 @@ defmodule Access do
 
   ## Static lookups
 
-  The `Access` syntax (`foo[bar]`) cannot be used to access fields in
+  The `Access` syntax (`data[key]`) cannot be used to access fields in
   structs, since structs do not implement the `Access` behaviour by
   default. It is also a design decision: the dynamic access lookup
   is meant to be used for dynamic key-value structures, like maps
@@ -73,8 +73,7 @@ defmodule Access do
 
       user = %User{name: "John"}
       user[:name]
-      # ** (UndefinedFunctionError) undefined function User.fetch/2
-      #    (User does not implement the Access behaviour)
+      # ** (UndefinedFunctionError) undefined function User.fetch/2 (User does not implement the Access behaviour)
 
   Structs instead use the `user.name` syntax to access fields:
 
@@ -107,12 +106,14 @@ defmodule Access do
   functions for traversing other structures, like tuples and lists,
   to be used alongside `Kernel.put_in/2` in others.
 
-  For instance, given a user with a list of languages, here is how to
-  deeply traverse the map and convert all language names to uppercase:
+  For instance, given a user map with `:name` and `:languages` keys, here is how
+  to deeply traverse the map and convert all language names to uppercase:
 
-      iex> user = %{name: "john",
-      ...>          languages: [%{name: "elixir", type: :functional},
-      ...>                      %{name: "c", type: :procedural}]}
+      iex> languages = [
+      ...>   %{name: "elixir", type: :functional},
+      ...>   %{name: "c", type: :procedural},
+      ...> ]
+      iex> user = %{name: "john", languages: languages}
       iex> update_in user, [:languages, Access.all(), :name], &String.upcase/1
       %{name: "john",
         languages: [%{name: "ELIXIR", type: :functional},
@@ -123,7 +124,7 @@ defmodule Access do
 
   ## Implementing the Access behaviour for custom data structures
 
-  In order to be able to use the `Access` protocol with custom data structures
+  In order to be able to use the `Access` behaviour with custom data structures
   (which have to be structs), such structures have to implement the `Access`
   behaviour. For example, for a `User` struct, this would have to be done:
 
@@ -136,15 +137,30 @@ defmodule Access do
 
   """
 
-  @type t :: list | map | nil | any
+  @type container :: keyword | struct | map
+  @type nil_container :: nil
+  @type any_container :: any
+  @type t :: container | nil_container | any_container
   @type key :: any
   @type value :: any
+
+  @type get_fun(data, get_value) ::
+        (:get, data, (term -> term) ->
+        {get_value, new_data :: container})
+
+  @type get_and_update_fun(data, get_value) ::
+        (:get_and_update, data, (term -> term) ->
+        {get_value, new_data :: container} | :pop)
+
+  @type access_fun(data, get_value) ::
+        get_fun(data, get_value) | get_and_update_fun(data, get_value)
 
   @doc """
   Invoked in order to access the value stored under `key` in the given term `term`.
 
   This function should return `{:ok, value}` where `value` is the value under
-  `key` if it succeeded, or `:error` if the key does not exist in the structure.
+  `key` if the key exists in the term, or `:error` if the key does not exist in
+  the term.
 
   Many of the functions defined in the `Access` module internally call this
   function. This function is also used when the square-brackets access syntax
@@ -152,7 +168,6 @@ defmodule Access do
   that defines the `structure` struct is invoked and if it returns `{:ok,
   value}` then `value` is returned, or if it returns `:error` then `nil` is
   returned.
-
 
   See the `Map.fetch/2` and `Keyword.fetch/2` implementations for examples of
   how to implement this callback.
@@ -163,7 +178,7 @@ defmodule Access do
   Invoked in order to access the value stored under `key` in the given term `term`,
   defaulting to `default` if not present.
 
-  This function should return the value under the key `key` in `term` if there's
+  This function should return the value under `key` in `term` if there's
   such key, otherwise `default`.
 
   For most data structures, this can be implemented using `fetch/2` internally;
@@ -176,17 +191,17 @@ defmodule Access do
         end
       end
 
-  See the `Map.get/3` and `Keyword.get/3` implementations for more examples.
+  See the `Map.get/3` and `Keyword.get/3` implementations for examples of
+  how to implement this callback.
   """
   @callback get(term :: t, key, default :: value) :: value
 
   @doc """
   Invoked in order to access the value under `key` and update it at the same time.
 
-  The implementation of this callback should invoke the passed function with the
-  value under key `key` in the passed structure, or `nil` if the key is not
-  present. This function should return either `{value_to_return, new_value}` or
-  `:pop`.
+  The implementation of this callback should invoke `fun` with the value under
+  `key` in the passed structure `data`, or with `nil` if `key` is not present in it.
+  This function must return either `{get_value, update_value}` or `:pop`.
 
   If it returns `{value_to_return, new_value}`, the return value of this
   callback should be `{value_to_return, new_term}` where `new_term` is `term`
