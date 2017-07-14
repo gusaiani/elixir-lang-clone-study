@@ -206,6 +206,10 @@ defmodule Agent do
       iex> Agent.get(pid, fn state -> state end)
       42
 
+      iex> {:error, {exception, _stacktrace}} = Agent.start(fn -> raise "oops" end)
+      iex> exception
+      %RuntimeError{message: "oops"}
+
   """
   @spec start_link((() -> term), GenServer.options) :: on_start
   def start_link(fun, options \\ []) when is_function(fun, 0) do
@@ -213,11 +217,11 @@ defmodule Agent do
   end
 
   @doc """
-  Starts an agent linked to the current process with the given module
-  function and arguments.
+  Starts an agent linked to the current process.
 
-  Same as `start_link/2` but a module, function and args are expected
-  instead of an anonymous function.
+  Same as `start_link/2` but a module, function, and arguments are expected
+  instead of an anonymous function; `fun` in `module` will be called with the
+  given arguments `args` to initialize the state.
   """
   @spec start_link(module, atom, [any], GenServer.options) :: on_start
   def start_link(module, fun, args, options \\ []) do
@@ -232,7 +236,7 @@ defmodule Agent do
   ## Examples
 
       iex> {:ok, pid} = Agent.start(fn -> 42 end)
-      iex> Agent.get(pid, fn(state) -> state end)
+      iex> Agent.get(pid, fn state -> state end)
       42
 
   """
@@ -242,10 +246,9 @@ defmodule Agent do
   end
 
   @doc """
-  Starts an agent with the given module function and arguments.
+  Starts an agent without links with the given module, function, and arguments.
 
-  Similar to `start/2` but a module, function and args are expected
-  instead of an anonymous function.
+  See `start_link/4` for more information.
   """
   @spec start(module, atom, [any], GenServer.options) :: on_start
   def start(module, fun, args, options \\ []) do
@@ -253,18 +256,22 @@ defmodule Agent do
   end
 
   @doc """
-  Gets an agent value via the given function.
+  Gets an agent value via the given anonymous function.
 
   The function `fun` is sent to the `agent` which invokes the function
   passing the agent state. The result of the function invocation is
-  returned.
+  returned from this function.
 
-  A timeout can also be specified (it has a default value of 5000).
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the agent executes the function and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the function call fails and the caller
+  exits.
 
   ## Examples
 
       iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
-      iex> Agent.get(pid, fn(state) -> state end)
+      iex> Agent.get(pid, fn state -> state end)
       42
 
   """
@@ -276,9 +283,9 @@ defmodule Agent do
   @doc """
   Gets an agent value via the given function.
 
-  Same as `get/3` but a module, function and args are expected
+  Same as `get/3` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
-  argument to the given list of args.
+  argument to the given list of arguments.
   """
   @spec get(agent, module, atom, [term], timeout) :: any
   def get(agent, module, fun, args, timeout \\ 5000) do
@@ -286,21 +293,26 @@ defmodule Agent do
   end
 
   @doc """
-  Gets and updates the agent state in one operation.
+  Gets and updates the agent state in one operation via the given anonymous
+  function.
 
   The function `fun` is sent to the `agent` which invokes the function
   passing the agent state. The function must return a tuple with two
-  elements, the first being the value to return (i.e. the `get` value)
-  and the second one is the new state.
+  elements, the first being the value to return (that is, the "get" value)
+  and the second one being the new state of the agent.
 
-  A timeout can also be specified (it has a default value of 5000).
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the agent executes the function and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the function call fails and the caller
+  exits.
 
   ## Examples
 
       iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
-      iex> Agent.get_and_update(pid, fn(state) -> {state, state + 1} end)
+      iex> Agent.get_and_update(pid, fn state -> {state, state + 1} end)
       42
-      iex> Agent.get(pid, fn(state) -> state end)
+      iex> Agent.get(pid, fn state -> state end)
       43
 
   """
@@ -310,11 +322,11 @@ defmodule Agent do
   end
 
   @doc """
-  Gets and updates the agent state in one operation.
+  Gets and updates the agent state in one operation via the given function.
 
-  Same as `get_and_update/3` but a module, function and args are expected
+  Same as `get_and_update/3` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
-  argument to the given list of args.
+  argument to the given list of arguments.
   """
   @spec get_and_update(agent, module, atom, [term], timeout) :: any
   def get_and_update(agent, module, fun, args, timeout \\ 5000) do
@@ -322,20 +334,26 @@ defmodule Agent do
   end
 
   @doc """
-  Updates the agent state.
+  Updates the agent state via the given anonymous function.
 
   The function `fun` is sent to the `agent` which invokes the function
-  passing the agent state. The function must return the new state.
+  passing the agent state. The return value of `fun` becomes the new
+  state of the agent.
 
-  A timeout can also be specified (it has a default value of 5000).
   This function always returns `:ok`.
+
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds are allowed before the agent executes the function and returns
+  the result value, or the atom `:infinity` to wait indefinitely. If no result
+  is received within the specified time, the function call fails and the caller
+  exits.
 
   ## Examples
 
       iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
-      iex> Agent.update(pid, fn(state) -> state + 1 end)
+      iex> Agent.update(pid, fn state -> state + 1 end)
       :ok
-      iex> Agent.get(pid, fn(state) -> state end)
+      iex> Agent.get(pid, fn state -> state end)
       43
 
   """
