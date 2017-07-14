@@ -363,11 +363,11 @@ defmodule Agent do
   end
 
   @doc """
-  Updates the agent state.
+  Updates the agent state via the given function.
 
-  Same as `update/3` but a module, function and args are expected
+  Same as `update/3` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
-  argument to the given list of args.
+  argument to the given list of arguments.
   """
   @spec update(agent, module, atom, [term], timeout) :: :ok
   def update(agent, module, fun, args, timeout \\ 5000) do
@@ -375,13 +375,14 @@ defmodule Agent do
   end
 
   @doc """
-  Performs a cast (fire and forget) operation on the agent state.
+  Performs a cast (*fire and forget*) operation on the agent state.
 
   The function `fun` is sent to the `agent` which invokes the function
-  passing the agent state. The function must return the new state.
+  passing the agent state. The return value of `fun` becomes the new
+  state of the agent.
 
-  Note that `cast` returns `:ok` immediately, regardless of whether the
-  destination node or agent exists.
+  Note that `cast` returns `:ok` immediately, regardless of whether `agent` (or
+  the node it should live on) exists.
   """
   @spec cast(agent, (state -> state)) :: :ok
   def cast(agent, fun) when is_function(fun, 1) do
@@ -389,11 +390,11 @@ defmodule Agent do
   end
 
   @doc """
-  Performs a cast (fire and forget) operation on the agent state.
+  Performs a cast (*fire and forget*) operation on the agent state.
 
-  Same as `cast/2` but a module, function and args are expected
+  Same as `cast/2` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
-  argument to the given list of args.
+  argument to the given list of arguments.
   """
   @spec cast(agent, module, atom, [term]) :: :ok
   def cast(agent, module, fun, args) do
@@ -403,8 +404,8 @@ defmodule Agent do
   @doc """
   Synchronously stops the agent with the given `reason`.
 
-  It returns `:ok` if the server terminates with the given
-  reason, if it terminates with another reason, the call will
+  It returns `:ok` if the agent terminates with the given
+  reason. If the agent terminates with another reason, the call will
   exit.
 
   This function keeps OTP semantics regarding error reporting.
@@ -420,6 +421,6 @@ defmodule Agent do
   """
   @spec stop(agent, reason :: term, timeout) :: :ok
   def stop(agent, reason \\ :normal, timeout \\ :infinity) do
-    :gen.stop(agent, reason, timeout)
+    GenServer.stop(agent, reason, timeout)
   end
 end
