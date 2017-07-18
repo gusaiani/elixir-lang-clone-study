@@ -775,20 +775,28 @@ defmodule Base do
 
   enc16 = [upper: :enc16_upper, lower: :enc16_lower]
 
-  defp do_encode16(_, <<>>), do: <<>>
-  defp do_encode16(:upper, data) do
-    for <<c::4 <- data>>, into: <<>>, do: <<enc16(c)::8>>
-  end
-  defp do_encode16(:lower, data) do
-    for <<c::4 <- data>>, into: <<>>, do: <<to_lower(enc16(c))::8>>
-  end
-
-  defp do_decode16(_, <<>>), do: <<>>
-  defp do_decode16(:upper, string) when rem(byte_size(string), 2) == 0 do
-    for <<c1::8, c2::8 <- string>>, into: <<>> do
-      <<dec16(c1)::4, dec16(c2)::4>>
+  for {case, fun} <- enc16 do
+    defp unquote(fun)(char) do
+      encode_pair(unquote(b16_alphabet), unquote(case), char)
     end
   end
+
+  defp do_encode16(_, <<>>), do: <<>>
+
+  for {case, fun} <- enc16 do
+    defp do_encode16(unquote(case), data) do
+      split =  8 * div(byte_size(data), 8)
+      <<main::size(split)-binary, rest::binary>> = data
+      main =
+        for <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8 <- main>>, into: <<>> do
+          <<unquote(fun)(c1)::16, unquote(fun)(c2)::16,
+            unquote(fun)(c3)::16, unquote(fun)(c4)::16,
+            unquote(fun)(c5)::16, unquote(fun)(c6)::16,
+            unquote(fun)(c7)::16, unquote(fun)(c8)::16>>
+        end
+    end
+  end
+
   defp do_decode16(:lower, string) when rem(byte_size(string), 2) == 0 do
     for <<c1::8, c2::8 <- string>>, into: <<>> do
       <<dec16(from_lower(c1))::4, dec16(from_lower(c2))::4>>
