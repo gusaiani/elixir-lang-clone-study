@@ -1035,21 +1035,35 @@ defmodule Base do
           <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
             unquote(fun)(c3)::5, bsr(unquote(fun)(c4), 4)::1>>
         <<c1::8, c2::8, c3::8, c4::8, c5::8, ?=, ?=, ?=>> ->
-          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
-            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
-            bsr(dec32hex(unquote(fun)(c5)), 1)::4>>
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, unquote(fun)(c4)::5,
+            bsr(unquote(fun)(c5), 1)::4>>
         <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, ?=>> ->
-          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
-            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
-            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
-            bsr(dec32hex(unquote(fun)(c7)), 3)::2>>
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, unquote(fun)(c4)::5,
+            unquote(fun)(c5)::5, unquote(fun)(c6)::5,
+            bsr(unquote(fun)(c7), 3)::2>>
         <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8>> ->
-          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
-            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
-            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
-            dec32hex(unquote(fun)(c7))::5, dec32hex(unquote(fun)(c8))::5>>
-        <<>> ->
-          <<>>
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, unquote(fun)(c4)::5,
+            unquote(fun)(c5)::5, unquote(fun)(c6)::5,
+            unquote(fun)(c7)::5, unquote(fun)(c8)::5>>
+        <<c1::8, c2::8>> when not pad? ->
+          <<main::bits, unquote(fun)(c1)::5, bsr(unquote(fun)(c2), 2)::3>>
+        <<c1::8, c2::8, c3::8, c4::8>> when not pad? ->
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, bsr(unquote(fun)(c4), 4)::1>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8>> when not pad? ->
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, unquote(fun)(c4)::5,
+            bsr(unquote(fun)(c5), 1)::4>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8>> when not pad? ->
+          <<main::bits, unquote(fun)(c1)::5, unquote(fun)(c2)::5,
+            unquote(fun)(c3)::5, unquote(fun)(c4)::5,
+            unquote(fun)(c5)::5, unquote(fun)(c6)::5,
+            bsr(unquote(fun)(c7), 3)::2>>
+        _ ->
+          raise ArgumentError, "incorrect padding"
       end
     end
   end
