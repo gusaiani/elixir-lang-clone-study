@@ -459,4 +459,78 @@ defmodule Code do
 
     :elixir_config.update :compiler_options, &Enum.into(opts, &1)
   end
+
+  @doc """
+  Compiles the given string.
+
+  Returns a list of tuples where the first element is the module name
+  and the second one is its byte code (as a binary).
+
+  For compiling many files at once, check `Kernel.ParallelCompiler.files/2`.
+  """
+  def compile_string(string, file \\ "nofile") when is_binary(file) do
+    :elixir_compiler.string to_charlist(string), file
+  end
+
+  @doc """
+  Compiles the quoted expression.
+
+  Returns a list of tuples where the first element is the module name and
+  the second one is its byte code (as a binary).
+  """
+  def compile_quoted(quoted, file \\ "nofile") when is_binary(file) do
+    :elixir_compiler.quoted quoted, file
+  end
+
+  @doc """
+  Ensures the given module is loaded.
+
+  If the module is already loaded, this works as no-op. If the module
+  was not yet loaded, it tries to load it.
+
+  If it succeeds loading the module, it returns `{:module, module}`.
+  If not, returns `{:error, reason}` with the error reason.
+
+  ## Code loading on the Erlang VM
+
+  Erlang has two modes to load code: interactive and embedded.
+
+  By default, the Erlang VM runs in interactive mode, where modules
+  are loaded as needed. In embedded mode the opposite happens, as all
+  modules need to be loaded upfront or explicitly.
+
+  Therefore, this function is used to check if a module is loaded
+  before using it and allows one to react accordingly. For example, the `URI`
+  module uses this function to check if a specific parser exists for a given
+  URI scheme.
+
+  ## `ensure_compiled/1`
+
+  Elixir also contains an `ensure_compiled/1` function that is a
+  superset of `ensure_loaded/1`.
+
+  Since Elixir's compilation happens in parallel, in some situations
+  you may need to use a module that was not yet compiled, therefore
+  it can't even be loaded.
+
+  When invoked, `ensure_compiled/1` halts the compilation of the caller
+  until the module given to `ensure_compiled/1` becomes available or
+  all files for the current project have been compiled. If compilation
+  finishes and the module is not available, an error tuple is returned.
+
+  `ensure_compiled/1` does not apply to dependencies, as dependencies
+  must be compiled upfront.
+
+  In most cases, `ensure_loaded/1` is enough. `ensure_compiled/1`
+  must be used in rare cases, usually involving macros that need to
+  invoke a module for callback information.
+
+  ## Examples
+
+      iex> Code.ensure_loaded(Atom)
+      {:module, Atom}
+
+  iex> Code.ensure_loaded(DoesNotExist)
+  {:error, :nofile}
+
 end
