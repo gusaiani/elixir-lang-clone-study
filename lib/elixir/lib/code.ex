@@ -530,7 +530,144 @@ defmodule Code do
       iex> Code.ensure_loaded(Atom)
       {:module, Atom}
 
-  iex> Code.ensure_loaded(DoesNotExist)
-  {:error, :nofile}
+      iex> Code.ensure_loaded(DoesNotExist)
+      {:error, :nofile}
+
+  """
+  @spec ensure_loaded(module) ::
+        {:module, module} | {:error, :embedded | :badfile | :nofile | :on_load_failure}
+  def ensure_loaded(module) when is_atom(module) do
+    :code.ensure_loaded(module)
+  end
+
+  @doc """
+  Ensures the given module is loaded.
+
+  Similar to `ensure_loaded/1`, but returns `true` if the module
+  is already loaded or was successfully loaded. Returns `false`
+  otherwise.
+
+  ## Examples
+
+      iex> Code.ensure_loaded?(Atom)
+      true
+
+  """
+  def ensure_loaded?(module) when is_atom(module) do
+    match?({:module, ^module}, ensure_loaded(module))
+  end
+
+  @doc """
+  Ensures the given module is compiled and loaded.
+
+  If the module is already loaded, it works as no-op. If the module was
+  not loaded yet, it checks if it needs to be compiled first and then
+  tries to load it.
+
+  If it succeeds loading the module, it returns `{:module, module}`.
+  If not, returns `{:error, reason}` with the error reason.
+
+  Check `ensure_loaded/1` for more information on module loading
+  and when to use `ensure_loaded/1` or `ensure_compiled/1`.
+  """
+  @spec ensure_compiled(module) ::
+        {:module, module} | {:error, :embedded | :badfile | :nofile | :on_load_failure}
+  def ensure_compiled(module) when is_atom(module) do
+    case :code.ensure_loaded(module) do
+      {:error, :nofile} = error ->
+        if is_pid(:erlang.get(:elixir_compiler_pid)) and
+           Kernel.ErrorHandler.ensure_compiled(module, :module) do
+          {:module, module}
+        else
+          error
+        end
+      other -> other
+    end
+  end
+
+  @doc """
+  Ensures the given module is compiled and loaded.
+
+  Similar to `ensure_compiled/1`, but returns `true` if the module
+  is already loaded or was successfully loaded and compiled.
+  Returns `false` otherwise.
+  """
+  @spec ensure_compiled?(module) :: boolean
+  def ensure_compiled?(module) when is_atom(module) do
+    match?({:module, ^module}, ensure_compiled(module))
+  end
+
+  @doc ~S"""
+  Returns the docs for the given module.
+
+  When given a module name, it finds its BEAM code and reads the docs from it.
+
+  When given a path to a .beam file, it will load the docs directly from that
+  file.
+
+  The return value depends on the `kind` value:
+
+    * `:docs` - list of all docstrings attached to functions and macros
+      using the `@doc` attribute
+
+    * `:moduledoc` - tuple `{<line>, <doc>}` where `line` is the line on
+      which module definition starts and `doc` is the string
+      attached to the module using the `@moduledoc` attribute
+
+    * `:callback_docs` - list of all docstrings attached to
+      `@callbacks` using the `@doc` attribute
+
+    * `:type_docs` - list of all docstrings attached to
+      `@type` callbacks using the `@typedoc` attribute
+
+    * `:all` - a keyword list with `:docs` and `:moduledoc`, `:callback_docs`,
+      and `:type_docs`.
+
+  If the module cannot be found, it returns `nil`.
+
+  ## Examples
+
+      # Get the module documentation
+      iex> {_line, text} = Code.get_docs(Atom, :moduledoc)
+      iex> String.split(text, "\n") |> Enum.at(0)
+      "Convenience functions for working with atoms."
+
+      # Module doesn't exist
+      iex> Code.get_docs(ModuleNotGood, :all)
+      nil
+
+  """
+  @doc_kinds [:docs, :moduledoc, :callback_docs, :type_docs, :all]
+
+  def get_docs(module, kind) when is_atom(module) and kind in @docs do
+    case :code.get_object_code(module) do
+      {_module, bin, _beam_path} ->
+        do_get_docs(bin, kind)
+
+      :error -> nil
+    end
+  end
+
+  def get_docs(binpath, kind) when is_binary(binpath) and kind in @doc_kinds do
+    do_get_docs(String.to_charlist(binpath), kind)
+  end
+
+  @docs_chunk 'ExDc'
+
+  defp do_get_docs(bin_or_path, kind) do
+    case :beam_lib.chunks(bin_or_path, [@docs_chunk]) do
+      {:ok, {_module, [{@docs_chunk, bin}]}} ->
+        lookup_docs(:erlang.binary_to_term(bin), kind)
+
+      {:error, :beam_lib, {:missing_chunk, _, @docs_chunk}} -> nil
+    end
+  end
+
+  defp lookup_docs({:elixir_docs_v1, docs}, kind),
+    do: do_lookup_docs(docs, kind)
+
+  # unsupported chunk version
+  defp lookup_docs(_, _), do: nil
+
 
 end
