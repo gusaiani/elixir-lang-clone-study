@@ -488,7 +488,7 @@ defmodule Code do
   If the module is already loaded, this works as no-op. If the module
   was not yet loaded, it tries to load it.
 
-  If it succeeds loading the module, it returns `{:module, module}`.
+  If it succeeds in loading the module, it returns `{:module, module}`.
   If not, returns `{:error, reason}` with the error reason.
 
   ## Code loading on the Erlang VM
@@ -564,7 +564,7 @@ defmodule Code do
   not loaded yet, it checks if it needs to be compiled first and then
   tries to load it.
 
-  If it succeeds loading the module, it returns `{:module, module}`.
+  If it succeeds in loading the module, it returns `{:module, module}`.
   If not, returns `{:error, reason}` with the error reason.
 
   Check `ensure_loaded/1` for more information on module loading
@@ -639,7 +639,7 @@ defmodule Code do
   """
   @doc_kinds [:docs, :moduledoc, :callback_docs, :type_docs, :all]
 
-  def get_docs(module, kind) when is_atom(module) and kind in @docs do
+  def get_docs(module, kind) when is_atom(module) and kind in @doc_kinds do
     case :code.get_object_code(module) do
       {_module, bin, _beam_path} ->
         do_get_docs(bin, kind)
@@ -669,5 +669,26 @@ defmodule Code do
   # unsupported chunk version
   defp lookup_docs(_, _), do: nil
 
+  defp do_lookup_docs(docs, :all), do: docs
+  defp do_lookup_docs(docs, kind),
+    do: Keyword.get(docs, kind)
 
+  ## Helpers
+
+  # Finds the file given the relative_to path.
+  #
+  # If the file is found, returns its path in binary, fails otherwise.
+  defp find_file(file, relative_to) do
+    file = if relative_to do
+      Path.expand(file, relative_to)
+    else
+      Path.expand(file)
+    end
+
+    if File.regular?(file) do
+      file
+    else
+      raise Code.LoadError, file: file
+    end
+  end
 end
