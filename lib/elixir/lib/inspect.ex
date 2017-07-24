@@ -419,31 +419,28 @@ defimpl Inspect, for: Regex do
   defp escape(bin, term),
     do: escape(bin, [], term)
 
-  defp escape(<<?\\, term>> <> rest, buf, term),
-    do: escape(rest, [buf | [?\\, term]], term)
-
-  defp escape(<<term>> <> rest, buf, term),
+  defp escape(<<term, rest::binary>>, buf, term),
     do: escape(rest, [buf | [?\\, term]], term)
 
   # The list of characters is from 'String.printable?' implementation
   # minus characters treated specially by regex: \s, \d, \b, \e
 
-  defp escape(<<?\n>> <> rest, buf, term),
+  defp escape(<<?\n, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\n'], term)
 
-  defp escape(<<?\r>> <> rest, buf, term),
+  defp escape(<<?\r, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\r'], term)
 
-  defp escape(<<?\t>> <> rest, buf, term),
+  defp escape(<<?\t, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\t'], term)
 
-  defp escape(<<?\v>> <> rest, buf, term),
+  defp escape(<<?\v, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\v'], term)
 
-  defp escape(<<?\f>> <> rest, buf, term),
+  defp escape(<<?\f, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\f'], term)
 
-  defp escape(<<?\a>> <> rest, buf, term),
+  defp escape(<<?\a, rest::binary>>, buf, term),
     do: escape(rest, [buf | '\\a'], term)
 
   defp escape(<<char::utf8, rest::binary>>, buf, term)
@@ -463,9 +460,10 @@ defimpl Inspect, for: Function do
   def inspect(function, _opts) do
     fun_info = :erlang.fun_info(function)
     mod = fun_info[:module]
+    name = fun_info[:name]
 
     if fun_info[:type] == :external and fun_info[:env] == [] do
-      "&#{Inspect.Atom.inspect(mod)}.#{fun_info[:name]}/#{fun_info[:arity]}"
+      "&#{Inspect.Atom.inspect(mod)}.#{escape_name(name)}/#{fun_info[:arity]}"
     else
       case Atom.to_charlist(mod) do
         'elixir_compiler_' ++ _ ->
@@ -480,6 +478,41 @@ defimpl Inspect, for: Function do
     end
   end
 
+  def escape_name(atom) when is_atom(atom) do
+    string = Atom.to_string(atom)
+
+    case Macro.classify_identifier(atom) do
+      :callable ->
+        string
+      type when type in [:not_callable, :alias] ->
+        "\"" <> string <> "\""
+      :other ->
+        {escaped, _} = Inspect.BitString.escape(string, ?")
+        IO.iodata_to_binary [?", escaped, ?"]
+    end
+  end
+
+  # Example of this format: -NAME/ARITY-fun-COUNT-
+  def extract_anonymous_fun_parent(atom) when is_atom(atom) do
+    extract_anonymous_fun_parent(Atom.to_string(atom))
+  end
+
+  def extract_anonymous_fun_parent("-" <> rest) do
+    [trailing | reversed] =
+      rest
+      |> String.split("/")
+      |> Enum.reverse()
+
+    case String.split(trailing, "-") do
+      [arity, _inner, _count, ""] ->
+        {reversed |> Enum.reverse |> Enum.join("/") |> String.to_atom(), arity}
+      _other ->
+        :error
+    end
+  end
+
+  def extract_anonymous_fun_parent(other) when is_binary(other), do: :error
+
   defp default_inspect(mod, fun_info) do
     "#Function<#{uniq(fun_info)}/#{fun_info[:arity]} in " <>
       "#{Inspect.Atom.inspect(mod)}#{extract_name(fun_info[:name])}>"
@@ -490,10 +523,11 @@ defimpl Inspect, for: Function do
   end
 
   defp extract_name(name) do
-    name = Atom.to_string(name)
-    case :binary.split(name, "-", [:global]) do
-      ["", name | _] -> "." <> name
-      _ -> "." <> name
+    case extract_anonymous_fun_parent(name) do
+      {name, arity} ->
+        "." <> escape_name(name) <> "/" <> arity
+      :error ->
+        "." <> escape_name(name)
     end
   end
 
@@ -523,19 +557,19 @@ defimpl Inspect, for: Reference do
 end
 
 defimpl Inspect, for: Any do
-  def inspect(%{__struct__: struct} = map, opts) do
+  def inspect(%module{} = struct, opts) do
     try do
-      struct.__struct__
+      module.__struct__
     rescue
-      _ -> Inspect.Map.inspect(map, opts)
+      _ -> Inspect.Map.inspect(struct, opts)
     else
       dunder ->
-        if :maps.keys(dunder) == :maps.keys(map) do
-          pruned = :maps.remove(:__exception__, :maps.remove(:__struct__, map))
+        if :maps.keys(dunder) == :maps.keys(struct) do
+          pruned = :maps.remove(:__exception__, :maps.remove(:__struct__, struct))
           colorless_opts = %{opts | syntax_colors: []}
-          Inspect.Map.inspect(pruned, Inspect.Atom.inspect(struct, colorless_opts), opts)
+          Inspect.Map.inspect(pruned, Inspect.Atom.inspect(module, colorless_opts), opts)
         else
-          Inspect.Map.inspect(map, opts)
+          Inspect.Map.inspect(struct, opts)
         end
     end
   end
