@@ -93,11 +93,11 @@ unescape_chars(<<$\\, $u, Rest/binary>>, Map, Acc) ->
     false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, $u>>)
   end;
 
-  unescape_chars(<<$\\, Escaped, Rest/binary>>, Map, Acc) ->
-    case Map(Escaped) of
-      false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, Escaped>>);
-      Other -> unescape_chars(Rest, Map, <<Acc/binary, Other>>)
-    end;
+unescape_chars(<<$\\, Escaped, Rest/binary>>, Map, Acc) ->
+  case Map(Escaped) of
+    false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, Escaped>>);
+    Other -> unescape_chars(Rest, Map, <<Acc/binary, Other>>)
+  end;
 
 unescape_chars(<<Char, Rest/binary>>, Map, Acc) ->
   unescape_chars(Rest, Map, <<Acc/binary, Char>>);
@@ -110,7 +110,7 @@ unescape_hex(<<A, B, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
   Bytes = list_to_integer([A, B], 16),
   unescape_chars(Rest, Map, <<Acc/binary, Bytes>>);
 
-%% TODO: Remove deprecated sequences in v2.0
+%% TODO: Remove deprecated sequences on v2.0
 
 unescape_hex(<<A, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
   io:format(standard_error, "warning: \\xH inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
@@ -119,4 +119,96 @@ unescape_hex(<<A, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
 unescape_hex(<<${, A, $}, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
   io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
   append_codepoint(Rest, Map, [A], Acc, 16);
-  end;
+
+unescape_hex(<<${, A, B, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B], Acc, 16);
+
+unescape_hex(<<${, A, B, C, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, E, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D, E], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, E, F, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D, E, F], Acc, 16);
+
+unescape_hex(<<_/binary>>, _Map, _Acc) ->
+  Msg = <<"missing hex sequence after \\x, expected \\xHH">>,
+  error('Elixir.ArgumentError':exception([{message, Msg}])).
+
+%% Finish deprecated sequences
+
+unescape_unicode(<<A, B, C, D, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
+
+unescape_unicode(<<${, A, $}, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
+  append_codepoint(Rest, Map, [A], Acc, 16);
+
+unescape_unicode(<<${, A, B, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
+  append_codepoint(Rest, Map, [A, B], Acc, 16);
+
+unescape_unicode(<<${, A, B, C, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
+  append_codepoint(Rest, Map, [A, B, C], Acc, 16);
+
+unescape_unicode(<<${, A, B, C, D, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
+
+unescape_unicode(<<${, A, B, C, D, E, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
+  append_codepoint(Rest, Map, [A, B, C, D, E], Acc, 16);
+
+unescape_unicode(<<${, A, B, C, D, E, F, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
+  append_codepoint(Rest, Map, [A, B, C, D, E, F], Acc, 16);
+
+unescape_unicode(<<_/binary>>, _Map, _Acc) ->
+  Msg = <<"invalid Unicode sequence after \\u, expected \\uHHHH or \\u{H*}">>,
+  error('Elixir.ArgumentError':exception([{message, Msg}])).
+
+append_codepoint(Rest, Map, List, Acc, Base) ->
+  Codepoint = list_to_integer(List, Base),
+  try <<Acc/binary, Codepoint/utf8>> of
+    Binary -> unescape_chars(Rest, Map, Binary)
+  catch
+    error:badarg ->
+      Msg = <<"invalid or reserved Unicode codepoint ", (integer_to_binary(Codepoint))/binary>>,
+      error('Elixir.ArgumentError':exception([{message, Msg}]))
+  end.
+
+unescape_map($0) -> 0;
+unescape_map($a) -> 7;
+unescape_map($b) -> $\b;
+unescape_map($d) -> $\d;
+unescape_map($e) -> $\e;
+unescape_map($f) -> $\f;
+unescape_map($n) -> $\n;
+unescape_map($r) -> $\r;
+unescape_map($s) -> $\s;
+unescape_map($t) -> $\t;
+unescape_map($v) -> $\v;
+unescape_map($x) -> true;
+unescape_map($u) -> true;
+unescape_map(E)  -> E.
+
+% Extract Helpers
+
+finish_extraction(Line, Column, Buffer, Output, Remaining) ->
+  Final = case build_string(Line, Buffer, Output) of
+    [] -> [<<>>];
+    F  -> F
+  end,
+
+  {Line, Column, lists:reverse(Final), Remaining}.
+
+build_string(_Line, [], Output) -> Output;
+build_string(_Line, Buffer, Output) ->
+  [elixir_utils:characters_to_binary(lists:reverse(Buffer)) | Output].
+
+build_interpol(Line, Column, EndColumn, Buffer, Output) ->
+  [{{Line, Column, EndColumn}, lists:reverse(Buffer)} | Output].
