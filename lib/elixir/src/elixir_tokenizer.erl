@@ -1,0 +1,4 @@
+-module(elixir_tokenizer).
+-include("elixir.hrl").
+-export([tokenize/1, tokenize/3, tokenize/4, invalid_do_error/1]).
+-import(elixir_interpolation, [unescape_tokens/1]).
