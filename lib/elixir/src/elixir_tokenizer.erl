@@ -161,3 +161,57 @@ tokenize([], EndLine, _Column, #elixir_tokenizer{terminators=[{Start, {StartLine
 tokenize(("<<<<<<<" ++ _) = Original, Line, 1, _Scope, Tokens) ->
   FirstLine = lists:takewhile(fun(C) -> C =/= $\n andalso C =/= $\r end, Original),
   {error, {Line, "found an unexpected version control marker, please resolve the conflicts: ", FirstLine}, Original, Tokens};
+
+% Base integers
+
+tokenize([$0, $x, H | T], Line, Column, Scope, Tokens) when ?is_hex(H) ->
+  {Rest, Number, Length} = tokenize_hex(T, [H], 1),
+  tokenize(Rest, Line, Column + 2 + Length, Scope, [{hexadecimal, {Line, Column, Column + 2 + Length}, Number} | Tokens]);
+
+tokenize([$0, $b, H | T], Line, Column, Scope, Tokens) when ?is_bin(H) ->
+  {Rest, Number, Length} = tokenize_bin(T, [H], 1),
+  tokenize(Rest, Line, Column + 2 + Length, Scope, [{binary, {Line, Column, Column + 2 + Length}, Number} | Tokens]);
+
+tokenize([$0, $o, H | T], Line, Column, Scope, Tokens) when ?is_octal(H) ->
+  {Rest, Number, Length} = tokenize_octal(T, [H], 1),
+  tokenize(Rest, Line, Column + 2 + Length, Scope, [{octal, {Line, Column, Column + 2 + Length}, Number} | Tokens]);
+
+% Comments
+
+tokenize([$# | String], Line, Column, Scope, Tokens) ->
+  {Rest, Comment, Length} = tokenize_comment(String, [$#], 1),
+  case Scope#elixir_tokenizer.preserve_comments of
+    true  ->
+      CommentToken = {comment, {Line, Column, Column + Length}, Comment},
+      tokenize(Rest, Line, Column + Length, Scope, [CommentToken | Tokens]);
+    false ->
+      tokenize(Rest, Line, Column, Scope, Tokens)
+  end;
+
+% Sigils
+
+tokenize([$~, S, H, H, H | T] = Original, Line, Column, Scope, Tokens) when ?is_quote(H), ?is_upcase(S) orelse ?is_downcase(S) ->
+  case extract_heredoc_with_interpolation(Line, Column, Scope, ?is_downcase(S), T, H) of
+    {ok, NewLine, NewColumn, Parts, Rest} ->
+      {Final, Modifiers} = collect_modifiers(Rest, []),
+      tokenize(Final, NewLine, NewColumn, Scope, [{sigil, {Line, Column, NewColumn}, S, Parts, Modifiers, [H, H, H]} | Tokens]);
+    {error, Reason} ->
+      {error, Reason, Original, Tokens}
+  end;
+
+tokenize([$~, S, H | T] = Original, Line, Column, Scope, Tokens) when ?is_sigil(H), ?is_upcase(S) orelse ?is_downcase(S) ->
+  case elixir_interpolation:extract(Line, Column + 3, Scope, ?is_downcase(S), T, sigil_terminator(H)) of
+    {NewLine, NewColumn, Parts, Rest} ->
+      {Final, Modifiers} = collect_modifiers(Rest, []),
+      tokenize(Final, NewLine, NewColumn, Scope, [{sigil, {Line, Column, NewColumn}, S, Parts, Modifiers, [H]} | Tokens]);
+    {error, Reason} ->
+      Sigil = [$~, S, H],
+      interpolation_error(Reason, Original, Tokens, " (for sigil ~ts starting at line ~B)", [Sigil, Line])
+  end;
+
+tokenize([$~, S, H | _] = Original, Line, Column, _Scope, Tokens) when ?is_upcase(S) orelse ?is_downcase(S) ->
+  MessageString =
+    "\"~ts\" (column ~p, codepoint U+~4.16.0B). The available delimiters are: "
+    "//, ||, \"\", '', (), [], {}, <>",
+  Message = io_lib:format(MessageString, [[H], Column + 2, H]),
+  {error, {Line, "invalid sigil delimiter: ", Message}, Original, Tokens};
