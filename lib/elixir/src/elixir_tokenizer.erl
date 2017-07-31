@@ -503,3 +503,28 @@ tokenize(String, Line, Column, Scope, Tokens) ->
       {error, Reason, String, Tokens}
   end.
 
+unexpected_token([T | Rest], Line, Column, Tokens) ->
+  Message = io_lib:format("\"~ts\" (column ~p, codepoint U+~4.16.0B)", [[T], Column, T]),
+  {error, {Line, "unexpected token: ", Message}, Rest, Tokens}.
+
+strip_horizontal_space(T) ->
+  strip_horizontal_space(T, 0).
+
+strip_horizontal_space([H | T], Counter) when ?is_horizontal_space(H) ->
+  strip_horizontal_space(T, Counter + 1);
+strip_horizontal_space(T, Counter) ->
+  {T, Counter}.
+
+strip_dot_space(T, Counter, Column, StartLine, Tokens) ->
+  case strip_horizontal_space(T) of
+    {"#" ++ R, _} ->
+      {Rest, Comment, Length} = tokenize_comment(R, [$#], 1),
+      CommentToken = {comment, {StartLine + Counter, Column, Column + Length}, Comment},
+      strip_dot_space(Rest, Counter, 1, StartLine, [CommentToken | Tokens]);
+    {"\r\n" ++ Rest, _} ->
+      strip_dot_space(Rest, Counter + 1, 1, StartLine, Tokens);
+    {"\n" ++ Rest, _} ->
+      strip_dot_space(Rest, Counter + 1, 1, StartLine, Tokens);
+    {Rest, Length} ->
+      {Rest, Counter, Column + Length, Tokens}
+  end.
