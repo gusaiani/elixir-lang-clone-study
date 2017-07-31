@@ -528,3 +528,55 @@ strip_dot_space(T, Counter, Column, StartLine, Tokens) ->
     {Rest, Length} ->
       {Rest, Counter, Column + Length, Tokens}
   end.
+
+handle_char(7)   -> {"\\a", "alert"};
+handle_char($\b) -> {"\\b", "backspace"};
+handle_char($\d) -> {"\\d", "delete"};
+handle_char($\e) -> {"\\e", "escape"};
+handle_char($\f) -> {"\\f", "form feed"};
+handle_char($\n) -> {"\\n", "newline"};
+handle_char($\r) -> {"\\r", "carriage return"};
+handle_char($\s) -> {"\\s", "space"};
+handle_char($\t) -> {"\\t", "tab"};
+handle_char($\v) -> {"\\v", "vertical tab"};
+handle_char(_)  -> false.
+
+%% Handlers
+
+handle_heredocs(T, Line, Column, H, Scope, Tokens) ->
+  case extract_heredoc_with_interpolation(Line, Column, Scope, true, T, H) of
+    {ok, NewLine, NewColumn, Parts, Rest} ->
+      Token = {heredoc_type(H), {Line, Column, NewColumn}, unescape_tokens(Parts)},
+      tokenize(Rest, NewLine, NewColumn, Scope, [Token | Tokens]);
+    {error, Reason} ->
+      {error, Reason, [H, H, H] ++ T, Tokens}
+  end.
+
+handle_strings(T, Line, Column, H, Scope, Tokens) ->
+  case elixir_interpolation:extract(Line, Column, Scope, true, T, H) of
+    {error, Reason} ->
+      interpolation_error(Reason, [H | T], Tokens, " (for string starting at line ~B)", [Line]);
+    {NewLine, NewColumn, Parts, [$: | Rest]} when ?is_space(hd(Rest)) ->
+      Unescaped = unescape_tokens(Parts),
+      Key = case Scope#elixir_tokenizer.existing_atoms_only of
+        true  -> kw_identifier_safe;
+        false -> kw_identifier_unsafe
+      end,
+      tokenize(Rest, NewLine, NewColumn, Scope, [{Key, {Line, Column - 1, NewColumn}, Unescaped} | Tokens]);
+    {NewLine, NewColumn, Parts, Rest} ->
+      Token = {string_type(H), {Line, Column - 1, NewColumn}, unescape_tokens(Parts)},
+      tokenize(Rest, NewLine, NewColumn, Scope, [Token | Tokens])
+  end.
+
+handle_unary_op([$: | Rest], Line, Column, _Kind, Length, Op, Scope, Tokens) when ?is_space(hd(Rest)) ->
+  tokenize(Rest, Line, Column + Length + 1, Scope, [{kw_identifier, {Line, Column, Column + Length}, Op} | Tokens]);
+
+handle_unary_op(Rest, Line, Column, Kind, Length, Op, Scope, Tokens) ->
+  case strip_horizontal_space(Rest) of
+    {[$/ | _] = Remaining, Extra} ->
+      tokenize(Remaining, Line, Column + Length + Extra, Scope,
+               [{identifier, {Line, Column, Column + Length}, Op} | Tokens]);
+    {Remaining, Extra} ->
+      tokenize(Remaining, Line, Column + Length + Extra, Scope,
+               [{Kind, {Line, Column, Column + Length}, Op} | Tokens])
+  end.
