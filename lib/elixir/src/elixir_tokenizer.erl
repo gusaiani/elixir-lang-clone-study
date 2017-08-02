@@ -580,3 +580,219 @@ handle_unary_op(Rest, Line, Column, Kind, Length, Op, Scope, Tokens) ->
       tokenize(Remaining, Line, Column + Length + Extra, Scope,
                [{Kind, {Line, Column, Column + Length}, Op} | Tokens])
   end.
+
+handle_op([$: | Rest], Line, Column, _Kind, Length, Op, Scope, Tokens) when ?is_space(hd(Rest)) ->
+  tokenize(Rest, Line, Column + Length + 1, Scope,
+           [{kw_identifier, {Line, Column, Column + Length}, Op} | Tokens]);
+
+handle_op(Rest, Line, Column, Kind, Length, Op, Scope, Tokens) ->
+  case strip_horizontal_space(Rest) of
+    {[$/ | _] = Remaining, Extra} ->
+      tokenize(Remaining, Line, Column + Length + Extra, Scope,
+               [{identifier, {Line, Column, Column + Length}, Op} | Tokens]);
+    {Remaining, Extra} ->
+      tokenize(Remaining, Line, Column + Length + Extra, Scope,
+               add_token_with_nl({Kind, {Line, Column, Column + Length}, Op}, Tokens))
+  end.
+
+handle_comments(CommentTokens, Tokens, Scope) ->
+  case Scope#elixir_tokenizer.preserve_comments of
+    true  -> lists:append(CommentTokens, Tokens);
+    false -> Tokens
+  end.
+
+% ## Three Token Operators
+handle_dot([$., T1, T2, T3 | Rest], Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) when
+    ?unary_op3(T1, T2, T3); ?comp_op3(T1, T2, T3); ?and_op3(T1, T2, T3); ?or_op3(T1, T2, T3);
+    ?arrow_op3(T1, T2, T3); ?three_op(T1, T2, T3) ->
+  handle_call_identifier(Rest, Line, Column + 1, DotColumn, 3, list_to_atom([T1, T2, T3]), Scope, Tokens, CommentTokens, Counter);
+
+% ## Two Token Operators
+handle_dot([$., T1, T2 | Rest], Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) when
+    ?comp_op2(T1, T2); ?rel_op2(T1, T2); ?and_op(T1, T2); ?or_op(T1, T2);
+    ?arrow_op(T1, T2); ?in_match_op(T1, T2); ?two_op(T1, T2); ?stab_op(T1, T2);
+    ?type_op(T1, T2) ->
+  handle_call_identifier(Rest, Line, Column + 1, DotColumn, 2, list_to_atom([T1, T2]), Scope, Tokens, CommentTokens, Counter);
+
+% ## Single Token Operators
+handle_dot([$., T | Rest], Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) when
+    ?at_op(T); ?unary_op(T); ?capture_op(T); ?dual_op(T); ?mult_op(T);
+    ?rel_op(T); ?match_op(T); ?pipe_op(T) ->
+  handle_call_identifier(Rest, Line, Column + 1, DotColumn, 1, list_to_atom([T]), Scope, Tokens, CommentTokens, Counter);
+
+% ## Exception for .( as it needs to be treated specially in the parser
+handle_dot([$., $( | Rest], Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) ->
+  TokensSoFar = add_token_with_nl({dot_call_op, {Line, DotColumn, DotColumn + 1}, '.'}, Tokens),
+  tokenize([$( | Rest], Line + Counter, Column + 2, Scope, handle_comments(CommentTokens, TokensSoFar, Scope));
+
+handle_dot([$., H | T] = Original, Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) when ?is_quote(H) ->
+  case elixir_interpolation:extract(Line, Column + 2, Scope, true, T, H) of
+    {NewLine, NewColumn, [Part], Rest} when is_binary(Part) ->
+      case unsafe_to_atom(Part, Line, Scope) of
+        {ok, Atom} ->
+          Token = check_call_identifier(Line + Counter, Column, max(NewColumn - Column, 0), Atom, Rest),
+          TokensSoFar = add_token_with_nl({'.', {Line, DotColumn, DotColumn + 1}}, Tokens),
+          tokenize(Rest, NewLine, NewColumn, Scope, [Token | handle_comments(CommentTokens, TokensSoFar, Scope)]);
+        {error, Reason} ->
+          {error, Reason, Original, Tokens}
+      end;
+    {error, Reason} ->
+      interpolation_error(Reason, Original, Tokens, " (for function name starting at line ~B)", [Line])
+  end;
+
+handle_dot([$. | Rest], Line, Column, DotColumn, Scope, Tokens, CommentTokens, Counter) ->
+  TokensSoFar = add_token_with_nl({'.', {Line, DotColumn, DotColumn + 1}}, Tokens),
+  tokenize(Rest, Line + Counter, Column + 1, Scope, handle_comments(CommentTokens, TokensSoFar, Scope)).
+
+handle_call_identifier(Rest, Line, Column, DotColumn, Length, Op, Scope, Tokens, CommentTokens, Counter) ->
+  {_, {NewLine, _, NewColumn}, _} = Token = check_call_identifier(Line + Counter, Column, Length, Op, Rest),
+  TokensSoFar = add_token_with_nl({'.', {Line, DotColumn, DotColumn + 1}}, Tokens),
+  tokenize(Rest, NewLine, NewColumn, Scope, [Token | handle_comments(CommentTokens, TokensSoFar, Scope)]).
+
+% ## Ambiguous unary/binary operators tokens
+handle_space_sensitive_tokens([Sign, NotMarker | T], Line, Column, Scope, [{Identifier, _, _} = H | Tokens]) when
+    ?dual_op(Sign),
+    not(?is_space(NotMarker)),
+    NotMarker /= $(, NotMarker /= $[, NotMarker /= $<, NotMarker /= ${,                  %% containers
+    NotMarker /= $%, NotMarker /= $+, NotMarker /= $-, NotMarker /= $/, NotMarker /= $>, %% operators
+    Identifier == identifier ->
+  Rest = [NotMarker | T],
+  tokenize(Rest, Line, Column + 1, Scope, [{dual_op, {Line, Column, Column + 1}, list_to_atom([Sign])}, setelement(1, H, op_identifier) | Tokens]);
+
+handle_space_sensitive_tokens(String, Line, Column, Scope, Tokens) ->
+  tokenize(String, Line, Column, Scope, Tokens).
+
+%% Helpers
+
+eol(_Line, _Column, [{';', _} | _] = Tokens) -> Tokens;
+eol(_Line, _Column, [{',', _} | _] = Tokens) -> Tokens;
+eol(_Line, _Column, [{eol, _} | _] = Tokens) -> Tokens;
+eol(Line, Column, Tokens) -> [{eol, {Line, Column, Column + 1}} | Tokens].
+
+unsafe_to_atom(Part, Line, #elixir_tokenizer{}) when
+    is_binary(Part) andalso size(Part) > 255;
+    is_list(Part) andalso length(Part) > 255 ->
+  {error, {Line, "atom length must be less than system limit", ":"}};
+unsafe_to_atom(Binary, _Line, #elixir_tokenizer{existing_atoms_only=true}) when is_binary(Binary) ->
+  {ok, binary_to_existing_atom(Binary, utf8)};
+unsafe_to_atom(Binary, _Line, #elixir_tokenizer{}) when is_binary(Binary) ->
+  {ok, binary_to_atom(Binary, utf8)};
+unsafe_to_atom(List, _Line, #elixir_tokenizer{existing_atoms_only=true}) when is_list(List) ->
+  {ok, list_to_existing_atom(List)};
+unsafe_to_atom(List, _Line, #elixir_tokenizer{}) when is_list(List) ->
+  {ok, list_to_atom(List)}.
+
+collect_modifiers([H | T], Buffer) when ?is_downcase(H) or ?is_upcase(H) ->
+  collect_modifiers(T, [H | Buffer]);
+
+collect_modifiers(Rest, Buffer) ->
+  {Rest, lists:reverse(Buffer)}.
+
+%% Heredocs
+
+extract_heredoc_with_interpolation(Line, Column, Scope, Interpol, T, H) ->
+  case extract_heredoc(Line, Column, T, H) of
+    {ok, NewLine, NewColumn, Body, Rest} ->
+      case elixir_interpolation:extract(Line + 1, 1, Scope, Interpol, Body, 0) of
+        {error, Reason} ->
+          {error, interpolation_format(Reason, " (for heredoc starting at line ~B)", [Line])};
+        {_, _, Parts, []} ->
+          {ok, NewLine, NewColumn, Parts, Rest}
+      end;
+    {error, _} = Error ->
+      Error
+  end.
+
+extract_heredoc(Line0, Column0, Rest0, Marker) ->
+  case extract_heredoc_header(Rest0) of
+    {ok, Rest1} ->
+      %% We prepend a new line so we can transparently remove
+      %% spaces later. This new line is removed by calling "tl"
+      %% in the final heredoc body three lines below.
+      case extract_heredoc_body(Line0, Column0, Marker, [$\n | Rest1], []) of
+        {ok, Line1, Body, Rest2, Spaces} ->
+          {ok, Line1, 1, tl(remove_heredoc_spaces(Body, Spaces)), Rest2};
+        {error, Reason, ErrorLine} ->
+          Terminator = [Marker, Marker, Marker],
+          {Message, Token} = heredoc_error_message(Reason, Line0, Terminator),
+          {error, {ErrorLine, Message, Token}}
+      end;
+    error ->
+      Message = "heredoc start must be followed by a new line after ",
+      {error, {Line0, io_lib:format(Message, []), [Marker, Marker, Marker]}}
+  end.
+
+heredoc_error_message(eof, Line, Terminator) ->
+  {io_lib:format("missing terminator: ~ts (for heredoc starting at line ~B)",
+                 [Terminator, Line]),
+   []};
+heredoc_error_message(misplacedterminator, _Line, Terminator) ->
+  {"invalid location for heredoc terminator, please escape token or move it to its own line: ",
+   Terminator}.
+%% Remove spaces from heredoc based on the position of the final quotes.
+
+remove_heredoc_spaces(Body, 0) ->
+  lists:reverse([0 | Body]);
+remove_heredoc_spaces(Body, Spaces) ->
+  remove_heredoc_spaces([0 | Body], [], Spaces, Spaces).
+remove_heredoc_spaces([H, $\n | T], [Backtrack | Buffer], Spaces, Original) when Spaces > 0, ?is_horizontal_space(H) ->
+  remove_heredoc_spaces([Backtrack, $\n | T], Buffer, Spaces - 1, Original);
+remove_heredoc_spaces([$\n=H | T], Buffer, _Spaces, Original) ->
+  remove_heredoc_spaces(T, [H | Buffer], Original, Original);
+remove_heredoc_spaces([H | T], Buffer, Spaces, Original) ->
+  remove_heredoc_spaces(T, [H | Buffer], Spaces, Original);
+remove_heredoc_spaces([], Buffer, _Spaces, _Original) ->
+  Buffer.
+
+%% Extract the heredoc header.
+
+extract_heredoc_header("\r\n" ++ Rest) ->
+  {ok, Rest};
+extract_heredoc_header("\n" ++ Rest) ->
+  {ok, Rest};
+extract_heredoc_header([H | T]) when ?is_horizontal_space(H) ->
+  extract_heredoc_header(T);
+extract_heredoc_header(_) ->
+  error.
+
+%% Extract heredoc body. It returns the heredoc body (in reverse order),
+%% the remaining of the document and the number of spaces the heredoc
+%% is aligned.
+
+extract_heredoc_body(Line, _Column, Marker, Rest, Buffer) ->
+  case extract_heredoc_line(Marker, Rest, Buffer, 0) of
+    {ok, NewBuffer, NewRest} ->
+      extract_heredoc_body(Line + 1, 1, Marker, NewRest, NewBuffer);
+    {ok, NewBuffer, NewRest, Spaces} ->
+      {ok, Line, NewBuffer, NewRest, Spaces};
+    {error, Reason} ->
+      {error, Reason, Line}
+  end.
+
+%% Extract a line from the heredoc prepending its contents to a buffer.
+%% Allow lazy escaping (e.g. \""")
+
+extract_heredoc_line(Marker, [$\\, $\\ | T], Buffer) ->
+  extract_heredoc_line(Marker, T, [$\\, $\\ | Buffer]);
+extract_heredoc_line(Marker, [$\\, Marker | T], Buffer) ->
+  extract_heredoc_line(Marker, T, [Marker, $\\ | Buffer]);
+extract_heredoc_line(Marker, [Marker, Marker, Marker | _], _) ->
+  {error, misplacedterminator};
+extract_heredoc_line(_, "\r\n" ++ Rest, Buffer) ->
+  {ok, [$\n | Buffer], Rest};
+extract_heredoc_line(_, "\n" ++ Rest, Buffer) ->
+  {ok, [$\n | Buffer], Rest};
+extract_heredoc_line(Marker, [H | T], Buffer) ->
+  extract_heredoc_line(Marker, T, [H | Buffer]);
+extract_heredoc_line(_, _, _) ->
+  {error, eof}.
+
+%% Extract each heredoc line trying to find a match according to the marker.
+
+extract_heredoc_line(Marker, [H | T], Buffer, Counter) when ?is_horizontal_space(H) ->
+  extract_heredoc_line(Marker, T, [H | Buffer], Counter + 1);
+extract_heredoc_line(Marker, [Marker, Marker, Marker | T], Buffer, Counter) ->
+  {ok, Buffer, T, Counter};
+extract_heredoc_line(Marker, Rest, Buffer, _Counter) ->
+  extract_heredoc_line(Marker, Rest, Buffer).
+end.
