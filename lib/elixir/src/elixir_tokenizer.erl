@@ -964,4 +964,174 @@ check_call_identifier(Line, Column, Length, Atom, _Rest) ->
 add_token_with_nl({unary_op, _, _} = Left, T) -> [Left | T];
 add_token_with_nl(Left, [{eol, _} | T]) -> [Left | T];
 add_token_with_nl(Left, T) -> [Left | T].
-end.
+
+%% Error handling
+
+interpolation_error(Reason, Rest, Tokens, Extension, Args) ->
+  {error, interpolation_format(Reason, Extension, Args), Rest, Tokens}.
+
+interpolation_format({string, Line, Message, Token}, Extension, Args) ->
+  {Line, io_lib:format("~ts" ++ Extension, [Message | Args]), Token};
+interpolation_format({_, _, _} = Reason, _Extension, _Args) ->
+  Reason.
+
+%% Terminators
+
+handle_terminator(Rest, Line, Column, Scope, Token, Tokens) ->
+  case handle_terminator(Token, Scope) of
+    {error, Reason} ->
+      {error, Reason, atom_to_list(element(1, Token)) ++ Rest, Tokens};
+    New ->
+      tokenize(Rest, Line, Column, New, [Token | Tokens])
+  end.
+
+handle_terminator(_, #elixir_tokenizer{check_terminators=false} = Scope) ->
+  Scope;
+handle_terminator(Token, #elixir_tokenizer{terminators=Terminators} = Scope) ->
+  case check_terminator(Token, Terminators) of
+    {error, _} = Error -> Error;
+    New -> Scope#elixir_tokenizer{terminators=New}
+  end.
+
+check_terminator({S, _} = New, Terminators) when
+    S == 'fn';
+    S == 'do';
+    S == '(';
+    S == '[';
+    S == '{';
+    S == '<<' ->
+  [New | Terminators];
+
+check_terminator({E, _}, [{S, _} | Terminators]) when
+    S == 'do', E == 'end';
+    S == 'fn', E == 'end';
+    S == '(',  E == ')';
+    S == '[',  E == ']';
+    S == '{',  E == '}';
+    S == '<<', E == '>>' ->
+  Terminators;
+
+check_terminator({E, {Line, _, _}}, [{Start, {StartLine, _, _}} | _]) when
+    E == 'end'; E == ')'; E == ']'; E == '}'; E == '>>' ->
+  End = terminator(Start),
+  MessagePrefix = io_lib:format("\"~ts\" is missing terminator \"~ts\". unexpected token: \"",
+                                [Start, End]),
+  MessageSuffix = io_lib:format("\" at line ~B", [Line]),
+  {error, {StartLine, {MessagePrefix, MessageSuffix}, [atom_to_list(E)]}};
+
+check_terminator({E, Line}, []) when
+    E == 'end'; E == ')'; E == ']'; E == '}'; E == '>>' ->
+  {error, {Line, "unexpected token: ", atom_to_list(E)}};
+
+check_terminator(_, Terminators) ->
+  Terminators.
+
+string_type($") -> bin_string;
+string_type($') -> list_string.
+
+heredoc_type($") -> bin_heredoc;
+heredoc_type($') -> list_heredoc.
+
+sigil_terminator($() -> $);
+sigil_terminator($[) -> $];
+sigil_terminator(${) -> $};
+sigil_terminator($<) -> $>;
+sigil_terminator(O) -> O.
+
+terminator('fn') -> 'end';
+terminator('do') -> 'end';
+terminator('(')  -> ')';
+terminator('[')  -> ']';
+terminator('{')  -> '}';
+terminator('<<') -> '>>'.
+
+%% Keywords checking
+
+check_keyword(_Line, _Column, _Length, _Atom, [{'.', _} | _], _Rest) ->
+  nomatch;
+check_keyword(DoLine, DoColumn, _Length, do,
+              [{Identifier, {Line, Column, EndColumn}, Atom} | T], _Rest) when Identifier == identifier ->
+  {ok, add_token_with_nl({do, {DoLine, DoColumn, DoColumn + 2}},
+       [{do_identifier, {Line, Column, EndColumn}, Atom} | T])};
+check_keyword(_Line, _Column, _Length, do, [{'fn', _} | _], _Rest) ->
+  {error, do_with_fn_error("unexpected token \"do\""), "do"};
+check_keyword(Line, Column, _Length, do, Tokens, _Rest) ->
+  case do_keyword_valid(Tokens) of
+    true  -> {ok, add_token_with_nl({do, {Line, Column, Column + 2}}, Tokens)};
+    false -> {error, invalid_do_error("unexpected token \"do\""), "do"}
+  end;
+check_keyword(Line, Column, Length, Atom, Tokens, Rest) ->
+  case keyword(Atom) of
+    false ->
+      nomatch;
+    token ->
+      {ok, [{Atom, {Line, Column, Column + Length}} | Tokens]};
+    block ->
+      {ok, [{block_identifier, {Line, Column, Column + Length}, Atom} | Tokens]};
+    Kind ->
+      case strip_horizontal_space(Rest) of
+        {[$/ | _], _} ->
+          {ok, [{identifier, {Line, Column, Column + Length}, Atom} | Tokens]};
+        _ ->
+          {ok, add_token_with_nl({Kind, {Line, Column, Column + Length}, Atom}, Tokens)}
+      end
+  end.
+
+%% Fail early on invalid do syntax. For example, after
+%% most keywords, after comma and so on.
+do_keyword_valid([{Atom, _} | _]) ->
+  case Atom of
+    ','   -> false;
+    ';'   -> false;
+    'end' -> true;
+    nil   -> true;
+    true  -> true;
+    false -> true;
+    _     -> keyword(Atom) == false
+  end;
+do_keyword_valid(_) ->
+  true.
+
+% Regular keywords
+keyword('fn')    -> token;
+keyword('end')   -> token;
+keyword('true')  -> token;
+keyword('false') -> token;
+keyword('nil')   -> token;
+
+% Operators keywords
+keyword('not')    -> unary_op;
+keyword('and')    -> and_op;
+keyword('or')     -> or_op;
+keyword('when')   -> when_op;
+keyword('in')     -> in_op;
+
+% Block keywords
+keyword('after')  -> block;
+keyword('else')   -> block;
+keyword('rescue') -> block;
+keyword('catch')  -> block;
+
+keyword(_) -> false.
+
+invalid_character_error(What, Char) ->
+  io_lib:format("invalid character \"~ts\" (codepoint U+~4.16.0B) in ~ts: ", [[Char], Char, What]).
+
+invalid_do_error(Prefix) ->
+  Prefix ++ ". In case you wanted to write a \"do\" expression, "
+  "you must either separate the keyword argument with comma or use do-blocks. "
+  "For example, the following construct:\n\n"
+  "    if some_condition? do\n"
+  "      :this\n"
+  "    else\n"
+  "      :that\n"
+  "    end\n\n"
+  "is syntactic sugar for the Elixir construct:\n\n"
+  "    if(some_condition?, do: :this, else: :that)\n\n"
+  "where \"some_condition?\" is the first argument and the second argument is a keyword list.\n\n"
+  "Syntax error before: ".
+
+do_with_fn_error(Prefix) ->
+  Prefix ++ ". Anonymous functions are written as:\n\n"
+  "    fn pattern -> expression end\n\n"
+  "Syntax error before: ".
