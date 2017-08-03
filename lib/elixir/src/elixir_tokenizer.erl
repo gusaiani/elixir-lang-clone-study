@@ -795,4 +795,173 @@ extract_heredoc_line(Marker, [Marker, Marker, Marker | T], Buffer, Counter) ->
   {ok, Buffer, T, Counter};
 extract_heredoc_line(Marker, Rest, Buffer, _Counter) ->
   extract_heredoc_line(Marker, Rest, Buffer).
+
+%% Integers and floats
+%% At this point, we are at least sure the first digit is a number.
+
+%% Check if we have a point followed by a number;
+tokenize_number([$., H | T], Acc, Length, false) when ?is_digit(H) ->
+  tokenize_number(T, [H, $. | Acc], Length + 2, true);
+
+%% Check if we have an underscore followed by a number;
+tokenize_number([$_, H | T], Acc, Length, Bool) when ?is_digit(H) ->
+  tokenize_number(T, [H | Acc], Length + 2, Bool);
+
+%% Check if we have e- followed by numbers (valid only for floats);
+tokenize_number([E, S, H | T], Acc, Length, true)
+    when (E == $E) or (E == $e), ?is_digit(H), S == $+ orelse S == $- ->
+  tokenize_number(T, [H, S, $e | Acc], Length + 3, true);
+
+%% Check if we have e followed by numbers (valid only for floats);
+tokenize_number([E, H | T], Acc, Length, true)
+    when (E == $E) or (E == $e), ?is_digit(H) ->
+  tokenize_number(T, [H, $e | Acc], Length + 2, true);
+
+%% Finally just numbers.
+tokenize_number([H | T], Acc, Length, Bool) when ?is_digit(H) ->
+  tokenize_number(T, [H | Acc], Length + 1, Bool);
+
+%% Cast to float...
+tokenize_number(Rest, Acc, Length, true) ->
+  try
+    {Rest, list_to_float(lists:reverse(Acc)), Length}
+  catch
+    error:badarg -> {error, "invalid float number ", lists:reverse(Acc)}
+  end;
+
+%% Or integer.
+tokenize_number(Rest, Acc, Length, false) ->
+  {Rest, list_to_integer(lists:reverse(Acc)), Length}.
+
+tokenize_hex([H | T], Acc, Length) when ?is_hex(H) ->
+  tokenize_hex(T, [H | Acc], Length + 1);
+tokenize_hex([$_, H | T], Acc, Length) when ?is_hex(H) ->
+  tokenize_hex(T, [H | Acc], Length + 2);
+tokenize_hex(Rest, Acc, Length) ->
+  {Rest, list_to_integer(lists:reverse(Acc), 16), Length}.
+
+tokenize_octal([H | T], Acc, Length) when ?is_octal(H) ->
+  tokenize_octal(T, [H | Acc], Length + 1);
+tokenize_octal([$_, H | T], Acc, Length) when ?is_octal(H) ->
+  tokenize_octal(T, [H | Acc], Length + 2);
+tokenize_octal(Rest, Acc, Length) ->
+  {Rest, list_to_integer(lists:reverse(Acc), 8), Length}.
+
+tokenize_bin([H | T], Acc, Length) when ?is_bin(H) ->
+  tokenize_bin(T, [H | Acc], Length + 1);
+tokenize_bin([$_, H | T], Acc, Length) when ?is_bin(H) ->
+  tokenize_bin(T, [H | Acc], Length + 2);
+tokenize_bin(Rest, Acc, Length) ->
+  {Rest, list_to_integer(lists:reverse(Acc), 2), Length}.
+
+%% Comments
+
+tokenize_comment("\r\n" ++ _ = Rest, Acc, Length) ->
+  {Rest, lists:reverse(Acc), Length};
+tokenize_comment("\n" ++ _ = Rest, Acc, Length) ->
+  {Rest, lists:reverse(Acc), Length};
+tokenize_comment([H | Rest], Acc, Length) ->
+  tokenize_comment(Rest, [H | Acc], Length + 1);
+tokenize_comment([], Acc, Length) ->
+  {[], lists:reverse(Acc), Length}.
+
+%% Identifiers
+
+tokenize([H | T]) when ?is_upcase(H) ->
+  {Acc, Rest, Length, Special} = tokenize_continue(T, [H], 1, []),
+  {alias, lists:reverse(Acc), Rest, Length, true, Special};
+tokenize([H | T]) when ?is_downcase(H); H == $_ ->
+  {Acc, Rest, Length, Special} = tokenize_continue(T, [H], 1, []),
+  {identifier, lists:reverse(Acc), Rest, Length, true, Special};
+tokenize(_List) ->
+  {error, empty}.
+
+tokenize_continue([$@ | T], Acc, Length, Special) ->
+  tokenize_continue(T, [$@ | Acc], Length + 1, [$@ | lists:delete($@, Special)]);
+tokenize_continue([$! | T], Acc, Length, Special) ->
+  {[$! | Acc], T, Length + 1, [$! | Special]};
+tokenize_continue([$? | T], Acc, Length, Special) ->
+  {[$? | Acc], T, Length + 1, [$? | Special]};
+tokenize_continue([H | T], Acc, Length, Special) when ?is_upcase(H); ?is_downcase(H); ?is_digit(H); H == $_ ->
+  tokenize_continue(T, [H | Acc], Length + 1, Special);
+tokenize_continue(Rest, Acc, Length, Special) ->
+  {Acc, Rest, Length, Special}.
+
+tokenize_identifier(String, Line, Scope) ->
+  case (Scope#elixir_tokenizer.identifier_tokenizer):tokenize(String) of
+    {Kind, Acc, Rest, Length, Ascii, Special} ->
+      case unsafe_to_atom(Acc, Line, Scope) of
+        {ok, Atom} ->
+          {Kind, Atom, Rest, Length, Ascii, Special};
+        {error, _Reason} = Error ->
+          Error
+      end;
+    {error, {not_nfc, Wrong}} ->
+      Right = unicode:characters_to_nfc_list(Wrong),
+      RightCodepoints = list_to_codepoint_hex(Right),
+      WrongCodepoints = list_to_codepoint_hex(Wrong),
+      Message = io_lib:format("Elixir expects unquoted Unicode atoms and variables to be in NFC form.\n\n"
+                              "Got:\n\n    \"~ts\" (codepoints~ts)\n\n"
+                              "Expected:\n\n    \"~ts\" (codepoints~ts)\n\n"
+                              "Syntax error before: ",
+                              [Wrong, WrongCodepoints, Right, RightCodepoints]),
+      {error, {Line, Message, Wrong}};
+    {error, empty} ->
+      empty
+  end.
+
+list_to_codepoint_hex(List) ->
+  [io_lib:format(" ~4.16.0B", [Codepoint]) || Codepoint <- List].
+
+tokenize_alias(Rest, Line, Column, Atom, Length, Ascii, Special, Scope, Tokens) ->
+  if
+    not Ascii ->
+      AtomName = atom_to_list(Atom),
+      Invalid = hd([C || C <- AtomName, C > 127]),
+      Reason = {Line, invalid_character_error("alias (only ascii characters are allowed)", Invalid), AtomName},
+      {error, Reason, AtomName ++ Rest, Tokens};
+    Special /= [] ->
+      AtomName = atom_to_list(Atom),
+      Reason = {Line, invalid_character_error("alias", hd(Special)), AtomName},
+      {error, Reason, AtomName ++ Rest, Tokens};
+    true ->
+      tokenize(Rest, Line, Column + Length, Scope, [{aliases, {Line, Column, Column + Length}, [Atom]} | Tokens])
+  end.
+
+tokenize_other(Rest, Line, Column, Atom, Length, Scope, Tokens) ->
+  case tokenize_keyword_or_identifier(Rest, Line, Column, Length, Atom, Tokens) of
+    {keyword, Rest, {_, {_, _, EndColumn}} = Check, T} ->
+      handle_terminator(Rest, Line, EndColumn, Scope, Check, T);
+    {keyword, Rest, {_, {_, _, EndColumn}, _} = Check, T} ->
+      handle_terminator(Rest, Line, EndColumn, Scope, Check, T);
+    {identifier, Rest, {_, {_, _, EndColumn}, _} = Token} ->
+      tokenize(Rest, Line, EndColumn, Scope, [Token | Tokens]);
+    {error, _, _, _} = Error ->
+      Error
+  end.
+
+tokenize_keyword_or_identifier(Rest, Line, Column, Length, Atom, Tokens) ->
+  case check_keyword(Line, Column, Length, Atom, Tokens, Rest) of
+    nomatch ->
+      {identifier, Rest, check_call_identifier(Line, Column, Length, Atom, Rest)};
+    {ok, [{in_op, {_, _, InEndColumn}, in} | [{unary_op, {NotLine, NotColumn, _}, 'not'} | T]]} ->
+      {keyword, Rest, {in_op, {NotLine, NotColumn, InEndColumn}, 'not in'}, T};
+    {ok, [Check | T]} ->
+      {keyword, Rest, Check, T};
+    {error, Message, Token} ->
+      {error, {Line, Message, Token}, atom_to_list(Atom) ++ Rest, Tokens}
+  end.
+
+%% Check if it is a call identifier (paren | bracket | do)
+
+check_call_identifier(Line, Column, Length, Atom, [$( | _]) ->
+  {paren_identifier, {Line, Column, Column + Length}, Atom};
+check_call_identifier(Line, Column, Length, Atom, [$[ | _]) ->
+  {bracket_identifier, {Line, Column, Column + Length}, Atom};
+check_call_identifier(Line, Column, Length, Atom, _Rest) ->
+  {identifier, {Line, Column, Column + Length}, Atom}.
+
+add_token_with_nl({unary_op, _, _} = Left, T) -> [Left | T];
+add_token_with_nl(Left, [{eol, _} | T]) -> [Left | T];
+add_token_with_nl(Left, T) -> [Left | T].
 end.
