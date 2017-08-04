@@ -119,5 +119,56 @@ defmodule ExUnit.Case do
 
   If the same key is set via `@tag`, the `@tag` value has higher
   precedence.
+
+  ### Known tags
+
+  The following tags are set automatically by ExUnit and are
+  therefore reserved:
+
+    * `:case`       - the test case module
+    * `:file`       - the file on which the test was defined
+    * `:line`       - the line on which the test was defined
+    * `:test`       - the test name
+    * `:async`      - if the test case is in async mode
+    * `:type`       - the type of the test (`:test`, `:property`, etc)
+    * `:registered` - used for `ExUnit.Case.register_attribute/3` values
+    * `:describe`   - the describe block the test belongs to
+
+The following tags customize how tests behaves:
+
+    * `:capture_log` - see the "Log Capture" section below
+    * `:skip` - skips the test with the given reason
+    * `:timeout` - customizes the test timeout in milliseconds (defaults to 60000)
+    * `:report` - includes the given tags and context keys on error reports,
+      see the "Reporting tags" section
+
+  ### Reporting tags
+
+  ExUnit also allows tags or any other key in your context to be included
+  in error reports, making it easy for developers to see under which
+  circumstances a test was evaluated. To do so, you use the `:report` tag:
+
+      @moduletag report: [:user_id, :server]
+
+  Now when an error happens, there is a tags section containing the value
+  for each reported field:
+
+     code: flunk "oops"
+     stacktrace:
+       lib/my_lib/source.exs:149
+     tags:
+       user_id: 1
+       server: #PID<0.63.0>
+
+  ## Filters
+
+  Tags can also be used to identify specific tests, which can then
+  be included or excluded using filters. The most common functionality
+  is to exclude some particular tests from running, which can be done
+  via `ExUnit.configure/1`:
+
+      # Exclude all external tests from running
+      ExUnit.configure(exclude: [external: true])
+
   """
 end
