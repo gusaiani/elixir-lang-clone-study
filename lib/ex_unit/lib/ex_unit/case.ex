@@ -23,19 +23,19 @@ defmodule ExUnit.Case do
   `ExUnit.Callbacks`. See that module for more information on `setup`,
   `start_supervised`, `on_exit` and the test process lifecycle.
 
-  For grouping tests together, see `describe/2` it this module.
+  For grouping tests together, see `describe/2` in this module.
 
   ## Examples
 
-      defmodule AssertionTest do
-        # Use the module
-        use ExUnit.Case, async: true
+       defmodule AssertionTest do
+         # Use the module
+         use ExUnit.Case, async: true
 
-        # The "test" macro is imported by ExUnit.Case
-        test "always pass" do
-          assert true
-        end
-      end
+         # The "test" macro is imported by ExUnit.Case
+         test "always pass" do
+           assert true
+         end
+       end
 
   ## Context
 
@@ -134,7 +134,7 @@ defmodule ExUnit.Case do
     * `:registered` - used for `ExUnit.Case.register_attribute/3` values
     * `:describe`   - the describe block the test belongs to
 
-The following tags customize how tests behaves:
+  The following tags customize how tests behave:
 
     * `:capture_log` - see the "Log Capture" section below
     * `:skip` - skips the test with the given reason
@@ -155,7 +155,7 @@ The following tags customize how tests behaves:
 
      code: flunk "oops"
      stacktrace:
-       lib/my_lib/source.exs:149
+       lib/my_lib/source.exs:148
      tags:
        user_id: 1
        server: #PID<0.63.0>
@@ -170,5 +170,50 @@ The following tags customize how tests behaves:
       # Exclude all external tests from running
       ExUnit.configure(exclude: [external: true])
 
+  From now on, ExUnit will not run any test that has the `external` flag
+  set to `true`. This behaviour can be reversed with the `:include` option
+  which is usually passed through the command line:
+
+      mix test --include external:true
+
+  Run `mix help test` for more information on how to run filters via Mix.
+
+  Another use case for tags and filters is to exclude all tests that have
+  a particular tag by default, regardless of its value, and include only
+  a certain subset:
+
+      ExUnit.configure(exclude: :os, include: [os: :unix])
+
+  Keep in mind that all tests are included by default, so unless they are
+  excluded first, the `include` option has no effect.
+
+  ## Log Capture
+
+  ExUnit can optionally suppress printing of log messages that are generated
+  during a test. Log messages generated while running a test are captured and
+  only if the test fails are they printed to aid with debugging.
+
+  You can opt into this behaviour for individual tests by tagging them with
+  `:capture_log` or enable log capture for all tests in the ExUnit configuration:
+
+      ExUnit.start(capture_log: true)
+
+  This default can be overridden by `@tag capture_log: false` or
+  `@moduletag capture_log: false`.
+
+  Since `setup_all` blocks don't belong to a specific test, log messages generated
+  in them (or between tests) are never captured. If you want to suppress these
+  messages as well, remove the console backend globally:
+
+      config :logger, backends: []
   """
+
+  @reserved [:case, :file, :line, :test, :async, :registered, :describe, :type]
+
+  @doc false
+  defmacro __using__(opts) do
+    unless Process.whereis(ExUnit.Server) do
+    end
+  end
+
 end
