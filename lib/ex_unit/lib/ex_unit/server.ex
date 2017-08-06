@@ -37,11 +37,11 @@ defmodule ExUnit.Server do
       loaded: System.monotonic_time,
       waiting: nil,
       async_cases: [],
-      sync_cases: []
+      sync_cases: [],
     }}
   end
 
-  # Called on demand until we are signaled all cases are loaded
+  # Called on demand until we are signaled all cases are loaded.
   def handle_call({:take_async_cases, count}, from, %{waiting: nil} = state) do
     {:noreply, take_cases(%{state | waiting: {from, count}})}
   end
@@ -57,7 +57,32 @@ defmodule ExUnit.Server do
     {:reply, diff, take_cases(%{state | loaded: :done})}
   end
 
-  def name do
+  def handle_cast({:add_async_case, name}, %{async_cases: cases, loaded: loaded} = state)
+      when is_integer(loaded) do
+    {:noreply, take_cases(%{state | async_cases: [name | cases]})}
+  end
 
+  def handle_cast({:add_sync_case, name}, %{sync_cases: cases, loaded: loaded} = state)
+      when is_integer(loaded) do
+    {:noreply, %{state | sync_cases: [name | cases]}}
+  end
+
+  defp take_cases(%{waiting: nil} = state) do
+    state
+  end
+
+  defp take_cases(%{waiting: {from, _count}, async_cases: [], loaded: :done} = state) do
+    GenServer.reply(from, nil)
+    %{state | waiting: nil}
+  end
+
+  defp take_cases(%{async_cases: []} = state) do
+    state
+  end
+
+  defp take_cases(%{waiting: {from, count}, async_cases: cases} = state) do
+    {reply, cases} = Enum.split(cases, count)
+    GenServer.reply(from, reply)
+    %{state | async_cases: cases, waiting: nil}
   end
 end
