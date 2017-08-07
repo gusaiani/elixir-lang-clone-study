@@ -105,6 +105,130 @@ defmodule ExUnit.Callbacks do
         end
       end
     end
+  """
+
+  @doc false
+  defmacro __using__(_) do
+    quote do
+      @ex_unit_describe nil
+      @ex_unit_setup []
+      @ex_unit_setup_all []
+
+      @before_compile unquote(__MODULE__)
+      import unquote(__MODULE__)
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(env) do
+    [compile_callbacks(env, :setup),
+     compile_callbacks(env, :setup_all)]
+  end
+
+  @doc """
+  Defines a callback to be run before each test in a case.
+
+  ## Examples
+
+      setup :clean_up_tmp_directory
 
   """
+  defmacro setup(block) do
+    if Keyword.keyword?(block) do
+      do_setup(quote(do: _), block)
+    else
+      quote do
+        @ex_unit_setup ExUnit.Callbacks.__callback__(unquote(block), @ex_unit_describe) ++
+                       @ex_unit_setup
+      end
+    end
+  end
+
+  @doc """
+  Defines a callback to be run before each test in a case.
+
+  ## Examples
+
+      setup context do
+        [conn: Plug.Conn.build_conn()]
+      end
+
+  """
+  defmacro setup(var, block) do
+    do_setup(var, block)
+  end
+
+  defp do_setup(var, block) do
+    quote bind_quoted: [var: escape(var), block: escape(block)] do
+      name = :"__ex_unit_setup_#{length(@ex_unit_setup)}"
+      defp unquote(name)(unquote(var)), unquote(block)
+      @ex_unit_setup [{name, @ex_unit_describe} | @ex_unit_setup]
+    end
+  end
+
+  @doc """
+  Defines a callback to be run before all tests in a case.
+
+  ## Examples
+
+      setup_all :clean_up_tmp_directory
+
+  """
+  defmacro setup_all(block) do
+    if Keyword.keyword?(block) do
+      do_setup_all(quote(do: _), block)
+    else
+      quote do
+        @ex_unit_describe && raise "cannot invoke setup_all/1 inside describe as setup_all/1 " <>
+                                   "always applies to all tests in a module"
+        @ex_unit_setup_all ExUnit.Callbacks.__callback__(unquote(block), nil) ++
+                           @ex_unit_setup_all
+      end
+    end
+  end
+
+  @doc """
+  Defines a callback to be run before all tests in a case.
+
+  ## Examples
+
+      setup_all context do
+        [conn: Plug.Conn.build_conn()]
+      end
+
+  """
+  defmacro setup_all(var, block) do
+    do_setup_all(var, block)
+  end
+
+  defp do_setup_all(var, block) do
+    quote bind_quoted: [var: escape(var), block: escape(block)] do
+      @ex_unit_describe && raise "cannot invoke setup_all/2 inside describe"
+      name = :"__ex_unit_setup_all_#{length(@ex_unit_setup_all)}"
+      defp unquote(name)(unquote(var)), unquote(block)
+      @ex_unit_setup_all [{name, nil} | @ex_unit_setup_all]
+    end
+  end
+
+  @doc """
+  Defines a callback that runs once the test exits.
+
+  `callback` is a function that receives no arguments and
+  runs in a separate process than the caller.
+
+  `on_exit/2` is usually called from `setup` and `setup_all`
+  callbacks, often to undo the action performed during `setup`.
+  However, `on_exit/2` may also be called dynamically, where a
+  reference can be used to guarantee the callback will be invoked
+  only once.
+  """
+  @spec on_exit(term, (() -> term)) :: :ok | no_return
+  def on_exit(name_or_ref \\ make_ref(), callback) when is_function(callback, 0) do
+    case ExUnit.OnExitHandler.add(self(), name_or_ref, callback) do
+      :ok -> :ok
+      :error ->
+        raise ArgumentError, "on_exit/2 callback can only be invoked from the test process"
+    end
+  end
 end
+
