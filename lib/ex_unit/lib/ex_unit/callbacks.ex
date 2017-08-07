@@ -21,7 +21,7 @@ defmodule ExUnit.Callbacks do
 
   `on_exit/2` callbacks are registered on demand, usually to undo an action
   performed by a setup callback. `on_exit/2` may also take a reference,
-  allowing callback to be overriden in the future. A registered `on_exit/2`
+  allowing callback to be overridden in the future. A registered `on_exit/2`
   callback always runs, while failures in `setup` and `setup_all` will stop
   all remaining setup callbacks from executing.
 
@@ -60,24 +60,24 @@ defmodule ExUnit.Callbacks do
 
   ## Examples
 
-    defmodule AssertionTest do
-      use ExUnit.Case, async: true
+      defmodule AssertionTest do
+        use ExUnit.Case, async: true
 
-      # "setup_all" is called once per module before any test runs
-      setup_all do
-        IO.puts "Starting AssertionTest"
+        # "setup_all" is called once per module before any test runs
+        setup_all do
+          IO.puts "Starting AssertionTest"
 
-        # No context is returned here
-        :ok
-      end
-
-      # "setup" is called before each test
-      setup do
-        IO.puts "This is a setup callback for #{inspect self()}"
-
-        on_exit fn ->
-          IO.puts "This is invoked once the test is done. Process: #{inspect self()}"
+          # No context is returned here
+          :ok
         end
+
+        # "setup" is called before each test
+        setup do
+          IO.puts "This is a setup callback for #{inspect self()}"
+
+          on_exit fn ->
+            IO.puts "This is invoked once the test is done. Process: #{inspect self()}"
+          end
 
           # Returns extra metadata to be merged into context
           [hello: "world"]
@@ -87,6 +87,21 @@ defmodule ExUnit.Callbacks do
         setup context do
           IO.puts "Setting up: #{context.test}"
           :ok
+        end
+
+        # Setups can also invoke a local or imported function that returns a context
+        setup :invoke_local_or_imported_function
+
+        test "always pass" do
+          assert true
+        end
+
+        test "uses metadata from setup", context do
+          assert context[:hello] == "world"
+        end
+
+        defp invoke_local_or_imported_function(context) do
+          [from_named_setup: true]
         end
       end
     end
