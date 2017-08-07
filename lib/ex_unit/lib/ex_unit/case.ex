@@ -213,6 +213,22 @@ defmodule ExUnit.Case do
   @doc false
   defmacro __using__(opts) do
     unless Process.whereis(ExUnit.Server) do
+      raise "cannot use ExUnit.Case without starting the ExUnit application, " <>
+            "please call ExUnit.start() or explicitly start the :ex_unit app"
+    end
+
+    quote do
+      async = !!unquote(opts)[:async]
+
+      unless Module.get_attribute(__MODULE__, :ex_unit_tests) do
+        Enum.each [:ex_unit_tests, :tag, :describetag, :moduletag, :ex_unit_registered, :ex_unit_used_describes],
+          &Module.register_attribute(__MODULE__, &1, accumulate: true)
+        @before_compile ExUnit.Case
+        @after_compile ExUnit.Case
+        @ex_unit_async async
+        @ex_unit_describe nil
+        use ExUnit.Callbacks
+      end
     end
   end
 
