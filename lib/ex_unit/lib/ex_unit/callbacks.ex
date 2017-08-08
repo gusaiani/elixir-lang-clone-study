@@ -363,5 +363,58 @@ defmodule ExUnit.Callbacks do
         v
     end)
   end
-end
 
+  defp raise_merge_failed!(mod, return_value) do
+    raise "expected ExUnit callback in #{inspect mod} to return :ok | keyword | map, " <>
+          "got #{inspect return_value} instead"
+  end
+
+  defp raise_merge_reserved!(mod, key, value) do
+    raise "ExUnit callback in #{inspect mod} is trying to set " <>
+          "reserved field #{inspect key} to #{inspect value}"
+  end
+
+  defp escape(contents) do
+    Macro.escape(contents, unquote: true)
+  end
+
+  defp compile_callbacks(env, kind) do
+    callbacks = Module.get_attribute(env.module, :"ex_unit_#{kind}") |> Enum.reverse
+
+    acc =
+      case callbacks do
+        [] ->
+          quote do: context
+        [h | t] ->
+          Enum.reduce t, compile_merge(h), fn callback_describe, acc ->
+            quote do
+              context = unquote(acc)
+              unquote(compile_merge(callback_describe))
+            end
+          end
+      end
+
+    quote do
+      def __ex_unit__(unquote(kind), context) do
+        describe = Map.get(context, :describe, nil)
+        unquote(acc)
+      end
+    end
+  end
+
+  defp compile_merge({callback, nil}) do
+    quote do
+      unquote(__MODULE__).__merge__(__MODULE__, context, unquote(callback)(context))
+    end
+  end
+
+  defp compile_merge({callback, describe}) do
+    quote do
+      if unquote(describe) == describe do
+        unquote(compile_merge({callback, nil}))
+      else
+        context
+      end
+    end
+  end
+end
