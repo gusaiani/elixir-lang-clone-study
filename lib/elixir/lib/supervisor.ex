@@ -84,4 +84,96 @@ defmodule Supervisor do
 
       GenServer.call(Stack, :pop)
       #=> :hello
+
+  Supervisors support different strategies; in the example above, we
+  have chosen `:one_for_one`. Furthermore, each supervisor can have many
+  workers and supervisors as children, each of them with their specific
+  configuration, shutdown values, and restart strategies.
+
+  The rest of this document will cover how child processes are started,
+  how they can be specified, different supervision strategies and more.
+
+  ## The initialization process
+
+  In the previous section, we have started a supervisor with one child:
+
+      Supervisor.start_link([
+        {Stack, [:hello]}
+      ], strategy: :one_for_one)
+
+  The first argument given to `start_link` is a list of children.
+  In the example above, we have passed a tuple, where the child is
+  implemented by the `Stack` module and receives an initial argument
+  of `[:hello]` on `Stack.start_link/1`.
+
+  Generally speaking, starting the child process happens in three steps:
+
+    1. First the supervisor calls `Stack.child_spec([:hello])`. This
+       function must return a **child specification** which describes
+       how the `Stack` process is supervised. When you `use GenServer`,
+       a `child_spec/1` is automatically defined for you but we will see
+       when and how it can be configured. This function is called once
+       when the supervisor starts (or in case of hot code upgrades).
+
+    2. The **child specification** tells the supervisor which function
+       to invoke to start the child process. By default, it is the
+       `start_link/1` function, receiving the same argument and defined
+       in the same module as the `child_spec/1` function. This function
+       is called every time a new child process is necessary. For example,
+       when we crashed a `Stack` in the previous session,
+       `Stack.start_link([:hello])` was called once more to start a new stack.
+
+    3. Finally, `Stack.start_link/1` starts a new process that runs
+      `Stack.init/1`, which is responsible for setting a process that
+       will react to messages.
+
+  In summary, when the `Supervisor.start_link(children, opts)` is called,
+  it traverses the list of children and retrieves their `child_spec/1`.
+  Then each child specification describes how each child is started,
+  typically via the `start_link/1` function. The supervisor invokes the
+  `start_link/1` when it initializes and whenever the child process needs
+  to be restarted. The new process started by `start_link/1` often
+  executes the `init` callback as its first step. The `init` callback is
+  where we initialize and configure the child process.
+
+  ## Child specification
+
+  The child specification describes how the supervisor should start and
+  supervise a child process. We have learned that, when we invoked
+  `use GenServer`, a `Stack.child_spec/1` was automatically defined for
+  us. Let's invoke it and see what it returns:
+
+      Stack.child_spec([:hello])
+      #=> %{
+        id: Stack,
+        start: {Stack, :start_link, [[:hello]]},
+        restart: :permanent,
+        shutdown: 5000,
+        type: :worker
+      }
+
+  The child specification contains 5 keys. The first two are required
+  and the remaining ones are optional:
+
+    * `:id` - a value used to identify the child specification
+      internally by the supervisor; defaults to the given module.
+      In case of conflicting `:id`, the supervisor will refuse
+      to initialize and require explicit IDs. This key is required.
+
+    * `:start` - a tuple with the module-function-args to be invoked
+      to start the child process. This key is required.
+
+    * `:restart` - an atom that defines when a terminated child process
+       should be restarted (see the "Restart values" section below).
+       This key is optional and defaults to `:permanent`.
+
+    * `:shutdown` - an atom that defines how a child process whould be
+      terminated (see the "Shutdown values" section below). This key
+      is optional and defaults to `5000` if the type is `:worker` or
+      `:infinity` if the type is `:supervisor`.
+
+    * `:type` - if the child process is a `:worker` or a `:supervisor`.
+      This key is optional and defaults to `:worker`.
+
+  There is a sixth key, called `:modules`
   """
