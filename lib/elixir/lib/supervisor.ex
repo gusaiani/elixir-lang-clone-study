@@ -167,7 +167,7 @@ defmodule Supervisor do
        should be restarted (see the "Restart values" section below).
        This key is optional and defaults to `:permanent`.
 
-    * `:shutdown` - an atom that defines how a child process whould be
+    * `:shutdown` - an atom that defines how a child process should be
       terminated (see the "Shutdown values" section below). This key
       is optional and defaults to `5000` if the type is `:worker` or
       `:infinity` if the type is `:supervisor`.
@@ -175,5 +175,51 @@ defmodule Supervisor do
     * `:type` - if the child process is a `:worker` or a `:supervisor`.
       This key is optional and defaults to `:worker`.
 
-  There is a sixth key, called `:modules`
+  There is a sixth key, called `:modules`, which is rarely changed and
+  it is set automatically based on the value in `:start`.
+
+  Most times, the behaviour module you are implementing will take care
+  of setting up a proper `child_spec/1` for you. For example, `use Supervisor`
+  will define a `child_spec/1` where the `:type` is set to `:supervisor`
+  and the `:shutdown` is `:infinity`. Still, if you need to customize
+  a certain behaviour, you can do so by defining your own `child_spec/1`
+  function or by passing options on `use`. For example, to specify a
+  `GenServer` with a shutdown limit of 10 seconds (10_000 miliseconds),
+  one might do:
+
+      use GenServer, shutdown: 10_000
+
+  Let's understand what the `:shutdown` and `:restart` options control.
+
+  ### Shutdown values (:shutdown)
+
+  The following shutdown values are supported in the `:shutdown` option:
+
+    * `:brutal_kill` - the child process is unconditionally terminated
+      using `Process.exit(child, :kill)`.
+
+    * any integer >= 0 - the amount of time in miliseconds that the
+      supervisor will wait for children to terminate after emitting a
+      `Process.exit(child, :shutdown)` signal.  If the child process is
+      not trapping exits, the initial `:shutdown` signal will terminate
+      the child process immediately. If the child process is trapping
+      exits, it has the given amount of time in miliseconds to terminate.
+      If it doesn't terminate within the specified time, the child process
+      is unconditionally terminated by the supervisor via
+      `Process.exit(child, :kill)`.
+
+    * `:infinity` - works as an integer except the supervisor will wait
+      indefinitely for the child to terminate. If the child process is a
+      supervisor, the recommended value is `:infinity` to give the supervisor
+      and its children enough time to shutdown. This option can be used with
+      regular workers but doing so is discouraged and requires extreme care.
+      If not used carefully and the child process does not terminate, it means
+      your application will never terminate as well.
+
+  ### Restart values (:restart)
+
+  The `:restart` option controls what the supervisor should consider to
+  be a successful termination or not. If the termination is successful,
+  the supervisor won't restart the child. If the child process crashed,
+  the supervisor will start a new one.
   """
