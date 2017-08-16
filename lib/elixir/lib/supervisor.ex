@@ -200,7 +200,7 @@ defmodule Supervisor do
 
     * any integer >= 0 - the amount of time in miliseconds that the
       supervisor will wait for children to terminate after emitting a
-      `Process.exit(child, :shutdown)` signal.  If the child process is
+      `Process.exit(child, :shutdown)` signal. If the child process is
       not trapping exits, the initial `:shutdown` signal will terminate
       the child process immediately. If the child process is trapping
       exits, it has the given amount of time in miliseconds to terminate.
@@ -222,4 +222,184 @@ defmodule Supervisor do
   be a successful termination or not. If the termination is successful,
   the supervisor won't restart the child. If the child process crashed,
   the supervisor will start a new one.
+
+  The following restart values are supported in the `:restart` option:
+
+    * `:permanent` - the child process is always restarted.
+
+    * `:temporary` - the child process is never restarted, regardless
+      of the supervision strategy.
+
+    * `:transient` - the child process is restarted only if it
+      terminates abnormally, i.e., with an exit reason other than
+      `:normal`, `:shutdown` or `{:shutdown, term}`.
+
+  For a more complete understanding of the exit reasons and their
+  impact, see the "Exit reasons" section next.
+
+  ## Exit reasons
+
+  A supervisor restarts a child process depending on its `:restart`
+  configuration. For example, when `:restart` is set `:transient`, the
+  supervisor does not restart the child in case it exits with reason `:normal`,
+  `:shutdown` or `{:shutdown, term}`.
+
+  So one may ask: which exit reason should I choose when exiting? There are
+  three options:
+
+    * `:normal` - in such cases, the exit won't be logged, there is no restart
+      in transient mode, and linked processes do not exit
+
+    * `:shutdown` or `{:shutdown, term}` - in such cases, the exit won't be
+      logged, there is no restart in transient mode, and linked processes exit
+      with the same reason unless they're trapping exits
+
+    * any other term - in such cases, the exit will be logged, there are
+      restarts in transient mode, and linked processes exit with the same
+      reason unless they're trapping exits
+
+  Notice that supervisor that reached maximum restart intensity will exit with
+  `:shutdown` reason. In this case the supervisor will only be restarted if its
+  child specification was defined with the `:restart` option set to `:permanent`
+  (the default).
+
+  ## Module-based supervisors
+
+  In the example above, a supervisor was started by passing the supervision
+  structure to `start_link/2`. However, supervisors can also be created by
+  explicitly defining a supervision module:
+
+      defmodule MyApp.Supervisor do
+        # Automatically defines child_spec/1
+        use Supervisor
+
+        def start_link(arg) do
+          Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+        end
+
+        def init(_arg) do
+          Supervisor.init([
+            {Stack, [:hello]}
+          ], strategy: :one_for_one)
+        end
+      end
+
+  The difference between the two approaches is that a module-based
+  supervisor gives you more direct control over how the supervisor
+  is initialized. Instead of calling `Supervisor.start_link/2` with
+  a list of children that are automatically initialized, we have
+  defined a supervisor alongside its `c:init/1` callback and manually
+  initialized the children by calling `Supervisor.init/2`, passing
+  the same arguments we would have given to `start_link/2`.
+
+  You may want to use a module-based supervisor if:
+
+    * You need to perform some particular action on supervisor
+      initialization, like setting up an ETS table.
+
+    * You want to perform partial hot-code swapping of the
+      tree. For example, if you add or remove children,
+      the module-based supervision will add and remove the
+      new children directly, while dynamic supervision
+      requires the whole tree to be restarted in order to
+      perform such swaps.
+
+  Note `use Supervisor` defines a `child_spec/1` function, allowing
+  the defined module to be put under a supervision tree. The generated
+  `child_spec/1` can be customized with the following options:
+
+    * `:id` - the child specification id, defaults to the current module
+    * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
+    * `:restart` - when the supervisor should be restarted, defaults to `:permanent`
+
+  ## start_link/2, init/2 and strategies
+
+  So far we have started the supervisor passing a single child as a tuple
+  as well as a strategy called `:one_for_one`:
+
+      Supervisor.start_link([
+        {Stack, [:hello]}
+      ], strategy: :one_for_one)
+
+  Or:
+
+      Supervisor.init([
+        {Stack, [:hello]}
+      ], strategy: :one_for_one)
+
+  However, children can be specified in three different formats and
+  supervisors support different options. Let's formally define those.
+
+  The first argument given to `start_link/2` is a list of children which may
+  be either:
+
+    * a module - such as `Stack`. In this case, it is equivalent to passing
+      `{Stack, []}` (which means `Stack.child_spec/1` is invoked with an empty
+      keywords list)
+    * a tuple with a module as first element and the start argument as second -
+      such as `{Stack, [:hello]}`. When such format is used, the supervisor
+      will retrieve the child specification from the given module.
+    * a map representing the child specification itself - such as the child
+      specification map outlined in the previous section.
+
+  The second argument is a keyword list of options:
+
+    * `:strategy` - the restart strategy option. It can be either
+      `:one_for_one`, `:rest_for_one`, `:one_for_all`, or
+      `:simple_one_for_one`. See the "Strategies" section.
+
+    * `:max_restarts` - the maximum amount of restarts allowed in
+      a time frame. Defaults to `3`.
+
+    * `:max_seconds` - the time frame in which `:max_restarts` applies.
+      Defaults to `5`.
+
+  The `:strategy` option is required and by default a maximum of 3 restarts
+  is allowed within 5 seconds.
+
+  ### Strategies
+
+  Supervisors support different supervision strategies (through the
+  `:strategy` option, as seen above):
+
+    * `:one_for_one` - if a child process terminates, only that
+      process is restarted.
+
+    * `:one_for_all` - if a child process terminates, all other child
+      processes are terminated and then all child processes (including
+      the terminated one) are restarted.
+
+    * `:rest_for_one` - if a child process terminates, the "rest" of
+      the child processes, i.e., the child processes after the terminated
+      one in start order, are terminated. Then the terminated child
+      process and the rest of the child processes are restarted.
+
+    * `:simple_one_for_one` - similar to `:one_for_one` but suits better
+      when dynamically attaching children. This strategy requires the
+      supervisor specification to contain only one child. Many functions
+      in this module behave slightly differently when this strategy is
+      used.
+
+  ## Simple one for one
+
+  The `:simple_one_for_one` supervisor is useful when you want to
+  dynamically start and stop supervised children. As an example,
+  let's start multiple agents dynamically to keep state.
+
+  One important aspect in `:simple_one_for_one` supervisors is
+  that we often want to pass the `:start` arguments later on,
+  when starting the children dynamically, rather than when the
+  child specification is defined. In such cases, we should not do
+
+      Supervisor.start_link [
+        {Agent, fn -> 0 end}
+      ]
+
+  as the example above would force all agents to have the same state.
+  In such cases, we can use the `child_spec/2` function to build
+  and override the fields in a child specification:
+
+      # Override the :start field to have no args.
+      # The second argument has no effect thanks to it.
+
   """
