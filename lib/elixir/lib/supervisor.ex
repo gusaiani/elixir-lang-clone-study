@@ -145,12 +145,12 @@ defmodule Supervisor do
 
       Stack.child_spec([:hello])
       #=> %{
-        id: Stack,
-        start: {Stack, :start_link, [[:hello]]},
-        restart: :permanent,
-        shutdown: 5000,
-        type: :worker
-      }
+      #=>   id: Stack,
+      #=>   start: {Stack, :start_link, [[:hello]]},
+      #=>   restart: :permanent,
+      #=>   shutdown: 5000,
+      #=>   type: :worker
+      #=> }
 
   The child specification contains 5 keys. The first two are required
   and the remaining ones are optional:
@@ -240,7 +240,7 @@ defmodule Supervisor do
   ## Exit reasons
 
   A supervisor restarts a child process depending on its `:restart`
-  configuration. For example, when `:restart` is set `:transient`, the
+  configuration. For example, when `:restart` is set to `:transient`, the
   supervisor does not restart the child in case it exits with reason `:normal`,
   `:shutdown` or `{:shutdown, term}`.
 
@@ -401,5 +401,35 @@ defmodule Supervisor do
 
       # Override the :start field to have no args.
       # The second argument has no effect thanks to it.
+      agent_spec =
+        Supervisor.child_spec(Agent, start: {Agent, :start_link, []})
 
+      # We start a supervisor with a simple one for one strategy.
+      # The agent won't be started now but later on.
+      {:ok, sup_pid} =
+        Supervisor.start_link([agent_spec], strategy: :simple_one_for_one)
+
+      # No child worker is active until start_child is called
+      Supervisor.count_children(sup_pid)
+      #=> %{active: 0, specs: 1, supervisors: 0, workers: 0}
+
+  The simple one for one strategy can define only one child which works
+  as a template for when we call `start_child/2`.
+
+  With the supervisor started, let's dynamically start agents:
+
+      {:ok, agent1} = Supervisor.start_child(sup_pid, [fn -> 0 end])
+      Agent.update(agent1, & &1 + 1)
+      Agent.get(agent1, & &1) #=> 1
+
+      {:ok, agent2} = Supervisor.start_child(sup_pid, [fn -> %{} end])
+      Agent.get(agent2, & &1) #=> %{}
+
+      Supervisor.count_children(sup_pid)
+      #=> %{active: 2, specs: 1, supervisors: 0, workers: 2}
+
+  ## Name registration
+
+  A supervisor is bound to the same name registration rules as a `GenServer`.
+  Read more about these rules in the documentation for `GenServer`.
   """
