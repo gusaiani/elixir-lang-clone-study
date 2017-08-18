@@ -433,3 +433,96 @@ defmodule Supervisor do
   A supervisor is bound to the same name registration rules as a `GenServer`.
   Read more about these rules in the documentation for `GenServer`.
   """
+
+  @doc false
+  defmacro __using__(opts) do
+    quote location: :keep, bind_quoted: [opts: opts] do
+      @behaviour Supervisor
+      import Supervisor.Spec
+
+      spec = [
+        id: opts[:id] || __MODULE__,
+        start: Macro.escape(opts[:start]) || quote(do: {__MODULE__, :start_link, [arg]}),
+        restart: opts[:restart] || :permanent,
+        type: :supervisor
+      ]
+
+      @doc false
+      def child_spec(arg) do
+        %{unquote_splicing(spec)}
+      end
+
+      defoverridable child_spec: 1
+
+      @doc false
+      def init(arg)
+    end
+  end
+
+  @doc """
+  Callback invoked to start the supervisor and during hot code upgrades.
+  """
+  @callback init(args :: term) ::
+    {:ok, {:supervisor.sup_flags, [:supervisor.child_spec]}} |
+    :ignore
+
+  @typedoc "Return values of `start_link` functions"
+  @type on_start :: {:ok, pid} | :ignore |
+                    {:error, {:already_started, pid} | {:shutdown, term} | term}
+
+  @typedoc "Return values of `start_child` functions"
+  @type on_start_child :: {:ok, child} | {:ok, child, info :: term} |
+                          {:error, {:already_started, child} | :already_present | term}
+
+  @type child :: pid | :undefined
+
+  @typedoc "The Supervisor name"
+  @type name :: atom | {:global, term} | {:via, module, term}
+
+  @typedoc "Option values used by the `start*` functions"
+  @type option :: {:name, name} | flag()
+
+  @typedoc "Options used by the `start*` functions"
+  @type options :: [option, ...]
+
+  @typedoc "The supervisor reference"
+  @type supervisor :: pid | name | {atom, node}
+
+  @typedoc "Options given to `start_link/2` and `init/2`"
+  @type flag :: {:strategy, strategy} |
+                {:max_restarts, non_neg_integer} |
+                {:max_seconds, pos_integer}
+
+  @typedoc "Supported strategies"
+  @type strategy :: :simple_one_for_one | :one_for_one | :one_for_all | :rest_for_one
+
+  # Note we have inlined all types for readability
+  @typedoc "The supervisor specification"
+  @type child_spec :: %{
+    required(:id) => term(),
+    required(:start) => {module(), function(), [term()]},
+    optional(:restart) => :permanent | :transient | :temporary,
+    optional(:shutdown) => :brutal_kill | non_neg_integer() | :infinity,
+    optional(:type) => :worker | :supervisor,
+    optional(:modules) => [module()] | :dynamic
+  }
+
+  @doc """
+  Starts a supervisor with the given children.
+
+  The children is a list of modules, 2-element tuples with module and
+  arguments or a map with the child specification. A strategy is required
+  to be provided through the `:strategy` option. See
+  "start_link/2, init/2 and strategies" for examples and other options.
+
+  The options can also be used to register a supervisor name.
+  The supported values are described under the "Name registration"
+  section in the `GenServer` module docs.
+
+  If the supervisor and its child processes are successfully spawned
+  (if the start function of each child process returns `{:ok, child}`,
+  `{:ok, child, info}` or `:ignore`) this function returns
+  `{:ok, pid}`, where `pid` is the PID of the supervisor. If the supervisor
+  is given a name and a process with the specified name already exists,
+  the function returns `{:error, }`
+  """
