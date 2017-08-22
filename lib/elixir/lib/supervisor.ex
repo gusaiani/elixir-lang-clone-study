@@ -881,3 +881,78 @@ defmodule Supervisor do
   def restart_child(supervisor, child_id) do
     call(supervisor, {:restart_child, child_id})
   end
+
+  @doc """
+  Returns a list with information about all children of the given supervisor.
+
+  Note that calling this function when supervising a large number of children
+  under low memory conditions can cause an out of memory exception.
+
+  This function returns a list of `{id, child, type, modules}` tuples, where:
+
+    * `id` - as defined in the child specification or `:undefined` in the case
+      of a `simple_one_for_one` supervisor
+
+    * `child` - the PID of the corresponding child process, `:restarting` if the
+      process is about to be restarted, or `:undefined` if there is no such
+      process
+
+    * `type` - `:worker` or `:supervisor`, as specified by the child specification
+
+    * `modules` - as specified by the child specification
+
+  """
+  @spec which_children(supervisor) ::
+        [{term() | :undefined,
+          child | :restarting,
+          :worker | :supervisor,
+          :supervisor.modules}]
+  def which_children(supervisor) do
+    call(supervisor, :which_children)
+  end
+
+  @doc """
+  Returns a map containing count values for the given supervisor.
+
+  The map contains the following keys:
+
+    * `:specs` - the total count of children, dead or alive
+
+    * `:active` - the count of all actively running child processes managed by
+      this supervisor
+
+    * `:supervisors` - the count of all supervisors whether or not these
+      child supervisors are still alive
+
+    * `:workers` - the count of all workers, whether or not these child workers
+      are still alive
+
+  """
+  @spec count_children(supervisor) ::
+        %{specs: non_neg_integer, active: non_neg_integer,
+          supervisors: non_neg_integer, workers: non_neg_integer}
+  def count_children(supervisor) do
+    call(supervisor, :count_children) |> :maps.from_list
+  end
+
+  @doc """
+  Synchronously stops the given supervisor with the given `reason`.
+
+  It returns `:ok` if the supervisor terminates with the given
+  reason. If it terminates with another reason, the call exits.
+
+  This function keeps OTP semantics regarding error reporting.
+  If the reason is any other than `:normal`, `:shutdown` or
+  `{:shutdown, _}`, an error report is logged.
+  """
+  @spec stop(supervisor, reason :: term, timeout) :: :ok
+  def stop(supervisor, reason \\ :normal, timeout \\ :infinity) do
+    :gen.stop(supervisor, reason, timeout)
+  end
+
+  @compile {:inline, call: 2}
+
+  defp call(supervisor, req) do
+    GenServer.call(supervisor, req, :infinity)
+  end
+end
