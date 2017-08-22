@@ -130,11 +130,32 @@ defmodule Supervisor do
   In summary, when the `Supervisor.start_link(children, opts)` is called,
   it traverses the list of children and retrieves their `child_spec/1`.
   Then each child specification describes how each child is started,
-  typically via the `start_link/1` function. The supervisor invokes the
-  `start_link/1` when it initializes and whenever the child process needs
-  to be restarted. The new process started by `start_link/1` often
-  executes the `init` callback as its first step. The `init` callback is
-  where we initialize and configure the child process.
+  typically via the `start_link/1` function. After the supervisor process
+  starts, it starts each child process in the order they are defined. Each
+  child process typically executes the `init` callback as its first step.
+  The `init` callback is where we initialize and configure the child process.
+
+  ## The shutdown process
+
+  When a supervisor shuts down, it terminates all children in the opposite
+  order they are listed. The termination happens by sending a shutdown exit
+  signal to the child process and then awaiting for a time interval, which
+  defaults to 5000 miliseconds, for the child process to terminate. If the
+  child process does not terminate, it is abruptly terminated with reason
+  `:brutal_kill`. The shutdown time can be configured in the child specification
+  which is detailed in the next section.
+
+  If the child process is not trapping exits, it will shutdown immediately
+  when it receives the first exit signal. If the child process is trapping
+  exits, then the `terminate` callback is invoked, and the child process
+  must terminate in a reasonable time interval before being abruptly
+  terminated by the supervisor.
+
+  In other words, if it is important that a process cleans after itself
+  when your application or the supervision tree is shutting down, then
+  this process must trap exits and its child specification should specify
+  the proper `:shutdown` value, ensuring it terminates within a reasonable
+  interval.
 
   ## Child specification
 
@@ -237,7 +258,7 @@ defmodule Supervisor do
   For a more complete understanding of the exit reasons and their
   impact, see the "Exit reasons" section next.
 
-  ## Exit reasons
+  ## Exit reasons and restarts
 
   A supervisor restarts a child process depending on its `:restart`
   configuration. For example, when `:restart` is set to `:transient`, the
@@ -312,7 +333,7 @@ defmodule Supervisor do
     * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
     * `:restart` - when the supervisor should be restarted, defaults to `:permanent`
 
-  ## start_link/2, init/2 and strategies
+  ## `start_link/2`, `init/2`, and strategies
 
   So far we have started the supervisor passing a single child as a tuple
   as well as a strategy called `:one_for_one`:
@@ -828,4 +849,35 @@ defmodule Supervisor do
         when error: :not_found | :simple_one_for_one | :running | :restarting
   def delete_child(supervisor, child_id) do
     call(supervisor, {:delete_child, child_id})
+  end
+
+  @doc """
+  Restarts a child process identified by `child_id`.
+
+  The child specification must exist and the corresponding child process must not
+  be running.
+
+  Note that for temporary children, the child specification is automatically deleted
+  when the child terminates, and thus it is not possible to restart such children.
+
+  If the child process start function returns `{:ok, child}` or `{:ok, child, info}`,
+  the PID is added to the supervisor and this function returns the same value.
+
+  If the child process start function returns `:ignore`, the PID remains set to
+  `:undefined` and this function returns `{:ok, :undefined}`.
+
+  This function may return an error with an appropriate error tuple if the
+  `child_id` is not found, or if the current process is running or being
+  restarted.
+
+  If the child process start function returns an error tuple or an erroneous value,
+  or if it fails, this function returns `{:error, error}`.
+
+  This operation is not supported by `:simple_one_for_one` supervisors.
+  """
+  @spec restart_child(supervisor, term()) ::
+        {:ok, child} | {:ok, child, term} | {:error, error}
+        when error: :not_found | :simple_one_for_one | :running | :restarting | term
+  def restart_child(supervisor, child_id) do
+    call(supervisor, {:restart_child, child_id})
   end
