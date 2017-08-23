@@ -250,3 +250,18 @@ defmodule Supervisor.Spec do
     options = Keyword.put_new(options, :shutdown, :infinity)
     child(:supervisor, module, args, options)
   end
+
+  defp child(type, module, args, options) do
+    id       = Keyword.get(options, :id, module)
+    modules  = Keyword.get(options, :modules, modules(module))
+    function = Keyword.get(options, :function, :start_link)
+    restart  = Keyword.get(options, :restart, :permanent)
+    shutdown = Keyword.get(options, :shutdown, 5000)
+
+    {id, {module, function, args},
+      restart, shutdown, type, modules}
+  end
+
+  defp modules(GenEvent), do: :dynamic
+  defp modules(module),   do: [module]
+end
