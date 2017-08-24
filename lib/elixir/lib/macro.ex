@@ -53,7 +53,10 @@ defmodule Macro do
 
       ~X(without #{"interpolation"})r
       #=>"}\"noitalopretni\"{# tuohtiw"
+
   """
+
+  alias Code.Identifier
 
   @typedoc "Abstract Syntax Tree (AST)"
   @type t :: expr | {t, t} | atom | number | binary | pid | fun | [t]
