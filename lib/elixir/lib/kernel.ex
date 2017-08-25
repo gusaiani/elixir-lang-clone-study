@@ -7,28 +7,131 @@ import :elixir_bootstrap
 
 defmodule Kernel do
   @moduledoc """
-  Provides the default macros and functions Elixir imports into your
-  environment.
+  This module is the entry point of the Elixir programming language.
 
-  These macros and functions can be skipped or cherry-picked via the
-  `import/2` macro. For instance, if you want to tell Elixir not to
-  import the `if/2` macro, you can do:
+  It provides the default functions and macros Elixir imports into your
+  environment. Those can be directly invoked in your code without the
+  module name:
+
+      iex> is_number(13)
+      true
+
+  These functions and macros can be skipped or cherry-picked via the
+  `Kernel.SpecialForms.import/2` macro. For instance, if you want to tell
+  Elixir not to import the `if/2` macro, you can do:
 
       import Kernel, except: [if: 2]
 
   Elixir also has special forms that are always imported and
   cannot be skipped. These are described in `Kernel.SpecialForms`.
 
+  This module provides a variety of code definition, flow-control
+  and data-type functionality. For example, new processes can be
+  created with `spawn/1`, modules can be defined with `defmodule/2`,
+  short-circuit operators are found in `&&/2` and `||/2`, numbers
+  can be added with `+/2`, and more. This module also contains all
+  built-in guards, which are a set of functions that augment pattern
+  matching with complex checks. More information about guards can be
+  found in the [Guards page](guards.html).
+
+  ## The standard library
+
+  `Kernel` provides the basic capabilities the Elixir standard library
+  is built on top of. It is recommended to explore the standard library
+  for advanced functionality. Here are the main groups of modules in the
+  standard library (this list is not a complete reference).
+
+  ### Built-in types
+
+  The following modules handle Elixir built-in data types:
+
+    * `Atom` - literal constants with a name (`true`, `false`, and `nil` are atoms)
+    * `Float` - numbers with floating point precision
+    * `Integer` - whole numbers (not fractions)
+    * `List` - collections of a variable amount of elements (linked lists)
+    * `Map` - collections of key-value pairs
+    * `Process` - light-weight threads of execution
+    * `Port` - mechanisms to interact with the external world
+    * `Tuple` - collections of fixed amount of elements
+
+  There are three data-types without an accompanying module:
+
+    * Bitstrings - a sequence of bits, created with `Kernel.SpecialForms.<<>>/1`.
+      When the number of bits is divisible by 8, they are called binaries and can
+      be manipulated with the Erlang
+      [`:binary` module](http://erlang.org/doc/man/binary.html)
+    * Function - a reference to code chunk, created with the `Kernel.SpecialForms.fn/2`
+      special form
+    * Reference - a unique value in the runtime system, created with `make_ref/0`
+
+  ### Data-types
+
+  Elixir also provides other data-types that are built on top of the types
+  listed above.
+
+    * `Date` - `year-month-day` structs in a given calendar
+    * `Time` - `hour:minute:second` structs in a given calendar
+    * `DateTime` - date and time with timezone in a given calendar
+    * `Exception` - data raised from errors and unexpected scenarios
+    * `MapSet` - unordered collections of unique elements
+    * `NaiveDateTime` - date and time without timezone in a given calendar
+    * `Keyword` - lists of two-element tuples, often representing optional values
+    * `Range` - inclusive ranges between two integers
+    * `Regex` - regular expressions
+    * `String` - UTF-8 encoded binaries representing characters
+    * `URI` - representation of URIs that identify resources
+    * `Version` - representation of versions and requirements
+
+  ### System modules
+
+  Modules that interface with the underlying system:
+
+    * `IO` - handles input and output
+    * `File` - interacts with the underlying file system
+    * `Path` - manipulates file system paths
+    * `System` - reads and writes system information
+
+  ### Protocols
+
+  Protocols add polymorphic dispatch to Elixir. They are contracts
+  implementable by data-types. See `defprotocol/2` for more information on
+  protocols. Elixir provides the following protocols in the standard library:
+
+    * `Collectable` - collects data into a data type
+    * `Enumerable` - handles collections in Elixir. The `Enum` module
+      provides eager functions for working with collections, the `Stream`
+      module provides lazy functions
+    * `Inspect` - converts data-types into their programming language
+      representation
+    * `List.Chars` - converts data-types to their outside world
+      representation as char lists (non-programming based)
+    * `String.Chars` - converts data-types to their outside world
+      representation as strings (non-programming based)
+
+  ### Process-based functionality
+
+  The following modules build on top of processes to provide concurrency,
+  fault-tolerance, and more.
+
+    * `Agent` - a process that encapsulates mutable state
+    * `GenServer` - a generic client-server API
+    * `Registry` - a key-value process-based storage
+    * `Supervisor` - a process that is responsible for starting,
+      supervising and shutting down other processes
+    * `Task` - a process that performs computations
+
+  ## Inlining
+
   Some of the functions described in this module are inlined by
   the Elixir compiler into their Erlang counterparts in the
   [`:erlang` module](http://www.erlang.org/doc/man/erlang.html).
   Those functions are called BIFs (built-in internal functions)
-  in Erlang-land and they exhibit interesting properties, as some of
-  them are allowed in guards and others are used for compiler
+  in Erlang-land and they exhibit interesting properties, as some
+  of them are allowed in guards and others are used for compiler
   optimizations.
 
-  Most of the inlined functions can be seen in effect when capturing
-  the function:
+  Most of the inlined functions can be seen in effect when
+  capturing the function:
 
       iex> &Kernel.is_atom/1
       &:erlang.is_atom/1
@@ -111,7 +214,7 @@ defmodule Kernel do
       "llo"
 
   """
-  @spec binary_part(binary, pos_integer, integer) :: binary
+  @spec binary_part(binary, non_neg_integer, integer) :: binary
   def binary_part(binary, start, length) do
     :erlang.binary_part(binary, start, length)
   end
@@ -261,6 +364,8 @@ defmodule Kernel do
   @doc """
   Returns the head of a list. Raises `ArgumentError` if the list is empty.
 
+  It works with improper lists.
+
   Allowed in guard tests. Inlined by the compiler.
 
   ## Examples
@@ -270,6 +375,9 @@ defmodule Kernel do
 
       hd([])
       #=> ** (ArgumentError) argument error
+
+      hd([1 | 2])
+      #=> 1
 
   """
   @spec hd(nonempty_maybe_improper_list(elem, any)) :: elem when elem: term
@@ -337,7 +445,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if `term` is a floating point number; otherwise returns `false`.
+  Returns `true` if `term` is a floating-point number; otherwise returns `false`.
 
   Allowed in guard tests. Inlined by the compiler.
   """
@@ -396,7 +504,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if `term` is either an integer or a floating point number;
+  Returns `true` if `term` is either an integer or a floating-point number;
   otherwise returns `false`.
 
   Allowed in guard tests. Inlined by the compiler.
@@ -512,8 +620,9 @@ defmodule Kernel do
 
   @doc """
   Returns the biggest of the two given terms according to
-  Erlang's term ordering. If the terms compare equal, the
-  first one is returned.
+  Erlang's term ordering.
+
+  If the terms compare equal, the first one is returned.
 
   Inlined by the compiler.
 
@@ -532,8 +641,9 @@ defmodule Kernel do
 
   @doc """
   Returns the smallest of the two given terms according to
-  Erlang's term ordering. If the terms compare equal, the
-  first one is returned.
+  Erlang's term ordering.
+
+  If the terms compare equal, the first one is returned.
 
   Inlined by the compiler.
 
@@ -638,9 +748,9 @@ defmodule Kernel do
       :hello
 
   """
-  @spec send(dest :: pid | port | atom | {atom, node}, msg) :: msg when msg: any
-  def send(dest, msg) do
-    :erlang.send(dest, msg)
+  @spec send(dest :: pid | port | atom | {atom, node}, message) :: message when message: any
+  def send(dest, message) do
+    :erlang.send(dest, message)
   end
 
   @doc """
@@ -656,8 +766,12 @@ defmodule Kernel do
   @doc """
   Spawns the given function and returns its PID.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions.
 
   The anonymous function receives 0 arguments, and may return any value.
 
@@ -666,7 +780,7 @@ defmodule Kernel do
   ## Examples
 
       current = self()
-      child   = spawn(fn -> send current, {self(), 1 + 2} end)
+      child = spawn(fn -> send current, {self(), 1 + 2} end)
 
       receive do
         {^child, 3} -> IO.puts "Received 3 back"
@@ -679,11 +793,15 @@ defmodule Kernel do
   end
 
   @doc """
-  Spawns the given module and function passing the given args
-  and returns its PID.
+  Spawns the given function `fun` from the given `module` passing it the given
+  `args` and returns its PID.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions.
 
   Inlined by the compiler.
 
@@ -698,10 +816,15 @@ defmodule Kernel do
   end
 
   @doc """
-  Spawns the given function, links it to the current process and returns its PID.
+  Spawns the given function, links it to the current process, and returns its PID.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions. For more
+  information on linking, check `Process.link/1`.
 
   The anonymous function receives 0 arguments, and may return any value.
 
@@ -710,7 +833,7 @@ defmodule Kernel do
   ## Examples
 
       current = self()
-      child   = spawn_link(fn -> send current, {self(), 1 + 2} end)
+      child = spawn_link(fn -> send(current, {self(), 1 + 2}) end)
 
       receive do
         {^child, 3} -> IO.puts "Received 3 back"
@@ -723,11 +846,16 @@ defmodule Kernel do
   end
 
   @doc """
-  Spawns the given module and function passing the given args,
-  links it to the current process and returns its PID.
+  Spawns the given function `fun` from the given `module` passing it the given
+  `args`, links it to the current process, and returns its PID.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions. For more
+  information on linking, check `Process.link/1`.
 
   Inlined by the compiler.
 
@@ -745,8 +873,12 @@ defmodule Kernel do
   Spawns the given function, monitors it and returns its PID
   and monitoring reference.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions.
 
   The anonymous function receives 0 arguments, and may return any value.
 
@@ -767,8 +899,12 @@ defmodule Kernel do
   Spawns the given module and function passing the given args,
   monitors it and returns its PID and monitoring reference.
 
-  Check the `Process` and `Node` modules for other functions
-  to handle processes, including spawning functions in nodes.
+  Typically developers do not use the `spawn` functions, instead they use
+  abstractions such as `Task`, `GenServer` and `Agent`, built on top of
+  `spawn`, that spawns processes with more conveniences in terms of
+  introspection and debugging.
+
+  Check the `Process` module for more process-related functions.
 
   Inlined by the compiler.
 
@@ -797,6 +933,8 @@ defmodule Kernel do
   @doc """
   Returns the tail of a list. Raises `ArgumentError` if the list is empty.
 
+  It works with improper lists.
+
   Allowed in guard tests. Inlined by the compiler.
 
   ## Examples
@@ -806,6 +944,15 @@ defmodule Kernel do
 
       tl([])
       #=> ** (ArgumentError) argument error
+
+      tl([:one])
+      #=> []
+
+      tl([:a, :b | :c])
+      #=> [:b | :c]
+
+      tl([:a | %{b: 1}])
+      #=> %{b: 1}
 
   """
   @spec tl(nonempty_maybe_improper_list(elem, tail)) ::
