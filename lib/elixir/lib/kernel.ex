@@ -1202,8 +1202,8 @@ defmodule Kernel do
   """
   @spec not(true) :: false
   @spec not(false) :: true
-  def not(arg) do
-    :erlang.not(arg)
+  def not(value) do
+    :erlang.not(value)
   end
 
   @doc """
@@ -1481,20 +1481,20 @@ defmodule Kernel do
       true
 
   """
-  defmacro !(arg)
+  defmacro !(value)
 
-  defmacro !({:!, _, [arg]}) do
+  defmacro !({:!, _, [value]}) do
     optimize_boolean(quote do
-      case unquote(arg) do
+      case unquote(value) do
         x when x in [false, nil] -> false
         _ -> true
       end
     end)
   end
 
-  defmacro !(arg) do
+  defmacro !(value) do
     optimize_boolean(quote do
-      case unquote(arg) do
+      case unquote(value) do
         x when x in [false, nil] -> true
         _ -> false
       end
@@ -1551,7 +1551,10 @@ defmodule Kernel do
   If `msg` is an atom, it just calls `raise/2` with the atom as the first
   argument and `[]` as the second argument.
 
-  If `msg` is anything else, raises an `ArgumentError` exception.
+  If `msg` is an exception struct, it is raised as is.
+
+  If `msg` is anything else, `raise` will fail with an `ArgumentError`
+  exception.
 
   ## Examples
 
@@ -1567,22 +1570,22 @@ defmodule Kernel do
       end
 
   """
-  defmacro raise(msg) do
+  defmacro raise(message) do
     # Try to figure out the type at compilation time
     # to avoid dead code and make Dialyzer happy.
-    msg = case not is_binary(msg) and bootstrapped?(Macro) do
-      true  -> Macro.expand(msg, __CALLER__)
-      false -> msg
+    message = case not is_binary(message) and bootstrapped?(Macro) do
+      true  -> Macro.expand(message, __CALLER__)
+      false -> message
     end
 
-    case msg do
-      msg when is_binary(msg) ->
+    case message do
+      message when is_binary(message) ->
         quote do
-          :erlang.error RuntimeError.exception(unquote(msg))
+          :erlang.error RuntimeError.exception(unquote(message))
         end
-      {:<<>>, _, _} = msg ->
+      {:<<>>, _, _} = message ->
         quote do
-          :erlang.error RuntimeError.exception(unquote(msg))
+          :erlang.error RuntimeError.exception(unquote(message))
         end
       alias when is_atom(alias) ->
         quote do
@@ -1590,7 +1593,7 @@ defmodule Kernel do
         end
       _ ->
         quote do
-          :erlang.error Kernel.Utils.raise(unquote(msg))
+          :erlang.error Kernel.Utils.raise(unquote(message))
         end
     end
   end
@@ -1612,9 +1615,9 @@ defmodule Kernel do
       ** (ArgumentError) Sample
 
   """
-  defmacro raise(exception, attrs) do
+  defmacro raise(exception, attributes) do
     quote do
-      :erlang.error unquote(exception).exception(unquote(attrs))
+      :erlang.error unquote(exception).exception(unquote(attributes))
     end
   end
 
@@ -1642,35 +1645,35 @@ defmodule Kernel do
           end
       end
   """
-  defmacro reraise(msg, stacktrace) do
+  defmacro reraise(message, stacktrace) do
     # Try to figure out the type at compilation time
     # to avoid dead code and make Dialyzer happy.
 
-    case Macro.expand(msg, __CALLER__) do
-      msg when is_binary(msg) ->
+    case Macro.expand(message, __CALLER__) do
+      message when is_binary(message) ->
         quote do
-          :erlang.raise :error, RuntimeError.exception(unquote(msg)), unquote(stacktrace)
+          :erlang.raise :error, RuntimeError.exception(unquote(message)), unquote(stacktrace)
         end
-      {:<<>>, _, _} = msg ->
+      {:<<>>, _, _} = message ->
         quote do
-          :erlang.raise :error, RuntimeError.exception(unquote(msg)), unquote(stacktrace)
+          :erlang.raise :error, RuntimeError.exception(unquote(message)), unquote(stacktrace)
         end
       alias when is_atom(alias) ->
         quote do
           :erlang.raise :error, unquote(alias).exception([]), unquote(stacktrace)
         end
-      msg ->
+      message ->
         quote do
           stacktrace = unquote(stacktrace)
-          case unquote(msg) do
-            msg when is_binary(msg) ->
-              :erlang.raise :error, RuntimeError.exception(msg), stacktrace
+          case unquote(message) do
+            message when is_binary(message) ->
+              :erlang.raise :error, RuntimeError.exception(message), stacktrace
             atom when is_atom(atom) ->
               :erlang.raise :error, atom.exception([]), stacktrace
-            %{__struct__: struct, __exception__: true} = other when is_atom(struct) ->
+            %_{__exception__: true} = other ->
               :erlang.raise :error, other, stacktrace
             other ->
-              message = "reraise/2 expects an alias, string or exception as the first argument, got: #{inspect other}"
+              message = "reraise/2 expects a module name, string or exception as the first argument, got: #{inspect other}"
               :erlang.error ArgumentError.exception(message)
           end
         end
@@ -1692,10 +1695,11 @@ defmodule Kernel do
           stacktrace = System.stacktrace
           reraise WrapperError, [exception: exception], stacktrace
       end
+
   """
-  defmacro reraise(exception, attrs, stacktrace) do
+  defmacro reraise(exception, attributes, stacktrace) do
     quote do
-      :erlang.raise :error, unquote(exception).exception(unquote(attrs)), unquote(stacktrace)
+      :erlang.raise :error, unquote(exception).exception(unquote(attributes)), unquote(stacktrace)
     end
   end
 
@@ -1786,15 +1790,15 @@ defmodule Kernel do
       #=> #Function<...>
 
   """
-  @spec inspect(Inspect.t, Keyword.t) :: String.t
-  def inspect(arg, opts \\ []) when is_list(opts) do
-    opts  = struct(Inspect.Opts, opts)
+  @spec inspect(Inspect.t, keyword) :: String.t
+  def inspect(term, opts \\ []) when is_list(opts) do
+    opts = struct(Inspect.Opts, opts)
     limit = case opts.pretty do
       true  -> opts.width
       false -> :infinity
     end
     IO.iodata_to_binary(
-      Inspect.Algebra.format(Inspect.Algebra.to_doc(arg, opts), limit)
+      Inspect.Algebra.format(Inspect.Algebra.to_doc(term, opts), limit)
     )
   end
 
@@ -1839,12 +1843,15 @@ defmodule Kernel do
 
   """
   @spec struct(module | struct, Enum.t) :: struct
-  def struct(struct, kv \\ []) do
-    struct(struct, kv, fn({key, val}, acc) ->
-      case :maps.is_key(key, acc) and key != :__struct__ do
-        true  -> :maps.put(key, val, acc)
-        false -> acc
-      end
+  def struct(struct, fields \\ []) do
+    struct(struct, fields, fn
+      {:__struct__, _val}, acc ->
+        acc
+      {key, val}, acc ->
+        case acc do
+          %{^key => _} -> %{acc | key => val}
+          _ -> acc
+        end
     end)
   end
 
@@ -1868,17 +1875,17 @@ defmodule Kernel do
 
   """
   @spec struct!(module | struct, Enum.t) :: struct | no_return
-  def struct!(struct, kv \\ [])
+  def struct!(struct, fields \\ [])
 
-  def struct!(struct, kv) when is_atom(struct) do
-    struct.__struct__(kv)
+  def struct!(struct, fields) when is_atom(struct) do
+    struct.__struct__(fields)
   end
 
-  def struct!(struct, kv) when is_map(struct) do
-    struct(struct, kv, fn
+  def struct!(struct, fields) when is_map(struct) do
+    struct(struct, fields, fn
       {:__struct__, _}, acc -> acc
       {key, val}, acc ->
-        :maps.update(key, val, acc)
+        Map.replace!(acc, key, val)
     end)
   end
 
@@ -1886,16 +1893,16 @@ defmodule Kernel do
     struct.__struct__()
   end
 
-  defp struct(struct, kv, fun) when is_atom(struct) do
-    struct(struct.__struct__(), kv, fun)
+  defp struct(struct, fields, fun) when is_atom(struct) do
+    struct(struct.__struct__(), fields, fun)
   end
 
-  defp struct(%{__struct__: _} = struct, [], _fun) do
+  defp struct(%_{} = struct, [], _fun) do
     struct
   end
 
-  defp struct(%{__struct__: _} = struct, kv, fun) do
-    Enum.reduce(kv, struct, fun)
+  defp struct(%_{} = struct, fields, fun) do
+    Enum.reduce(fields, struct, fun)
   end
 
   @doc """
@@ -1936,7 +1943,7 @@ defmodule Kernel do
       [27, 23]
 
   If the previous value before invoking the function is `nil`,
-  the function *will* receive nil as a value and must handle it
+  the function *will* receive `nil` as a value and must handle it
   accordingly.
   """
   @spec get_in(Access.t, nonempty_list(term)) :: term
@@ -2089,21 +2096,28 @@ defmodule Kernel do
   In case any entry returns `nil`, its key will be removed
   and the deletion will be considered a success.
   """
-  @spec pop_in(Access.t, nonempty_list(term)) :: {term, Access.t}
+  @spec pop_in(data, nonempty_list(Access.get_and_update_fun(term, data) | term)) ::
+        {term, data} when data: Access.container
   def pop_in(data, keys)
-  def pop_in(nil, [h | _]), do: Access.pop(nil, h)
-  def pop_in(data, keys), do: do_pop_in(data, keys)
 
-  defp do_pop_in(nil, [_ | _]),
+  def pop_in(nil, [key | _]) do
+    raise ArgumentError, "could not pop key #{inspect key} on a nil value"
+  end
+
+  def pop_in(data, keys) when is_list(keys) do
+    pop_in_data(data, keys)
+  end
+
+  defp pop_in_data(nil, [_ | _]),
     do: :pop
-  defp do_pop_in(data, [h]) when is_function(h),
-    do: h.(:get_and_update, data, fn _ -> :pop end)
-  defp do_pop_in(data, [h | t]) when is_function(h),
-    do: h.(:get_and_update, data, &do_pop_in(&1, t))
-  defp do_pop_in(data, [h]),
-    do: Access.pop(data, h)
-  defp do_pop_in(data, [h | t]),
-    do: Access.get_and_update(data, h, &do_pop_in(&1, t))
+  defp pop_in_data(data, [fun]) when is_function(fun),
+    do: fun.(:get_and_update, data, fn _ -> :pop end)
+  defp pop_in_data(data, [fun | tail]) when is_function(fun),
+    do: fun.(:get_and_update, data, &pop_in_data(&1, tail))
+  defp pop_in_data(data, [key]),
+    do: Access.pop(data, key)
+  defp pop_in_data(data, [key | tail]),
+    do: Access.get_and_update(data, key, &pop_in_data(&1, tail))
 
   @doc """
   Puts a value in a nested structure via the given `path`.
@@ -2387,12 +2401,12 @@ defmodule Kernel do
       "foo"
 
   """
-  defmacro to_string(arg) do
-    quote do: String.Chars.to_string(unquote(arg))
+  defmacro to_string(term) do
+    quote do: String.Chars.to_string(unquote(term))
   end
 
   @doc """
-  Converts the argument to a charlist according to the `List.Chars` protocol.
+  Converts the given term to a charlist according to the `List.Chars` protocol.
 
   ## Examples
 
@@ -2400,8 +2414,8 @@ defmodule Kernel do
       'foo'
 
   """
-  defmacro to_charlist(arg) do
-    quote do: List.Chars.to_charlist(unquote(arg))
+  defmacro to_charlist(term) do
+    quote do: List.Chars.to_charlist(unquote(term))
   end
 
   @doc """
@@ -2447,15 +2461,15 @@ defmodule Kernel do
 
   `match?/2` is very useful when filtering of finding a value in an enumerable:
 
-      list = [{:a, 1}, {:b, 2}, {:a, 3}]
-      Enum.filter list, &match?({:a, _}, &1)
-      #=> [{:a, 1}, {:a, 3}]
+      iex> list = [a: 1, b: 2, a: 3]
+      iex> Enum.filter(list, &match?({:a, _}, &1))
+      [a: 1, a: 3]
 
   Guard clauses can also be given to the match:
 
-      list = [{:a, 1}, {:b, 2}, {:a, 3}]
-      Enum.filter list, &match?({:a, x} when x < 2, &1)
-      #=> [{:a, 1}]
+      iex> list = [a: 1, b: 2, a: 3]
+      iex> Enum.filter(list, &match?({:a, x} when x < 2, &1))
+      [a: 1]
 
   However, variables assigned in the match will not be available
   outside of the function call (unlike regular pattern matching with the `=`
@@ -2482,10 +2496,10 @@ defmodule Kernel do
   Reads and writes attributes of the current module.
 
   The canonical example for attributes is annotating that a module
-  implements the OTP behaviour called `gen_server`:
+  implements an OTP behaviour, such as `GenServer`:
 
       defmodule MyServer do
-        @behaviour :gen_server
+        @behaviour GenServer
         # ... callbacks ...
       end
 
@@ -2527,7 +2541,7 @@ defmodule Kernel do
 
     cond do
       # Check for Module as it is compiled later than Kernel
-      not bootstrapped?(Module) ->
+      not bootstrapped?(Macro) ->
         nil
 
       not function? and __CALLER__.context == :match ->
@@ -2560,6 +2574,13 @@ defmodule Kernel do
       name == :behavior ->
         :elixir_errors.warn env.line, env.file,
                             "@behavior attribute is not supported, please use @behaviour instead"
+
+      # TODO: Remove :compile check once on 2.0 as we no longer
+      # need to warn on parse transforms in Module.put_attribute.
+      name == :compile ->
+        {stack, _} = :elixir_quote.escape(env_stacktrace(env), false)
+        quote do: Module.put_attribute(__MODULE__, unquote(name), unquote(arg),
+                                       unquote(stack), unquote(line))
 
       :lists.member(name, [:moduledoc, :typedoc, :doc]) ->
         {stack, _} = :elixir_quote.escape(env_stacktrace(env), false)
@@ -2608,14 +2629,13 @@ defmodule Kernel do
     raise ArgumentError, "expected 0 or 1 argument for @#{name}, got: #{length(args)}"
   end
 
-  defp typespec(:type),               do: :deftype
-  defp typespec(:typep),              do: :deftypep
-  defp typespec(:opaque),             do: :defopaque
-  defp typespec(:spec),               do: :defspec
-  defp typespec(:callback),           do: :defcallback
-  defp typespec(:macrocallback),      do: :defmacrocallback
-  defp typespec(:optional_callbacks), do: :defoptional_callbacks
-  defp typespec(_),                   do: false
+  defp typespec(:type),          do: :deftype
+  defp typespec(:typep),         do: :deftypep
+  defp typespec(:opaque),        do: :defopaque
+  defp typespec(:spec),          do: :defspec
+  defp typespec(:callback),      do: :defcallback
+  defp typespec(:macrocallback), do: :defmacrocallback
+  defp typespec(_),              do: false
 
   @doc """
   Returns the binding for the given context as a keyword list.
@@ -2802,9 +2822,12 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns a range with the specified start and end.
+  Returns a range with the specified `first` and `last` integers.
 
-  Both ends are included.
+  If last is larger than first, the range will be increasing from
+  first to last. If first is larger than last, the range will be
+  decreasing from first to last. If first is equal to last, the range
+  will contain one element, which is the number itself.
 
   ## Examples
 
@@ -2996,12 +3019,15 @@ defmodule Kernel do
   defmacro left |> right do
     [{h, _} | t] = Macro.unpipe({:|>, [], [left, right]})
     :lists.foldl fn {x, pos}, acc ->
-      # TODO: raise an error in `Macro.pipe/3` by 1.5
-      case Macro.pipe_warning(x) do
-        nil -> :ok
-        message ->
-          :elixir_errors.warn(__CALLER__.line, __CALLER__.file, message)
+      case x do
+        {op, _, [_]} when op == :+ or op == :- ->
+          :elixir_errors.warn(__CALLER__.line, __CALLER__.file,
+                              <<"piping into a unary operator is deprecated, please use the ",
+                                "qualified name. For example, Kernel.+(5), instead of +5">>)
+        _ ->
+          :ok
       end
+
       Macro.pipe(acc, x, pos)
     end, h, t
   end
@@ -3068,11 +3094,18 @@ defmodule Kernel do
 
       Enum.member?([1, 2, 3], x)
 
+  Elixir also supports `left not in right`, which evaluates to
+  `not(left in right)`:
+
+      iex> x = 1
+      iex> x not in [1, 2, 3]
+      false
+
   ## Guards
 
-  The `in/2` operator can be used in guard clauses as long as the
-  right-hand side is a range or a list. In such cases, Elixir will expand the
-  operator to a valid guard expression. For example:
+  The `in/2` operator (as well as `not in`) can be used in guard clauses as
+  long as the right-hand side is a range or a list. In such cases, Elixir will
+  expand the operator to a valid guard expression. For example:
 
       when x in [1, 2, 3]
 
@@ -3086,8 +3119,20 @@ defmodule Kernel do
 
   translates to:
 
-      when x >= 1 and x <= 3
+      when is_integer(x) and x >= 1 and x <= 3
 
+  Note that only integers can be considered inside a range by `in`.
+
+  ### AST considerations
+
+  `left not in right` is parsed by the compiler into the AST:
+
+      {:not, _, [{:in, _, [left, right]}]}
+
+  This is the same AST as `not(left in right)`.
+
+  Additionally, `Macro.to_string/2` will translate all occurrences of
+  this AST to `left not in right`.
   """
   defmacro left in right do
     in_module? = (__CALLER__.context == nil)
