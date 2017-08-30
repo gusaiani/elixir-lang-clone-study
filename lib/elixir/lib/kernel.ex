@@ -1052,7 +1052,7 @@ defmodule Kernel do
 
   """
   @spec (+value) :: value when value: number
-  def (+value) do
+  def +value do
     :erlang.+(value)
   end
 
@@ -1071,7 +1071,7 @@ defmodule Kernel do
   @spec (-pos_integer) :: neg_integer
   @spec (-neg_integer) :: pos_integer
   @spec (-float) :: float
-  def (-value) do
+  def -value do
     :erlang.-(value)
   end
 
@@ -1202,7 +1202,7 @@ defmodule Kernel do
   """
   @spec not(true) :: false
   @spec not(false) :: true
-  def not(value) do
+  def not value do
     :erlang.not(value)
   end
 
@@ -1793,13 +1793,14 @@ defmodule Kernel do
   @spec inspect(Inspect.t, keyword) :: String.t
   def inspect(term, opts \\ []) when is_list(opts) do
     opts = struct(Inspect.Opts, opts)
-    limit = case opts.pretty do
-      true  -> opts.width
-      false -> :infinity
-    end
-    IO.iodata_to_binary(
-      Inspect.Algebra.format(Inspect.Algebra.to_doc(term, opts), limit)
-    )
+    limit =
+      case opts.pretty do
+        true  -> opts.width
+        false -> :infinity
+      end
+
+    doc = Inspect.Algebra.group(Inspect.Algebra.to_doc(term, opts))
+    IO.iodata_to_binary(Inspect.Algebra.format(doc, limit))
   end
 
   @doc """
@@ -3137,31 +3138,43 @@ defmodule Kernel do
   defmacro left in right do
     in_module? = (__CALLER__.context == nil)
 
-    right = case bootstrapped?(Macro) do
-      true  -> Macro.expand(right, __CALLER__)
-      false -> right
+    expand = case bootstrapped?(Macro) do
+      true -> &Macro.expand(&1, __CALLER__)
+      false -> &(&1)
     end
 
-    case right do
+    case expand.(right) do
       [] when not in_module? ->
         false
 
-      [h | t] ->
-        in_var(in_module?, left, &in_list(&1, h, t))
+      [head | tail] = list when not in_module? ->
+        in_var(in_module?, left, &in_list(&1, head, tail, expand, list, in_module?))
+
+      [_ | _] = list when in_module? ->
+        case ensure_evaled(list, {0, []}, expand) do
+          {[head | tail], {_, []}} ->
+            in_var(in_module?, left, &in_list(&1, head, tail, expand, list, in_module?))
+          {[head | tail], {_, vars_values}} ->
+            {vars, values} = :lists.unzip(:lists.reverse(vars_values))
+            quote do
+              {unquote_splicing(vars)} = {unquote_splicing(values)}
+              unquote(in_var(in_module?, left, &in_list(&1, head, tail, expand, list, in_module?)))
+            end
+        end
 
       {:%{}, _meta, [__struct__: Elixir.Range, first: first, last: last]} ->
         first = Macro.expand(first, __CALLER__)
         last  = Macro.expand(last, __CALLER__)
         in_var(in_module?, left, &in_range(&1, first, last))
 
-      _ when in_module? ->
+      right when in_module? ->
         quote do: Elixir.Enum.member?(unquote(right), unquote(left))
 
       %{__struct__: Elixir.Range, first: _, last: _} ->
         raise ArgumentError, "non-literal range in guard should be escaped with Macro.escape/2"
 
-      _ ->
-        raise ArgumentError, <<"invalid args for operator \"in\", it expects a compile-time list ",
+      right ->
+        raise ArgumentError, <<"invalid args for operator \"in\", it expects a compile-time proper list ",
                                "or compile-time range on the right side when used in guard expressions, got: ",
                                Macro.to_string(right)::binary>>
     end
@@ -3176,6 +3189,37 @@ defmodule Kernel do
       var = unquote(ast)
       unquote(fun.(quote(do: var)))
     end
+  end
+
+  # Called as ensure_evaled(list, {0, []}). Note acc is reversed.
+  defp ensure_evaled(list, acc, expand) do
+    :lists.mapfoldl(fn
+      {:|, meta, [head, tail]}, acc ->
+        {head, acc} = ensure_evaled_element(head, acc)
+        {tail, acc} = ensure_evaled_tail(expand.(tail), acc, expand)
+        {{:|, meta, [head, tail]}, acc}
+      elem, acc ->
+        ensure_evaled_element(elem, acc)
+    end, acc, list)
+  end
+
+  defp ensure_evaled_element(elem, acc) when is_number(elem) or is_atom(elem) or is_binary(elem) do
+    {elem, acc}
+  end
+  defp ensure_evaled_element(elem, acc) do
+    ensure_evaled_var(elem, acc)
+  end
+
+  defp ensure_evaled_tail(elem, acc, expand) when is_list(elem) do
+    ensure_evaled(elem, acc, expand)
+  end
+  defp ensure_evaled_tail(elem, acc, _expand) do
+    ensure_evaled_var(elem, acc)
+  end
+
+  defp ensure_evaled_var(elem, {index, ast}) do
+    var = {String.to_atom("var" <> Integer.to_string(index)), [], __MODULE__}
+    {var, {index + 1, [{var, elem} | ast]}}
   end
 
   defp in_range(left, first, last) do
@@ -3203,43 +3247,60 @@ defmodule Kernel do
 
   defp in_range_literal(left, first, last) when first < last do
     quote do
-      :erlang.is_integer(unquote(left)) and
-        unquote(increasing_compare(left, first, last))
+      :erlang.andalso(:erlang.is_integer(unquote(left)),
+                      unquote(increasing_compare(left, first, last)))
     end
   end
 
   defp in_range_literal(left, first, last) do
     quote do
-      :erlang.is_integer(unquote(left)) and
-        unquote(decreasing_compare(left, first, last))
+      :erlang.andalso(:erlang.is_integer(unquote(left)),
+                      unquote(decreasing_compare(left, first, last)))
     end
   end
 
-  defp in_list(left, h, t) do
-    :lists.foldr(fn x, acc ->
-      quote do: :erlang.or(unquote(comp(left, x)), unquote(acc))
-    end, comp(left, h), t)
+  defp in_list(left, head, tail, expand, right, in_module?) do
+    :lists.foldr(fn elem, acc ->
+      quote do: :erlang.orelse(unquote(comp(left, elem, expand, right, in_module?)), unquote(acc))
+    end, comp(left, head, expand, right, in_module?), tail)
   end
 
-  defp comp(left, {:|, _, [h, t]}) do
-    quote(do: :erlang.or(:erlang."=:="(unquote(left), unquote(h)), unquote(left) in unquote(t)))
+  defp comp(left, {:|, _, [head, tail]}, expand, right, in_module?) do
+    case expand.(tail) do
+      [] ->
+        quote(do: :erlang."=:="(unquote(left), unquote(head)))
+      [tail_head | tail] ->
+        quote do
+          :erlang.orelse(:erlang."=:="(unquote(left), unquote(head)),
+                         unquote(in_list(left, tail_head, tail, expand, right, in_module?)))
+        end
+      tail when in_module? ->
+        quote do
+          :erlang.orelse(:erlang."=:="(unquote(left), unquote(head)),
+                         :lists.member(unquote(left), unquote(tail)))
+        end
+      _ ->
+        raise ArgumentError, <<"invalid args for operator \"in\", it expects a compile-time proper list ",
+                               "or compile-time range on the right side when used in guard expressions, got: ",
+                               Macro.to_string(right)::binary>>
+    end
   end
 
-  defp comp(left, right) do
+  defp comp(left, right, _expand, _right, _in_module?) do
     quote(do: :erlang."=:="(unquote(left), unquote(right)))
   end
 
   defp increasing_compare(var, first, last) do
     quote do
-      :erlang.">="(unquote(var), unquote(first)) and
-        :erlang."=<"(unquote(var), unquote(last))
+      :erlang.andalso(:erlang.">="(unquote(var), unquote(first)),
+                      :erlang."=<"(unquote(var), unquote(last)))
     end
   end
 
   defp decreasing_compare(var, first, last) do
     quote do
-      :erlang."=<"(unquote(var), unquote(first)) and
-        :erlang.">="(unquote(var), unquote(last))
+      :erlang.andalso(:erlang."=<"(unquote(var), unquote(first)),
+                      :erlang.">="(unquote(var), unquote(last)))
     end
   end
 
@@ -3398,8 +3459,17 @@ defmodule Kernel do
       result
     end
 
-    {escaped, _} = :elixir_quote.escape(block, false)
-    module_vars  = module_vars(env.vars, 0)
+    escaped =
+      case env do
+        %{function: nil, lexical_tracker: pid} when is_pid(pid) ->
+          integer = Kernel.LexicalTracker.write_cache(pid, block)
+          quote do: Kernel.LexicalTracker.read_cache(unquote(pid), unquote(integer))
+        %{} ->
+          {escaped, _} = :elixir_quote.escape(block, false)
+          escaped
+      end
+
+    module_vars = module_vars(env.vars, 0)
 
     quote do
       unquote(with_alias)
@@ -3441,7 +3511,7 @@ defmodule Kernel do
 
     under = String.to_atom(<<"_@", :erlang.integer_to_binary(counter)::binary>>)
     args  = [key, kind, under, var]
-    [{:{}, [], args} | module_vars(vars, counter+1)]
+    [{:{}, [], args} | module_vars(vars, counter + 1)]
   end
 
   defp module_vars([], _counter) do
@@ -3488,7 +3558,7 @@ defmodule Kernel do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Defines a function with the given name and body.
 
   ## Examples
@@ -3509,6 +3579,43 @@ defmodule Kernel do
 
   In the example above, a `sum/2` function is defined; this function receives
   two arguments and returns their sum.
+
+  ## Default arguments
+
+  `\\` is used to specify a default value for a parameter of a function. For
+  example:
+
+      defmodule MyMath do
+        def multiply_by(number, factor \\ 2) do
+          number * factor
+        end
+      end
+
+      MyMath.multiply_by(4, 3) #=> 12
+      MyMath.multiply_by(4) #=> 8
+
+  The compiler translates this into multiple functions with different arities,
+  here `Foo.multiply_by/1` and `Foo.multiply_by/2`, that represent cases when
+  arguments for parameters with default values are passed or not passed.
+
+  When defining a function with default arguments as well as multiple
+  explicitly declared clauses, you must write a function head that declares the
+  defaults. For example:
+
+      defmodule MyString do
+        def join(string1, string2 \\ nil, separator \\ " ")
+
+        def join(string1, nil, _separator) do
+          string1
+        end
+
+        def join(string1, string2, separator) do
+          string1 <> separator <> string2
+        end
+      end
+
+  Note that `\\` can't be used with anonymous functions because they
+  can only have a single arity.
 
   ## Function and variable names
 
@@ -3589,6 +3696,8 @@ defmodule Kernel do
   @doc """
   Defines a macro with the given name and body.
 
+  Check `def/2` for rules on naming and default arguments.
+
   ## Examples
 
       defmodule MyLogic do
@@ -3615,7 +3724,8 @@ defmodule Kernel do
   Private macros are only accessible from the same module in which they are
   defined.
 
-  Check `defmacro/2` for more information.
+  Check `defmacro/2` for more information, and check `def/2` for rules on
+  naming and default arguments.
 
   """
   defmacro defmacrop(call, expr \\ nil) do
@@ -3623,20 +3733,29 @@ defmodule Kernel do
   end
 
   defp define(kind, call, expr, env) do
-    assert_module_scope(env, kind, 2)
+    module = assert_module_scope(env, kind, 2)
     assert_no_function_scope(env, kind, 2)
-    line = env.line
 
-    {call, unquoted_call} = :elixir_quote.escape(call, true)
-    {expr, unquoted_expr} = :elixir_quote.escape(expr, true)
+    {escaped_call, unquoted_call} = :elixir_quote.escape(call, true)
+    {escaped_expr, unquoted_expr} = :elixir_quote.escape(expr, true)
+
+    escaped_expr =
+      case unquoted_expr do
+        true ->
+          escaped_expr
+        false ->
+          key = :erlang.unique_integer()
+          :elixir_module.write_cache(module, key, expr)
+          quote do: :elixir_module.read_cache(unquote(module), unquote(key))
+      end
 
     # Do not check clauses if any expression was unquoted
     check_clauses = not(unquoted_expr or unquoted_call)
     pos = :elixir_locals.cache_env(env)
 
     quote do
-      :elixir_def.store_definition(unquote(line), unquote(kind), unquote(check_clauses),
-                                   unquote(call), unquote(expr), unquote(pos))
+      :elixir_def.store_definition(unquote(kind), unquote(check_clauses),
+                                   unquote(escaped_call), unquote(escaped_expr), unquote(pos))
     end
   end
 
@@ -3758,16 +3877,25 @@ defmodule Kernel do
       case bootstrapped?(Enum) do
         true ->
           quote do
-            def __struct__(kv) do
-              {map, keys} =
-                Enum.reduce(kv, {__struct__(), @enforce_keys}, fn {key, val}, {map, keys} ->
-                  {:maps.update(key, val, map), :lists.delete(key, keys)}
-                end)
-              case keys do
-                [] -> map
-                _  -> raise ArgumentError, "the following keys must also be given when building " <>
-                                           "struct #{inspect __MODULE__}: #{inspect keys}"
-              end
+            case @enforce_keys do
+              [] ->
+                def __struct__(kv) do
+                  Enum.reduce(kv, @struct, fn {key, val}, map ->
+                    Map.replace!(map, key, val)
+                  end)
+                end
+              _ ->
+                def __struct__(kv) do
+                  {map, keys} =
+                    Enum.reduce(kv, {@struct, @enforce_keys}, fn {key, val}, {map, keys} ->
+                      {Map.replace!(map, key, val), List.delete(keys, key)}
+                    end)
+                  case keys do
+                    [] -> map
+                    _  -> raise ArgumentError, "the following keys must also be given when building " <>
+                        "struct #{inspect __MODULE__}: #{inspect keys}"
+                  end
+                end
             end
           end
         false ->
@@ -3775,8 +3903,8 @@ defmodule Kernel do
             _ = @enforce_keys
             def __struct__(kv) do
               :lists.foldl(fn {key, val}, acc ->
-                :maps.update(key, val, acc)
-              end, __struct__(), kv)
+                Map.replace!(acc, key, val)
+              end, @struct, kv)
             end
           end
       end
@@ -3876,8 +4004,8 @@ defmodule Kernel do
         end
       end
 
-      @spec exception(Keyword.t) :: Exception.t
-      # TODO: Only call Kernel.struct! by Elixir v1.5
+      @spec exception(keyword) :: Exception.t
+      # TODO: Only call Kernel.struct! by 2.0
       def exception(args) when is_list(args) do
         struct = __struct__()
         {valid, invalid} = Enum.split_with(args, fn {k, _} -> Map.has_key?(struct, k) end)
@@ -3901,7 +4029,7 @@ defmodule Kernel do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Defines a protocol.
 
   A protocol specifies an API that should be defined by its
@@ -3909,43 +4037,46 @@ defmodule Kernel do
 
   ## Examples
 
-  In Elixir, only `false` and `nil` are considered falsy values.
-  Everything else evaluates to `true` in `if/2` clauses. Depending
-  on the application, it may be important to specify a `blank?`
-  protocol that returns a boolean for other data types that should
-  be considered "blank". For instance, an empty list or an empty
-  binary could be considered blank.
+  In Elixir, we have two verbs for checking how many items there
+  are in a data structure: `length` and `size`.  `length` means the
+  information must be computed. For example, `length(list)` needs to
+  traverse the whole list to calculate its length. On the other hand,
+  `tuple_size(tuple)` and `byte_size(binary)` do not depend on the
+  tuple and binary size as the size information is precomputed in
+  the data structure.
 
-  Such protocol could be implemented as follows:
+  Although Elixir includes specific functions such as `tuple_size`,
+  `binary_size` and `map_size`, sometimes we want to be able to
+  retrieve the size of a data structure regardless of its type.
+  In Elixir we can write polymorphic code, i.e. code that works
+  with different shapes/types, by using protocols. A size protocol
+  could be implemented as follows:
 
-      defprotocol Blank do
-        @doc "Returns `true` if `data` is considered blank/empty"
-        def blank?(data)
+      defprotocol Size do
+        @doc "Calculates the size (and not the length!) of a data structure"
+        def size(data)
       end
 
-  Now that the protocol is defined it can be implemented. It needs to be
-  implemented for each Elixir type; for example:
+  Now that the protocol can be implemented for every data structure
+  the protocol may have a compliant implementation for:
 
-      # Integers are never blank
-      defimpl Blank, for: Integer do
-        def blank?(number), do: false
+      defimpl Size, for: BitString do
+        def size(binary), do: byte_size(binary)
       end
 
-      # The only blank list is the empty one
-      defimpl Blank, for: List do
-        def blank?([]), do: true
-        def blank?(_),  do: false
+      defimpl Size, for: Map do
+        def size(map), do: map_size(map)
       end
 
-      # The only blank atoms are "false" and "nil"
-      defimpl Blank, for: Atom do
-        def blank?(false), do: true
-        def blank?(nil),   do: true
-        def blank?(_),     do: false
+      defimpl Size, for: Tuple do
+        def size(tuple), do: tuple_size(tuple)
       end
 
-  The implementation of the `Blank` protocol would need to be defined for all
-  Elixir types. The available types are:
+  Notice we didn't implement it for lists as we don't have the
+  `size` information on lists, rather its value needs to be
+  computed with `length`.
+
+  It is possible to implement protocols for all Elixir types:
 
     * Structs (see below)
     * `Tuple`
@@ -3965,11 +4096,11 @@ defmodule Kernel do
 
   The real benefit of protocols comes when mixed with structs.
   For instance, Elixir ships with many data types implemented as
-  structs, like `MapSet`. We can implement the `Blank` protocol
+  structs, like `MapSet`. We can implement the `Size` protocol
   for those types as well:
 
-      defimpl Blank, for: MapSet do
-        def blank?(enum_like), do: Enum.empty?(enum_like)
+      defimpl Size, for: MapSet do
+        def size(map_set), do: MapSet.size(map_set)
       end
 
   When implementing a protocol for a struct, the `:for` option can
@@ -3979,54 +4110,54 @@ defmodule Kernel do
       defmodule User do
         defstruct [:email, :name]
 
-        defimpl Blank do
-          def blank?(%User{}), do: false
+        defimpl Size do
+          def size(%User{}), do: 2 # two fields
         end
       end
 
-  If a protocol is not found for a given type, it will fallback to
-  `Any`. Protocols that are implemented for maps don't work by default
-  on structs; look at `defstruct/1` for more information about deriving
+  If a protocol implementation is not found for a given type,
+  invoking the protocol will raise unless it is configured to
+  fallback to `Any`. Conveniences for building implementations
+  on top of existing ones are also available, look at `defstruct/1`
+  for more information about deriving
   protocols.
 
   ## Fallback to any
 
   In some cases, it may be convenient to provide a default
-  implementation for all types. This can be achieved by
-  setting the `@fallback_to_any` attribute to `true` in the protocol
+  implementation for all types. This can be achieved by setting
+  the `@fallback_to_any` attribute to `true` in the protocol
   definition:
 
-      defprotocol Blank do
+      defprotocol Size do
         @fallback_to_any true
-        def blank?(data)
+        def size(data)
       end
 
-  The `Blank` protocol can now be implemented for `Any`:
+  The `Size` protocol can now be implemented for `Any`:
 
-      defimpl Blank, for: Any do
-        def blank?(_), do: true
+      defimpl Size, for: Any do
+        def size(_), do: 0
       end
 
-  One may wonder why such behaviour (fallback to any) is not the default one.
-
-  It is two-fold: first, the majority of protocols cannot
-  implement an action in a generic way for all types; in fact,
-  providing a default implementation may be harmful, because users
-  may rely on the default implementation instead of providing a
-  specialized one.
-
-  Second, falling back to `Any` adds an extra lookup to all types,
-  which is unnecessary overhead unless an implementation for `Any` is
-  required.
+  Although the implementation above is arguably not a reasonable
+  one. For example, it makes no sense to say a PID or an Integer
+  have a size of 0. That's one of the reasons why `@fallback_to_any`
+  is an opt-in behaviour. For the majority of protocols, raising
+  an error when a protocol is not implemented is the proper behaviour.
 
   ## Types
 
   Defining a protocol automatically defines a type named `t`, which
   can be used as follows:
 
-      @spec present?(Blank.t) :: boolean
-      def present?(blank) do
-        not Blank.blank?(blank)
+      @spec print_size(Size.t) :: :ok
+      def print_size(data) do
+        IO.puts(case Size.size(data) do
+          0 -> "data has no items"
+          1 -> "data has one item"
+          n -> "data has #{n} items"
+        end)
       end
 
   The `@spec` above expresses that all types allowed to implement the
@@ -4036,9 +4167,10 @@ defmodule Kernel do
 
   Any protocol module contains three extra functions:
 
-    * `__protocol__/1` - returns the protocol name when `:name` is given, and a
+    * `__protocol__/1` - returns the protocol name when `:name` is given, a
       keyword list with the protocol functions and their arities when
-      `:functions` is given
+      `:functions` is given, and a list of the implementations when `:impls` is
+      given
 
     * `impl_for/1` - receives a structure and returns the module that
       implements the protocol for the structure, `nil` otherwise
@@ -4065,12 +4197,12 @@ defmodule Kernel do
   all implementations are known up-front, Elixir provides a feature
   called protocol consolidation. For this reason, all protocols are
   compiled with `debug_info` set to `true`, regardless of the option
-  set by `elixirc` compiler. The debug info though may be removed
-  after consolidation.
+  set by `elixirc` compiler. The debug info though may be removed after
+  consolidation.
 
-  For more information on how to apply protocol consolidation to
-  a given project, please check the functions in the `Protocol`
-  module or the `mix compile.protocols` task.
+  Protocol consolidation is applied by default to all Mix projects.
+  For applying consolidation manually, please check the functions in
+  the `Protocol` module or the `mix compile.protocols` task.
   """
   defmacro defprotocol(name, do_block)
 
@@ -4123,10 +4255,42 @@ defmodule Kernel do
   As seen as in the example above, `super` can be used to call the default
   implementation.
 
+  If `@behaviour` has been defined, `defoverridable` can also be called with a
+  module as an argument. All implemented callbacks from the behaviour above the
+  call to `defoverridable` will be marked as overridable.
+
+  ## Example
+
+      defmodule Behaviour do
+        @callback foo :: any
+      end
+
+      defmodule DefaultMod do
+        defmacro __using__(_opts) do
+          quote do
+            @behaviour Behaviour
+
+            def foo do
+              "Override me"
+            end
+
+            defoverridable Behaviour
+          end
+        end
+      end
+
+      defmodule InheritMod do
+        use DefaultMod
+
+        def foo do
+          "Overriden"
+        end
+      end
+
   """
-  defmacro defoverridable(keywords) do
+  defmacro defoverridable(keywords_or_behaviour) do
     quote do
-      Module.make_overridable(__MODULE__, unquote(keywords))
+      Module.make_overridable(__MODULE__, unquote(keywords_or_behaviour))
     end
   end
 
@@ -4188,7 +4352,7 @@ defmodule Kernel do
   from different modules:
 
       defmodule MyModule do
-        defmacro __using__(opts) do
+        defmacro __using__(_opts) do
           quote do
             import MyModule.Foo
             import MyModule.Bar
@@ -4218,7 +4382,7 @@ defmodule Kernel do
   the `__using__/1` callback, unless those functions are the default
   implementation of a previously defined `@callback` or are functions
   meant to be overridden (see `defoverridable/1`). Even in these cases,
-  defining functions should be seen as a "last resource".
+  defining functions should be seen as a "last resort".
 
   In case you want to provide some existing functionality to the user module,
   please define it in a module which will be imported accordingly; for example,
@@ -4264,6 +4428,8 @@ defmodule Kernel do
 
   Delegation only works with functions; delegating macros is not supported.
 
+  Check `def/2` for rules on naming and default arguments.
+
   ## Options
 
     * `:to` - the module to dispatch to.
@@ -4306,14 +4472,16 @@ defmodule Kernel do
           "Kernel.defdelegate/2 :append_first option is deprecated")
       end
 
-      for fun <- List.wrap(funs),
-        {name, args, as, as_args} <- Kernel.Utils.defdelegate(fun, opts) do
-          unless Module.get_attribute(__MODULE__, :doc) do
-            @doc "See `#{inspect target}.#{as}/#{:erlang.length args}`."
-          end
-          def unquote(name)(unquote_splicing(args)) do
-            unquote(target).unquote(as)(unquote_splicing(as_args))
-          end
+      for fun <- List.wrap(funs) do
+        {name, args, as, as_args} = Kernel.Utils.defdelegate(fun, opts)
+
+        unless Module.get_attribute(__MODULE__, :doc) do
+          @doc "See `#{inspect target}.#{as}/#{:erlang.length args}`."
+        end
+
+        def unquote(name)(unquote_splicing(args)) do
+          unquote(target).unquote(as)(unquote_splicing(as_args))
+        end
       end
     end
   end
@@ -4358,10 +4526,10 @@ defmodule Kernel do
   """
   defmacro sigil_s(term, modifiers)
   defmacro sigil_s({:<<>>, _, [piece]}, []) when is_binary(piece) do
-    Macro.unescape_string(piece)
+    :elixir_interpolation.unescape_chars(piece)
   end
   defmacro sigil_s({:<<>>, line, pieces}, []) do
-    {:<<>>, line, Macro.unescape_tokens(pieces)}
+    {:<<>>, line, :elixir_interpolation.unescape_tokens(pieces)}
   end
 
   @doc ~S"""
@@ -4407,11 +4575,11 @@ defmodule Kernel do
   # We can skip the runtime conversion if we are
   # creating a binary made solely of series of chars.
   defmacro sigil_c({:<<>>, _meta, [string]}, []) when is_binary(string) do
-    String.to_charlist(Macro.unescape_string(string))
+    String.to_charlist(:elixir_interpolation.unescape_chars(string))
   end
 
   defmacro sigil_c({:<<>>, meta, pieces}, []) do
-    binary = {:<<>>, meta, Macro.unescape_tokens(pieces)}
+    binary = {:<<>>, meta, :elixir_interpolation.unescape_tokens(pieces)}
     quote do: String.to_charlist(unquote(binary))
   end
 
@@ -4434,13 +4602,13 @@ defmodule Kernel do
   """
   defmacro sigil_r(term, modifiers)
   defmacro sigil_r({:<<>>, _meta, [string]}, options) when is_binary(string) do
-    binary = Macro.unescape_string(string, fn(x) -> Regex.unescape_map(x) end)
+    binary = :elixir_interpolation.unescape_chars(string, &Regex.unescape_map/1)
     regex  = Regex.compile!(binary, :binary.list_to_bin(options))
     Macro.escape(regex)
   end
 
   defmacro sigil_r({:<<>>, meta, pieces}, options) do
-    binary = {:<<>>, meta, Macro.unescape_tokens(pieces, fn(x) -> Regex.unescape_map(x) end)}
+    binary = {:<<>>, meta, :elixir_interpolation.unescape_tokens(pieces, &Regex.unescape_map/1)}
     quote do: Regex.compile!(unquote(binary), unquote(:binary.list_to_bin(options)))
   end
 
@@ -4547,11 +4715,11 @@ defmodule Kernel do
   """
   defmacro sigil_w(term, modifiers)
   defmacro sigil_w({:<<>>, _meta, [string]}, modifiers) when is_binary(string) do
-    split_words(Macro.unescape_string(string), modifiers)
+    split_words(:elixir_interpolation.unescape_chars(string), modifiers)
   end
 
   defmacro sigil_w({:<<>>, meta, pieces}, modifiers) do
-    binary = {:<<>>, meta, Macro.unescape_tokens(pieces)}
+    binary = {:<<>>, meta, :elixir_interpolation.unescape_tokens(pieces)}
     split_words(binary, modifiers)
   end
 
@@ -4614,6 +4782,7 @@ defmodule Kernel do
 
   # We need this check only for bootstrap purposes.
   # Once Kernel is loaded and we recompile, it is a no-op.
+  @compile {:inline, bootstrapped?: 1}
   case :code.ensure_loaded(Kernel) do
     {:module, _} ->
       defp bootstrapped?(_), do: true
@@ -4624,7 +4793,7 @@ defmodule Kernel do
   defp assert_module_scope(env, fun, arity) do
     case env.module do
       nil -> raise ArgumentError, "cannot invoke #{fun}/#{arity} outside module"
-      _   -> :ok
+      mod -> mod
     end
   end
 
@@ -4642,8 +4811,9 @@ defmodule Kernel do
     end
   end
 
-  # TODO: Deprecate by v1.5
   @doc false
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
   defmacro to_char_list(arg) do
     quote do: Kernel.to_charlist(unquote(arg))
   end
