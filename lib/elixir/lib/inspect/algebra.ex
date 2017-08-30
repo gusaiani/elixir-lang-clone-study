@@ -24,8 +24,11 @@ defmodule Inspect.Opts do
       is printable, otherwise as list.
 
     * `:limit` - limits the number of items that are printed for tuples,
-      bitstrings, and lists, does not apply to strings nor charlists, defaults
-      to 50.
+      bitstrings, maps, lists and any other collection of items. It does not
+      apply to strings nor charlists and defaults to 50.
+
+    * `:printable_limit` - limits the number of bytes that are printed for strings
+      and char lists. Defaults to 4096.
 
     * `:pretty` - if set to `true` enables pretty printing, defaults to `false`.
 
@@ -33,9 +36,9 @@ defmodule Inspect.Opts do
       printing to IO devices. Set to 0 to force each item to be printed on its
       own line.
 
-    * `:base` - prints integers as `:binary`, `:octal`, `:decimal`, or `:hex`, defaults
-      to `:decimal`. When inspecting binaries any `:base` other than `:decimal`
-      implies `binaries: :as_binaries`.
+    * `:base` - prints integers as `:binary`, `:octal`, `:decimal`, or `:hex`,
+      defaults to `:decimal`. When inspecting binaries any `:base` other than
+      `:decimal` implies `binaries: :as_binaries`.
 
     * `:safe` - when `false`, failures while inspecting structs will be raised
       as errors instead of being wrapped in the `Inspect.Error` exception. This
@@ -55,6 +58,7 @@ defmodule Inspect.Opts do
             charlists: :infer,
             char_lists: :infer,
             limit: 50,
+            printable_limit: 4096,
             width: 80,
             base: :decimal,
             pretty: false,
@@ -70,6 +74,7 @@ defmodule Inspect.Opts do
                charlists: :infer | :as_lists | :as_charlists,
                char_lists: :infer | :as_lists | :as_char_lists,
                limit: pos_integer | :infinity,
+               printable_limit: pos_integer | :infinity,
                width: pos_integer | :infinity,
                base: :decimal | :binary | :hex | :octal,
                pretty: boolean,
@@ -92,8 +97,8 @@ defmodule Inspect.Algebra do
 
   This module implements the functionality described in
   ["Strictly Pretty" (2000) by Christian Lindig][0] with small
-  additions, like support for String nodes, and a custom
-  rendering function that maximises horizontal space use.
+  additions, like support for binary nodes and a break mode that
+  maximises use of horizontal space.
 
       iex> Inspect.Algebra.empty
       :doc_nil
@@ -110,12 +115,14 @@ defmodule Inspect.Algebra do
 
   The functions `nest/2`, `space/2` and `line/2` help you put the
   document together into a rigid structure. However, the document
-  algebra gets interesting when using functions like `break/1`, which
-  converts the given string into a line break depending on how much space
-  there is to print. Let's glue two docs together with a break and then
-  render it:
+  algebra gets interesting when using functions like `glue/3` and
+  `group/1`. A glue inserts a break between two documents. A group
+  indicates a document that must fit the current line, otherwise
+  breaks are rendered as new lines. Let's glue two docs together
+  with a break, group it and then render it:
 
       iex> doc = Inspect.Algebra.glue("a", " ", "b")
+      iex> doc = Inspect.Algebra.group(doc)
       iex> Inspect.Algebra.format(doc, 80)
       ["a", " ", "b"]
 
@@ -123,8 +130,14 @@ defmodule Inspect.Algebra do
   a line limit. Once we do, it is replaced by a newline:
 
       iex> doc = Inspect.Algebra.glue(String.duplicate("a", 20), " ", "b")
+      iex> doc = Inspect.Algebra.group(doc)
       iex> Inspect.Algebra.format(doc, 10)
       ["aaaaaaaaaaaaaaaaaaaa", "\n", "b"]
+
+  This module uses the byte size to compute how much space there is
+  left. If your document contains strings, then those need to be
+  wrapped in `string/1`, which then relies on `String.length/1` to
+  precompute the document size.
 
   Finally, this module also contains Elixir related functions, a bit
   tied to Elixir formatting, namely `surround/3` and `surround_many/5`.
@@ -135,17 +148,16 @@ defmodule Inspect.Algebra do
   relies on lazy evaluation to unfold document groups on two alternatives:
   `:flat` (breaks as spaces) and `:break` (breaks as newlines).
   Implementing the same logic in a strict language such as Elixir leads
-  to an exponential growth of possible documents, unless document groups
-  are encoded explicitly as `:flat` or `:break`. Those groups are then reduced
-  to a simple document, where the layout is already decided, per [Lindig][0].
+  to an exponential growth of possible documents, unless groups are explicitly
+  encoded. Those groups are then reduced to a simple document, where the
+  layout is already decided, per [Lindig][0].
 
-  This implementation slightly changes the semantic of Lindig's algorithm
-  to allow elements that belong to the same group to be printed together
-  in the same line, even if they do not fit the line fully. This was achieved
-  by changing `:break` to mean a possible break and `:flat` to force a flat
-  structure. Then deciding if a break works as a newline is just a matter
-  of checking if we have enough space until the next break that is not
-  inside a group (which is still flat).
+  This implementation has two types of breaks: `:strict` and `:flex`. When
+  a group does not fit, all strict breaks are treated as breaks. The flex
+  breaks however are re-evaluated and may still be rendered as spaces.
+
+  This implementation also adds `force_break/1` and `cancel_break/2` which
+  give more control over the document fitting.
 
   Custom pretty printers can be implemented using the documents returned
   by this module and by providing their own rendering functions.
@@ -158,31 +170,63 @@ defmodule Inspect.Algebra do
   @surround_separator ","
   @tail_separator " |"
   @newline "\n"
-  @nesting 1
-  @break " "
+  @break :flex
+  @cancel_break :enabled
 
   # Functional interface to "doc" records
 
-  @type t :: :doc_nil | :doc_line | doc_cons | doc_nest | doc_break | doc_group | doc_color | binary
+  @type t ::
+          binary
+          | :doc_nil
+          | :doc_line
+          | doc_string
+          | doc_cons
+          | doc_nest
+          | doc_break
+          | doc_group
+          | doc_color
+          | doc_force
+          | doc_cancel
+          | doc_collapse
+
+  @typep doc_string :: {:doc_string, t, non_neg_integer}
+  defmacrop doc_string(string, length) do
+    quote do: {:doc_string, unquote(string), unquote(length)}
+  end
 
   @typep doc_cons :: {:doc_cons, t, t}
   defmacrop doc_cons(left, right) do
     quote do: {:doc_cons, unquote(left), unquote(right)}
   end
 
-  @typep doc_nest :: {:doc_nest, t, non_neg_integer}
-  defmacrop doc_nest(doc, indent) do
-    quote do: {:doc_nest, unquote(doc), unquote(indent) }
+  @typep doc_nest :: {:doc_nest, t, :cursor | :reset | non_neg_integer, :always | :break}
+  defmacrop doc_nest(doc, indent, always_or_break) do
+    quote do: {:doc_nest, unquote(doc), unquote(indent), unquote(always_or_break)}
   end
 
-  @typep doc_break :: {:doc_break, binary}
-  defmacrop doc_break(break) do
-    quote do: {:doc_break, unquote(break)}
+  @typep doc_break :: {:doc_break, binary, :flex | :strict}
+  defmacrop doc_break(break, mode) do
+    quote do: {:doc_break, unquote(break), unquote(mode)}
   end
 
   @typep doc_group :: {:doc_group, t}
   defmacrop doc_group(group) do
     quote do: {:doc_group, unquote(group)}
+  end
+
+  @typep doc_cancel :: {:doc_cancel, t, :enabled | :disabled}
+  defmacrop doc_cancel(group, mode) do
+    quote do: {:doc_cancel, unquote(group), unquote(mode)}
+  end
+
+  @typep doc_force :: {:doc_force, t}
+  defmacrop doc_force(group) do
+    quote do: {:doc_force, unquote(group)}
+  end
+
+  @typep doc_collapse :: {:doc_collapse, pos_integer()}
+  defmacrop doc_collapse(count) do
+    quote do: {:doc_collapse, unquote(count)}
   end
 
   @typep doc_color :: {:doc_color, t, IO.ANSI.ansidata}
@@ -207,7 +251,8 @@ defmodule Inspect.Algebra do
       is_binary(unquote(doc)) or
       unquote(doc) in [:doc_nil, :doc_line] or
       (is_tuple(unquote(doc)) and
-       elem(unquote(doc), 0) in [:doc_cons, :doc_nest, :doc_break, :doc_group, :doc_color])
+       elem(unquote(doc), 0) in [:doc_string, :doc_cons, :doc_nest, :doc_break, :doc_group,
+                                 :doc_color, :doc_force, :doc_cancel, :doc_collapse])
     end
   end
 
@@ -218,12 +263,12 @@ defmodule Inspect.Algebra do
   @spec to_doc(any, Inspect.Opts.t) :: t
   def to_doc(term, opts)
 
-  def to_doc(%{__struct__: struct} = map, %Inspect.Opts{} = opts) when is_atom(struct) do
+  def to_doc(%_{} = struct, %Inspect.Opts{} = opts) do
     if opts.structs do
       try do
-        Inspect.inspect(map, opts)
+        Inspect.inspect(struct, opts)
       rescue
-        e ->
+        caught_exception ->
           stacktrace = System.stacktrace
 
           # Because we try to raise a nice error message in case
@@ -233,18 +278,18 @@ defmodule Inspect.Algebra do
           # we won't try to render any failed instruct when building
           # the error message.
           if Process.get(:inspect_trap) do
-            Inspect.Map.inspect(map, opts)
+            Inspect.Map.inspect(struct, opts)
           else
             try do
               Process.put(:inspect_trap, true)
 
-              res = Inspect.Map.inspect(map, opts)
+              res = Inspect.Map.inspect(struct, %{opts | syntax_colors: []})
               res = IO.iodata_to_binary(format(res, :infinity))
 
-              exception = Inspect.Error.exception(
-                message: "got #{inspect e.__struct__} with message " <>
-                         "#{inspect Exception.message(e)} while inspecting #{res}"
-              )
+              message =
+                "got #{inspect caught_exception.__struct__} with message " <>
+                "#{inspect Exception.message(caught_exception)} while inspecting #{res}"
+              exception = Inspect.Error.exception(message: message)
 
               if opts.safe do
                 Inspect.inspect(exception, opts)
@@ -257,7 +302,7 @@ defmodule Inspect.Algebra do
           end
       end
     else
-      Inspect.Map.inspect(map, opts)
+      Inspect.Map.inspect(struct, opts)
     end
   end
 
