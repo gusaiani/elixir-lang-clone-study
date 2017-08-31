@@ -322,7 +322,40 @@ defmodule Inspect.Algebra do
   @spec empty() :: :doc_nil
   def empty, do: :doc_nil
 
-  @doc """
+  @doc ~S"""
+  Creates a document represented by string.
+
+  While `Inspect.Algebra` accepts binaries as documents,
+  those are counted by binary size. On the other hand,
+  `string` documents are measured in terms of graphemes
+  towards the document size.
+
+  ## Examples
+
+  The following document has 10 bytes and therefore it
+  does not format to width 9 without breaks:
+
+      iex> doc = Inspect.Algebra.glue("olá", " ", "mundo")
+      iex> doc = Inspect.Algebra.group(doc)
+      iex> Inspect.Algebra.format(doc, 9)
+      ["olá", "\n", "mundo"]
+
+  However, if we use `string`, then the string length is
+  used, instead of byte size, correctly fitting:
+
+      iex> string = Inspect.Algebra.string("olá")
+      iex> doc = Inspect.Algebra.glue(string, " ", "mundo")
+      iex> doc = Inspect.Algebra.group(doc)
+      iex> Inspect.Algebra.format(doc, 9)
+      ["olá", " ", "mundo"]
+
+  """
+  @spec string(String.t) :: doc_string
+  def string(string) when is_binary(string) do
+    doc_string(string, String.length(string))
+  end
+
+  @doc ~S"""
   Concatenates two document entities returning a new document.
 
   ## Examples
@@ -337,7 +370,7 @@ defmodule Inspect.Algebra do
     doc_cons(doc1, doc2)
   end
 
-  @doc """
+  @doc ~S"""
   Concatenates a list of documents returning a new document.
 
   ## Examples
@@ -352,7 +385,7 @@ defmodule Inspect.Algebra do
     fold_doc(docs, &concat(&1, &2))
   end
 
-  @doc """
+  @doc ~S"""
   Colors a document if the `color_key` has a color in the options.
   """
   @spec color(t, Inspect.Opts.color_key, Inspect.Opts.t) :: doc_color
@@ -368,24 +401,41 @@ defmodule Inspect.Algebra do
   @doc ~S"""
   Nests the given document at the given `level`.
 
-  Nesting will be appended to the line breaks.
+  If `level` is an integer, that's the indentation appended
+  to line breaks whenever they occur. If the level is `:cursor`,
+  the current position of the "cursor" in the document becomes
+  the nesting. If the level is `:reset`, it is set back to 0.
+
+  `mode` can be `:always`, which means nesting always happen,
+  or `:break`, which means nesting only happens inside a group
+  that has been broken.
 
   ## Examples
 
       iex> doc = Inspect.Algebra.nest(Inspect.Algebra.glue("hello", "world"), 5)
+      iex> doc = Inspect.Algebra.group(doc)
       iex> Inspect.Algebra.format(doc, 5)
       ["hello", "\n     ", "world"]
 
   """
   @spec nest(t, non_neg_integer) :: doc_nest
-  def nest(doc, level)
+  def nest(doc, level, mode \\ :always)
 
-  def nest(doc, 0) when is_doc(doc) do
+  def nest(doc, :cursor, mode) when is_doc(doc) and mode in [:always, :break] do
+    doc_nest(doc, :cursor, mode)
+  end
+
+  def nest(doc, :reset, mode) when is_doc(doc) and mode in [:always, :break] do
+    doc_nest(doc, :reset, mode)
+  end
+
+  def nest(doc, 0, _mode) when is_doc(doc) do
     doc
   end
 
-  def nest(doc, level) when is_doc(doc) and is_integer(level) and level > 0 do
-    doc_nest(doc, level)
+  def nest(doc, level, mode)
+      when is_doc(doc) and is_integer(level) and level > 0 and mode in [:always, :break] do
+    doc_nest(doc, level, mode)
   end
 
   @doc ~S"""
@@ -393,8 +443,7 @@ defmodule Inspect.Algebra do
   `string`.
 
   This break can be rendered as a linebreak or as the given `string`,
-  depending on the `mode` of the chosen layout or the provided
-  separator.
+  depending on the `mode` of the chosen layout.
 
   ## Examples
 
@@ -410,26 +459,81 @@ defmodule Inspect.Algebra do
 
       iex> break = Inspect.Algebra.break("\t")
       iex> doc = Inspect.Algebra.concat([String.duplicate("a", 20), break, "b"])
+      iex> doc = Inspect.Algebra.group(doc)
       iex> Inspect.Algebra.format(doc, 10)
       ["aaaaaaaaaaaaaaaaaaaa", "\n", "b"]
 
   """
   @spec break(binary) :: doc_break
-  def break(string) when is_binary(string), do: doc_break(string)
+  def break(string \\ " ") when is_binary(string) do
+    doc_break(string, :strict)
+  end
 
   @doc """
-  Returns a document entity representing the default break.
-
-  Same as calling `break/1` with the default break.
+  Collapse any new lines and whitespace following this
+  node and emitting up to `max` new lines.
   """
-  @spec break() :: doc_break
-  def break(), do: doc_break(@break)
+  @spec collapse_lines(pos_integer) :: doc_collapse
+  def collapse_lines(max) when is_integer(max) and max > 0 do
+    doc_collapse(max)
+  end
 
   @doc """
-  Glues two documents together inserting the default break between them.
+  Considers the next break as fit.
 
-  The break that is inserted between `left` and `right` is the one returned by
-  `break/0`.
+  `mode` can be `:enabled` or `:disabled`. When `:enabled`,
+  it will consider the document as fit as soon as it finds
+  the next break, effectively cancelling the break. It will
+  also ignore any `force_break/1`.
+
+  When disabled, it behaves as usual and it will ignore
+  any further `cancel_break/2` instruction.
+  """
+  @spec cancel_break(t) :: doc_cancel
+  def cancel_break(doc, mode \\ @cancel_break) when is_doc(doc) do
+    doc_cancel(doc, mode)
+  end
+
+  @doc """
+  Forces the document to break.
+  """
+  @spec force_break(t) :: doc_force
+  def force_break(doc) when is_doc(doc) do
+    doc_force(doc)
+  end
+
+  @doc """
+  Introduces a flex break.
+
+  A flex break still causes a group to break, like
+  a regular break, but it is re-evaluated when the
+  documented is processed.
+
+  This function is used by `surround/4` and friends
+  to the maximum amount of entries on the same line.
+  """
+  @spec flex_break(binary) :: doc_break
+  def flex_break(string \\ " ") when is_binary(string) do
+    doc_break(string, :flex)
+  end
+
+  @doc """
+  Glues two documents (`doc1` and `doc2`) inserting a
+  `flex_break/1` given by `break_string` between them.
+
+  This function is used by `surround/4` and friends
+  to the maximum amount of entries on the same line.
+  """
+  @spec flex_glue(t, binary, t) :: t
+  def flex_glue(doc1, break_string \\ " ", doc2) when is_binary(break_string) do
+    concat(doc1, concat(flex_break(break_string), doc2))
+  end
+
+  @doc ~S"""
+  Glues two documents (`doc1` and `doc2`) inserting the given
+  break `break_string` between them.
+
+  For more information on how the break is inserted, see `break/1`.
 
   ## Examples
 
@@ -437,29 +541,21 @@ defmodule Inspect.Algebra do
       iex> Inspect.Algebra.format(doc, 80)
       ["hello", " ", "world"]
 
-  """
-  @spec glue(t, t) :: t
-  def glue(doc1, doc2), do: concat(doc1, concat(break(), doc2))
-
-  @doc """
-  Glues two documents (`doc1` and `doc2`) together inserting the given
-  break `break_string` between them.
-
-  For more information on how the break is inserted, see `break/1`.
-
-  ## Examples
-
       iex> doc = Inspect.Algebra.glue("hello", "\t", "world")
       iex> Inspect.Algebra.format(doc, 80)
       ["hello", "\t", "world"]
 
   """
   @spec glue(t, binary, t) :: t
-  def glue(doc1, break_string, doc2) when is_binary(break_string),
-    do: concat(doc1, concat(break(break_string), doc2))
+  def glue(doc1, break_string \\ " ", doc2) when is_binary(break_string) do
+    concat(doc1, concat(break(break_string), doc2))
+  end
 
   @doc ~S"""
   Returns a group containing the specified document `doc`.
+
+  Documents in a group are attempted to be rendered together
+  to the best of the renderer ability.
 
   ## Examples
 
@@ -482,7 +578,7 @@ defmodule Inspect.Algebra do
       iex> Inspect.Algebra.format(doc, 80)
       ["Hello,", " ", "A", " ", "B"]
       iex> Inspect.Algebra.format(doc, 6)
-      ["Hello,", "\n", "A", " ", "B"]
+      ["Hello,", "\n", "A", "\n", "B"]
 
   """
   @spec group(t) :: doc_group
@@ -490,7 +586,7 @@ defmodule Inspect.Algebra do
     doc_group(doc)
   end
 
-  @doc """
+  @doc ~S"""
   Inserts a mandatory single space between two documents.
 
   ## Examples
@@ -504,9 +600,26 @@ defmodule Inspect.Algebra do
   def space(doc1, doc2), do: concat(doc1, concat(" ", doc2))
 
   @doc ~S"""
-  Inserts a mandatory linebreak between two documents.
+  A mandatory linebreak.
+
+  A group with linebreaks will fit if all lines in the group fit.
 
   ## Examples
+
+    iex> doc = Inspect.Algebra.concat(
+    ...>   Inspect.Algebra.concat(
+    ...>     "Hughes",
+    ...>     Inspect.Algebra.line()
+    ...>   ), "Wadler"
+    ...> )
+    iex> Inspect.Algebra.format(doc, 80)
+    ["Hughes", "\n", "Wadler"]
+
+  """
+  @spec line() :: t
+  def line(), do: :doc_line
+
+  @doc ~S"""
 
       iex> doc = Inspect.Algebra.line("Hughes", "Wadler")
       iex> Inspect.Algebra.format(doc, 80)
