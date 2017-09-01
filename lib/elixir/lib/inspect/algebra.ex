@@ -156,7 +156,7 @@ defmodule Inspect.Algebra do
   a group does not fit, all strict breaks are treated as breaks. The flex
   breaks however are re-evaluated and may still be rendered as spaces.
 
-  This implementation also adds `force_break/1` and `cancel_break/2` which
+  This implementation also adds `force_break/1` and `next_break_fits/2` which
   give more control over the document fitting.
 
   Custom pretty printers can be implemented using the documents returned
@@ -171,7 +171,7 @@ defmodule Inspect.Algebra do
   @tail_separator " |"
   @newline "\n"
   @break :flex
-  @cancel_break :enabled
+  @next_break_fits :enabled
 
   # Functional interface to "doc" records
 
@@ -186,7 +186,7 @@ defmodule Inspect.Algebra do
           | doc_group
           | doc_color
           | doc_force
-          | doc_cancel
+          | doc_fits
           | doc_collapse
 
   @typep doc_string :: {:doc_string, t, non_neg_integer}
@@ -214,9 +214,9 @@ defmodule Inspect.Algebra do
     quote do: {:doc_group, unquote(group)}
   end
 
-  @typep doc_cancel :: {:doc_cancel, t, :enabled | :disabled}
-  defmacrop doc_cancel(group, mode) do
-    quote do: {:doc_cancel, unquote(group), unquote(mode)}
+  @typep doc_fits :: {:doc_fits, t, :enabled | :disabled}
+  defmacrop doc_fits(group, mode) do
+    quote do: {:doc_fits, unquote(group), unquote(mode)}
   end
 
   @typep doc_force :: {:doc_force, t}
@@ -252,7 +252,7 @@ defmodule Inspect.Algebra do
       unquote(doc) in [:doc_nil, :doc_line] or
       (is_tuple(unquote(doc)) and
        elem(unquote(doc), 0) in [:doc_string, :doc_cons, :doc_nest, :doc_break, :doc_group,
-                                 :doc_color, :doc_force, :doc_cancel, :doc_collapse])
+                                 :doc_color, :doc_force, :doc_fits, :doc_collapse])
     end
   end
 
@@ -487,11 +487,11 @@ defmodule Inspect.Algebra do
   also ignore any `force_break/1`.
 
   When disabled, it behaves as usual and it will ignore
-  any further `cancel_break/2` instruction.
+  any further `next_break_fits/2` instruction.
   """
-  @spec cancel_break(t) :: doc_cancel
-  def cancel_break(doc, mode \\ @cancel_break) when is_doc(doc) do
-    doc_cancel(doc, mode)
+  @spec next_break_fits(t) :: doc_fits
+  def next_break_fits(doc, mode \\ @next_break_fits) when is_doc(doc) do
+    doc_fits(doc, mode)
   end
 
   @doc """
@@ -510,7 +510,7 @@ defmodule Inspect.Algebra do
   documented is processed.
 
   This function is used by `surround/4` and friends
-  to the maximum amount of entries on the same line.
+  to the maximum number of entries on the same line.
   """
   @spec flex_break(binary) :: doc_break
   def flex_break(string \\ " ") when is_binary(string) do
@@ -522,7 +522,7 @@ defmodule Inspect.Algebra do
   `flex_break/1` given by `break_string` between them.
 
   This function is used by `surround/4` and friends
-  to the maximum amount of entries on the same line.
+  to the maximum number of entries on the same line.
   """
   @spec flex_glue(t, binary, t) :: t
   def flex_glue(doc1, break_string \\ " ", doc2) when is_binary(break_string) do
@@ -620,6 +620,11 @@ defmodule Inspect.Algebra do
   def line(), do: :doc_line
 
   @doc ~S"""
+  Inserts a mandatory linebreak between two documents.
+
+  See `line/1`.
+
+  ## Examples
 
       iex> doc = Inspect.Algebra.line("Hughes", "Wadler")
       iex> Inspect.Algebra.format(doc, 80)
@@ -627,9 +632,9 @@ defmodule Inspect.Algebra do
 
   """
   @spec line(t, t) :: t
-  def line(doc1, doc2), do: concat(doc1, concat(:doc_line, doc2))
+  def line(doc1, doc2), do: concat(doc1, concat(line(), doc2))
 
-  @doc """
+  @doc ~S"""
   Folds a list of documents into a document using the given folder function.
 
   The list of documents is folded "from the right"; in that, this function is
@@ -665,16 +670,28 @@ defmodule Inspect.Algebra do
   and nesting it. The document is marked as a group, to show the maximum as
   possible concisely together.
 
+  ## Options
+
+    * `:break` - controls if the break is `:strict` or `:flex`, see `group/2`
+
   ## Examples
 
       iex> doc = Inspect.Algebra.surround("[", Inspect.Algebra.glue("a", "b"), "]")
+      iex> doc = Inspect.Algebra.group(doc)
       iex> Inspect.Algebra.format(doc, 3)
       ["[", "a", "\n ", "b", "]"]
 
   """
-  @spec surround(t, t, t) :: t
-  def surround(left, doc, right) when is_doc(left) and is_doc(doc) and is_doc(right) do
-    group(concat(left, concat(nest(doc, @nesting), right)))
+  # TODO: Reflect the @break default and nesting for flex on the formatter
+  @spec surround(t, t, t, keyword()) :: t
+  def surround(left, doc, right, opts \\ [])
+      when is_doc(left) and is_doc(doc) and is_doc(right) and is_list(opts) do
+    case Keyword.get(opts, :break, @break) do
+      :flex ->
+        concat(concat(left, nest(doc, 1)), right)
+      :strict ->
+        group(glue(nest(glue(left, "", doc), 2), "", right))
+    end
   end
 
   @doc ~S"""
@@ -684,6 +701,12 @@ defmodule Inspect.Algebra do
   separator document `separator` to separate items in `docs`. A limit can be
   passed: when this limit is reached, this function stops gluing and outputs
   `"..."` instead.
+
+  ## Options
+
+    * `:separator` - the separator used between each doc
+
+  Plus all options in `surround/4`.
 
   ## Examples
 
@@ -703,50 +726,59 @@ defmodule Inspect.Algebra do
       "[1! 2! 3! ...]"
 
   """
-  @spec surround_many(t, [any], t, Inspect.Opts.t, (term, Inspect.Opts.t -> t), t) :: t
-  def surround_many(left, docs, right, %Inspect.Opts{} = opts, fun, separator \\ @surround_separator)
-      when is_doc(left) and is_list(docs) and is_doc(right) and is_function(fun, 2) and is_doc(separator) do
-    do_surround_many(left, docs, right, opts.limit, opts, fun, separator)
+  @spec surround_many(t, [any], t, Inspect.Opts.t, (term, Inspect.Opts.t -> t), keyword) :: t
+  def surround_many(left, docs, right, %Inspect.Opts{} = inspect, fun, opts \\ [])
+      when is_doc(left) and is_list(docs) and is_doc(right) and is_function(fun, 2) do
+    cond do
+      is_list(opts) ->
+        {separator, opts} = Keyword.pop(opts, :separator, @surround_separator)
+        surround_many(left, docs, right, inspect, fun, separator, opts)
+      is_doc(opts) ->
+        # TODO: Deprecate on Elixir v1.8
+        surround_many(left, docs, right, inspect, fun, opts, [])
+    end
   end
 
-  defp do_surround_many(left, [], right, _, _opts, _fun, _) do
+  defp surround_many(left, [], right, _inspect, _fun, _sep, _opts) do
     concat(left, right)
   end
 
-  defp do_surround_many(left, docs, right, limit, opts, fun, sep) do
-    surround(left, do_surround_many(docs, limit, opts, fun, sep), right)
+  defp surround_many(left, docs, right, inspect, fun, sep, opts) do
+    break = Keyword.get(opts, :break, @break)
+    surround(left, surround_each(docs, inspect.limit, inspect, fun, break, sep), right, opts)
   end
 
-  defp do_surround_many(_, 0, _opts, _fun, _sep) do
+  defp surround_each(_, 0, _opts, _fun, _break, _sep) do
     "..."
   end
 
-  defp do_surround_many([], _limit, _opts, _fun, _sep) do
+  defp surround_each([], _limit, _opts, _fun, _break, _sep) do
     :doc_nil
   end
 
-  defp do_surround_many([h], limit, opts, fun, _sep) do
+  defp surround_each([h], limit, opts, fun, _break, _sep) do
     fun.(h, %{opts | limit: limit})
   end
 
-  defp do_surround_many([h | t], limit, opts, fun, sep) when is_list(t) do
+  defp surround_each([h | t], limit, opts, fun, break, sep) when is_list(t) do
     limit = decrement(limit)
     h = fun.(h, %{opts | limit: limit})
-    t = do_surround_many(t, limit, opts, fun, sep)
-    do_join(h, t, sep)
+    t = surround_each(t, limit, opts, fun, break, sep)
+    do_join(h, t, break, sep)
   end
 
-  defp do_surround_many([h | t], limit, opts, fun, _sep) do
+  defp surround_each([h | t], limit, opts, fun, break, _sep) do
     limit = decrement(limit)
     h = fun.(h, %{opts | limit: limit})
     t = fun.(t, %{opts | limit: limit})
-    do_join(h, t, @tail_separator)
+    do_join(h, t, break, @tail_separator)
   end
 
-  defp do_join(:doc_nil, :doc_nil, _), do: :doc_nil
-  defp do_join(h, :doc_nil, _),        do: h
-  defp do_join(:doc_nil, t, _),        do: t
-  defp do_join(h, t, sep),             do: glue(concat(h, sep), t)
+  defp do_join(:doc_nil, :doc_nil, _, _), do: :doc_nil
+  defp do_join(h, :doc_nil, _, _), do: h
+  defp do_join(:doc_nil, t, _, _), do: t
+  defp do_join(h, t, :strict, sep), do: glue(concat(h, sep), t)
+  defp do_join(h, t, :flex, sep), do: flex_glue(concat(h, sep), t)
 
   defp decrement(:infinity), do: :infinity
   defp decrement(counter),   do: counter - 1
@@ -758,58 +790,123 @@ defmodule Inspect.Algebra do
   and returns an IO data representation of the best layout for the
   document to fit in the given width.
 
+  The document starts flat (without breaks) until a group is found.
+
   ## Examples
 
       iex> doc = Inspect.Algebra.glue("hello", " ", "world")
-      iex> Inspect.Algebra.format(doc, 30) |> IO.iodata_to_binary()
+      iex> doc = Inspect.Algebra.group(doc)
+      iex> doc |> Inspect.Algebra.format(30) |> IO.iodata_to_binary()
       "hello world"
-      iex> Inspect.Algebra.format(doc, 10) |> IO.iodata_to_binary()
+      iex> doc |> Inspect.Algebra.format(10) |> IO.iodata_to_binary()
       "hello\nworld"
 
   """
   @spec format(t, non_neg_integer | :infinity) :: iodata
   def format(doc, width) when is_doc(doc) and (width == :infinity or width >= 0) do
-    format(width, 0, [{0, default_mode(width), doc_group(doc)}])
+    format(width, 0, [{0, :flat, doc}])
   end
 
-  defp default_mode(:infinity), do: :flat
-  defp default_mode(_),         do: :break
+  # Type representing the document mode to be rendered
+  #
+  #   * break - represents a fitted document with breaks as breaks
+  #   * flat - represents a fitted document with breaks as flats
+  #   * next_fits - represents a document being fitted that will cancel (fit) the next break
+  #   * no_fitting - represents a document being fitted that will not accept next break fits
+  #
+  @typep mode :: :break | :flat | :next_fits | :no_fitting
 
-  # Record representing the document mode to be rendered: flat or broken
-  @typep mode :: :flat | :break
+  @spec fits?(integer, integer, [{integer, mode, t}]) :: boolean
+  defp fits?(w, k, _) when k > w,                            do: false
+  defp fits?(_, _, []),                                      do: true
 
-  @spec fits?(integer, [{integer, mode, t}]) :: boolean
-  defp fits?(w, _) when w < 0,                      do: false
-  defp fits?(_, []),                                do: true
-  defp fits?(_, [{_, _, :doc_line} | _]),           do: true
-  defp fits?(w, [{_, _, :doc_nil} | t]),            do: fits?(w, t)
-  defp fits?(w, [{i, m, doc_cons(x, y)} | t]),      do: fits?(w, [{i, m, x} | [{i, m, y} | t]])
-  defp fits?(w, [{i, m, doc_color(x, _)} | t]),    do: fits?(w, [{i, m, x} | t])
-  defp fits?(w, [{i, m, doc_nest(x, j)} | t]),      do: fits?(w, [{i + j, m, x} | t])
-  defp fits?(w, [{i, _, doc_group(x)} | t]),        do: fits?(w, [{i, :flat, x} | t])
-  defp fits?(w, [{_, _, s} | t]) when is_binary(s), do: fits?((w - byte_size(s)), t)
-  defp fits?(w, [{_, :flat, doc_break(s)} | t]),    do: fits?((w - byte_size(s)), t)
-  defp fits?(_, [{_, :break, doc_break(_)} | _]),   do: true
+  defp fits?(w, k, [{i, _, doc_fits(x, :disabled)} | t]),    do: fits?(w, k, [{i, :no_fitting, x} | t])
+  defp fits?(w, k, [{i, :no_fitting, doc_group(x)} | t]),    do: fits?(w, k, [{i, :no_fitting, x} | t])
+  defp fits?(w, k, [{i, :no_fitting, doc_fits(x, _)} | t]),  do: fits?(w, k, [{i, :no_fitting, x} | t])
+
+  defp fits?(w, k, [{i, _, doc_fits(x, :enabled)} | t]),     do: fits?(w, k, [{i, :next_fits, x} | t])
+  defp fits?(w, k, [{i, :next_fits, doc_force(x)} | t]),     do: fits?(w, k, [{i, :next_fits, x} | t])
+  defp fits?(w, k, [{i, :next_fits, doc_group(x)} | t]),     do: fits?(w, k, [{i, :next_fits, x} | t])
+  defp fits?(_, _, [{_, :next_fits, doc_break(_, _)} | _]),  do: true
+  defp fits?(_, _, [{_, :next_fits, :doc_line} | _]),        do: true
+
+  defp fits?(w, k, [{_, _, :doc_nil} | t]),                  do: fits?(w, k, t)
+  defp fits?(w, _, [{i, _, :doc_line} | t]),                 do: fits?(w, i, t)
+  defp fits?(w, _, [{i, _, doc_collapse(_)} | t]),           do: fits?(w, i, t)
+  defp fits?(w, k, [{i, m, doc_cons(x, y)} | t]),            do: fits?(w, k, [{i, m, x} | [{i, m, y} | t]])
+  defp fits?(w, k, [{i, m, doc_color(x, _)} | t]),           do: fits?(w, k, [{i, m, x} | t])
+  defp fits?(w, k, [{i, m, doc_nest(x, _, :break)} | t]),    do: fits?(w, k, [{i, m, x} | t])
+  defp fits?(w, k, [{i, m, doc_nest(x, j, _)} | t]),         do: fits?(w, k, [{apply_nesting(i, k, j), m, x} | t])
+  defp fits?(w, k, [{i, _, doc_group(x)} | t]),              do: fits?(w, k, [{i, :flat, x} | t])
+  defp fits?(w, k, [{_, _, doc_string(_, l)} | t]),          do: fits?(w, k + l, t)
+  defp fits?(w, k, [{_, _, s} | t]) when is_binary(s),       do: fits?(w, k + byte_size(s), t)
+  defp fits?(_, _, [{_, _, doc_force(_)} | _]),              do: false
+  defp fits?(_, _, [{_, :break, doc_break(_, _)} | _]),      do: true
+  defp fits?(w, k, [{_, _, doc_break(s, _)} | t]),           do: fits?(w, k + byte_size(s), t)
 
   @spec format(integer | :infinity, integer, [{integer, mode, t}]) :: [binary]
   defp format(_, _, []),                                do: []
-  defp format(w, _, [{i, _, :doc_line} | t]),           do: [indent(i) | format(w, i, t)]
   defp format(w, k, [{_, _, :doc_nil} | t]),            do: format(w, k, t)
+  defp format(w, _, [{i, _, :doc_line} | t]),           do: [indent(i) | format(w, i, t)]
   defp format(w, k, [{i, m, doc_cons(x, y)} | t]),      do: format(w, k, [{i, m, x} | [{i, m, y} | t]])
-  defp format(w, k, [{i, m, doc_nest(x, j)} | t]),      do: format(w, k, [{i + j, m, x} | t])
-  defp format(w, k, [{i, m, doc_group(x)} | t]),        do: format(w, k, [{i, m, x} | t])
   defp format(w, k, [{i, m, doc_color(x, c)} | t]),     do: [ansi(c) | format(w, k, [{i, m, x} | t])]
-  defp format(w, k, [{_, _, s} | t]) when is_binary(s), do: [s | format(w, (k + byte_size(s)), t)]
-  defp format(w, k, [{_, :flat, doc_break(s)} | t]),    do: [s | format(w, (k + byte_size(s)), t)]
-  defp format(w, k, [{i, :break, doc_break(s)} | t]) do
+  defp format(w, k, [{_, _, doc_string(s, l)} | t]),    do: [s | format(w, k + l, t)]
+  defp format(w, k, [{_, _, s} | t]) when is_binary(s), do: [s | format(w, k + byte_size(s), t)]
+  defp format(w, k, [{i, m, doc_force(x)} | t]),        do: format(w, k, [{i, m, x} | t])
+  defp format(w, k, [{i, m, doc_fits(x, _)} | t]),      do: format(w, k, [{i, m, x} | t])
+  defp format(w, _, [{i, _, doc_collapse(max)} | t]),   do: collapse(format(w, i, t), max, 0, i)
+
+  # Flex breaks are not conditional to the mode
+  defp format(w, k, [{i, _, doc_break(s, :flex)} | t]) do
     k = k + byte_size(s)
 
-    if w == :infinity or fits?(w - k, t) do
+    if w == :infinity or fits?(w, k, t) do
       [s | format(w, k, t)]
     else
       [indent(i) | format(w, i, t)]
     end
   end
+
+  # Strict breaks are conditional to the mode
+  defp format(w, k, [{i, mode, doc_break(s, :strict)} | t]) do
+    if mode == :break do
+      [indent(i) | format(w, i, t)]
+    else
+      [s | format(w, k + byte_size(s), t)]
+    end
+  end
+
+  # Nesting is conditional to the mode.
+  defp format(w, k, [{i, mode, doc_nest(x, j, nest)} | t]) do
+    if nest == :always or (nest == :break and mode == :break) do
+      format(w, k, [{apply_nesting(i, k, j), mode, x} | t])
+    else
+      format(w, k, [{i, mode, x} | t])
+    end
+  end
+
+  # Groups must do the fitting decision.
+  defp format(w, k, [{i, _, doc_group(x)} | t]) do
+    if w == :infinity or fits?(w, k, [{i, :flat, x}]) do
+      format(w, k, [{i, :flat, x} | t])
+    else
+      format(w, k, [{i, :break, x} | t])
+    end
+  end
+
+  defp collapse(["\n" <> _ | t], max, count, i) do
+    collapse(t, max, count + 1, i)
+  end
+  defp collapse(["" | t], max, count, i) do
+    collapse(t, max, count, i)
+  end
+  defp collapse(t, max, count, i) do
+    [:binary.copy("\n", min(max, count)) <> :binary.copy(" ", i) | t]
+  end
+
+  defp apply_nesting(_, k, :cursor), do: k
+  defp apply_nesting(_, _, :reset), do: 0
+  defp apply_nesting(i, _, j), do: i + j
 
   defp ansi(color) do
     IO.ANSI.format_fragment(color, true)
