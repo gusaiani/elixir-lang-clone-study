@@ -394,3 +394,36 @@ defmodule Module do
   @typep definition :: {atom, arity}
   @typep def_kind :: :def | :defp | :defmacro | :defmacrop
   @typep type_kind :: :type | :typep | :opaque
+
+  @doc """
+  Provides runtime information about functions and macros defined by the
+  module, etc.
+
+  Each module gets an `__info__/1` function when it's compiled. The function
+  takes one of the following atoms:
+
+  * `:functions` - keyword list of public functions along with their arities
+
+  * `:macros` - keyword list of public macros along with their arities
+
+  * `:module` - the module atom name
+
+  * `:md5` - the MD5 of the module
+
+  * `:compile` - a list with compiler metadata
+
+  * `:attributes` - a list with all persisted attributes
+
+  """
+  def __info__(kind)
+
+  @doc """
+  Checks if a module is open.
+
+  A module is "open" if it is currently being defined and its attributes and
+  functions can be modified.
+  """
+  @spec open?(module) :: boolean
+  def open?(module) when is_atom(module) do
+    :elixir_module.is_open(module)
+  end
