@@ -173,14 +173,14 @@ def_to_clauses(Kind, Meta, _Args, _Guards, nil, E) ->
 def_to_clauses(_Kind, Meta, Args, Guards, [{do, Body}], _E) ->
   [{Meta, Args, Guards, Body}];
 def_to_clauses(Kind, Meta, Args, Guards, Body, _E) ->
-  [{Meta, Args, Guards, {'try', [{origin, Kind} | Meta], [Body]}}].
+  [{Meta, Args, Guards, {'try', [{origin,  Kind} | Meta], [Body]}}].
 
 run_on_definition_callbacks(Kind, Module, Name, Args, Guards, Body, E) ->
   Callbacks = ets:lookup_element(elixir_module:data_table(Module), on_definition, 2),
   _ = [Mod:Fun(E, Kind, Name, Args, Guards, Body) || {Mod, Fun} <- Callbacks],
   ok.
 
-store_definition(Check, Kind, Meta, Name, Arity, File, Module, Befaults, Clauses) ->
+store_definition(Check, Kind, Meta, Name, Arity, File, Module, Defaults, Clauses) ->
   Data = elixir_module:data_table(Module),
   Defs = elixir_module:defs_table(Module),
 
@@ -201,8 +201,8 @@ store_definition(Check, Kind, Meta, Name, Arity, File, Module, Befaults, Clauses
         check_valid_kind(Meta, File, Name, Arity, Kind, StoredKind),
         (Check and StoredCheck) andalso
           check_valid_clause(Meta, File, Name, Arity, Kind, Data, StoredMeta, StoredFile),
-          check_valid_defaults(Meta, File, Name, Arity, Kind, Defaults, StoredDefaults, LastDefaults, LastHasBody),
-          max(Defaults, StoredDefaults);
+        check_valid_defaults(Meta, File, Name, Arity, Kind, Defaults, StoredDefaults, LastDefaults, LastHasBody),
+        max(Defaults, StoredDefaults);
       [] ->
         Defaults
     end,
@@ -217,5 +217,88 @@ unpack_defaults(Kind, Meta, Name, Args, E) ->
   Expanded = expand_defaults(Args, E#{context := nil}),
   unpack_defaults(Kind, Meta, Name, Expanded, [], []).
 
+unpack_defaults(Kind, Meta, Name, [{'\\\\', DefaultMeta, [Expr, _]} | T] = List, Acc, Clauses) ->
+  Base = match_defaults(Acc, length(Acc), []),
+  {Args, Invoke} = extract_defaults(List, length(Base), [], []),
+  Clause = {Meta, Base ++ Args, [], {super, DefaultMeta, [{Kind, Name} | Base] ++ Invoke}},
+  unpack_defaults(Kind, Meta, Name, T, [Expr | Acc], [Clause | Clauses]);
+unpack_defaults(Kind, Meta, Name, [H | T], Acc, Clauses) ->
+  unpack_defaults(Kind, Meta, Name, T, [H | Acc], Clauses);
+unpack_defaults(_Kind, _Meta, _Name, [], Acc, Clauses) ->
+  {lists:reverse(Acc), lists:reverse(Clauses)}.
 
+expand_defaults([{'\\\\', Meta, [Expr, Default]} | Args], E) ->
+  {ExpandedDefault, _} = elixir_expand:expand(Default, E),
+  [{'\\\\', Meta, [Expr, ExpandedDefault]} | expand_defaults(Args, E)];
+expand_defaults([Arg | Args], E) ->
+  [Arg | expand_defaults(Args, E)];
+expand_defaults([], _E) ->
+  [].
 
+extract_defaults([{'\\\\', _, [_Expr, Default]} | T], Counter, NewArgs, NewInvoke) ->
+  extract_defaults(T, Counter, NewArgs, [Default | NewInvoke]);
+extract_defaults([_ | T], Counter, NewArgs, NewInvoke) ->
+  H = default_var(Counter),
+  extract_defaults(T, Counter + 1, [H | NewArgs], [H | NewInvoke]);
+extract_defaults([], _Counter, NewArgs, NewInvoke) ->
+  {lists:reverse(NewArgs), lists:reverse(NewInvoke)}.
+
+match_defaults([], 0, Acc) ->
+  Acc;
+match_defaults([_ | T], Counter, Acc) ->
+  NewCounter = Counter - 1,
+  match_defaults(T, NewCounter, [default_var(NewCounter) | Acc]).
+
+default_var(Counter) ->
+  {list_to_atom([$x | integer_to_list(Counter)]), [{generated, true}], ?var_context}.
+
+%% Validations
+
+check_valid_kind(_Meta, _File, _Name, _Arity, Kind, Kind) -> [];
+check_valid_kind(Meta, File, Name, Arity, Kind, StoredKind) ->
+  elixir_errors:form_error(Meta, File, ?MODULE,
+    {changed_kind, {Name, Arity, StoredKind, Kind}}).
+
+check_valid_clause(Meta, File, Name, Arity, Kind, Data, StoredMeta, StoredFile) ->
+  case ets:lookup_element(Data, ?last_def, 2) of
+    {Name, Arity} -> [];
+    [] -> [];
+    _ ->
+      Relative = elixir_utils:relative_to_cwd(StoredFile),
+      elixir_errors:form_warn(Meta, File, ?MODULE,
+        {ungrouped_clause, {Kind, Name, Arity, ?line(StoredMeta), Relative}})
+  end.
+
+% Clause with defaults after clause with defaults
+check_valid_defaults(Meta, File, Name, Arity, Kind, Defaults, StoredDefaults, _, _) when Defaults > 0, StoredDefaults > 0 ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {clauses_with_defaults, {Kind, Name, Arity}});
+% Clause with defaults after clause(s) without defaults
+check_valid_defaults(Meta, File, Name, Arity, Kind, Defaults, 0, 0, _) when Defaults > 0 ->
+  elixir_errors:form_warn(Meta, File, ?MODULE, {clauses_with_defaults, {Kind, Name, Arity}});
+% Clause without defaults directly after clause with defaults (body less does not count)
+check_valid_defaults(Meta, File, Name, Arity, Kind, 0, _, LastDefaults, true) when LastDefaults > 0 ->
+  elixir_errors:form_warn(Meta, File, ?MODULE, {clauses_with_defaults, {Kind, Name, Arity}});
+% Clause without defaults
+check_valid_defaults(_Meta, _File, _Name, _Arity, _Kind, 0, _, _, _) -> ok.
+
+warn_bodyless_function(Check, _Meta, _File, Module, _Kind, _Tuple)
+    when Check == false; Module == 'Elixir.Module' ->
+  ok;
+warn_bodyless_function(_Check, Meta, File, _Module, Kind, Tuple) ->
+  elixir_errors:form_warn(Meta, File, ?MODULE, {bodyless_clause, Kind, Tuple}),
+  ok.
+
+check_args_for_bodyless_clause(Meta, Args, E) ->
+  [begin
+     elixir_errors:form_error(Meta, ?key(E, file), ?MODULE, invalid_args_for_bodyless_clause)
+   end || Arg <- Args, invalid_arg(Arg)].
+
+invalid_arg({Name, _, Kind}) when is_atom(Name), is_atom(Kind) -> false;
+invalid_arg(_) -> true.
+
+check_previous_defaults(Meta, Module, Name, Arity, Kind, Defaults, E) ->
+  Matches = ets:lookup(elixir_module:defs_table(Module), {default, Name}),
+  [begin
+     elixir_errors:form_error(Meta, ?key(E, file), ?MODULE,
+       {defs_with_defaults, Kind, Name, Arity, A})
+   end || {_, A, D} <- Matches, A /= Arity, D /= 0, defaults_conflict(A, D, Arity, Defaults)].
