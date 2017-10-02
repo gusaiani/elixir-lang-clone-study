@@ -302,3 +302,84 @@ check_previous_defaults(Meta, Module, Name, Arity, Kind, Defaults, E) ->
      elixir_errors:form_error(Meta, ?key(E, file), ?MODULE,
        {defs_with_defaults, Kind, Name, Arity, A})
    end || {_, A, D} <- Matches, A /= Arity, D /= 0, defaults_conflict(A, D, Arity, Defaults)].
+
+defaults_conflict(A, D, Arity, Defaults) ->
+  ((Arity >= (A - D)) andalso (Arity < A)) orelse
+    ((A >= (Arity - Defaults)) andalso (A < Arity)).
+
+assert_no_aliases_name(Meta, '__aliases__', [Atom], #{file := File}) when is_atom(Atom) ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {no_alias, Atom});
+assert_no_aliases_name(_Meta, _Aliases, _Args, _S) ->
+  ok.
+
+assert_valid_name(Meta, Kind, '__info__', [_], #{file := File, module := Module}) when Module /= 'Elixir.Module' ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {'__info__', Kind});
+assert_valid_name(Meta, Kind, 'module_info', [], #{file := File}) ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {module_info, Kind, 0});
+assert_valid_name(Meta, Kind, 'module_info', [_], #{file := File}) ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {module_info, Kind, 1});
+assert_valid_name(Meta, Kind, is_record, [_, _], #{file := File}) when Kind == defp; Kind == def ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {is_record, Kind});
+assert_valid_name(_Meta, _Kind, _Name, _Args, _S) ->
+  ok.
+
+%% Format errors
+
+format_error({bodyless_clause, Kind, {Name, Arity}}) ->
+  io_lib:format("implementation not provided for predefined ~ts ~ts/~B", [Kind, Name, Arity]);
+
+format_error({no_module, {Kind, Name, Arity}}) ->
+  io_lib:format("cannot define function outside module, invalid scope for ~ts ~ts/~B", [Kind, Name, Arity]);
+
+format_error({defs_with_defaults, Kind, Name, Arity, A}) when Arity > A ->
+  io_lib:format("~ts ~ts/~B defaults conflicts with ~ts/~B",
+    [Kind, Name, Arity, Name, A]);
+
+format_error({defs_with_defaults, Kind, Name, Arity, A}) when Arity < A ->
+  io_lib:format("~ts ~ts/~B conflicts with defaults from ~ts/~B",
+    [Kind, Name, Arity, Name, A]);
+
+format_error({clauses_with_defaults, {Kind, Name, Arity}}) ->
+  io_lib:format(""
+    "definitions with multiple clauses and default values require a header. Instead of:\n"
+    "\n"
+    "    def foo(:first_clause, b \\\\ :default) do ... end\n"
+    "    def foo(:second_clause, b) do ... end\n"
+    "\n"
+    "one should write:\n"
+    "\n"
+    "    def foo(a, b \\\\ :default)\n"
+    "    def foo(:first_clause, b) do ... end\n"
+    "    def foo(:second_clause, b) do ... end\n"
+    "\n"
+   "~ts ~ts/~B has multiple clauses and defines defaults in one or more clauses", [Kind, Name, Arity]);
+
+format_error({ungrouped_clause, {Kind, Name, Arity, OrigLine, OrigFile}}) ->
+  io_lib:format("clauses for the same ~ts should be grouped together, ~ts ~ts/~B was previously defined (~ts:~B)",
+    [Kind, Kind, Name, Arity, OrigFile, OrigLine]);
+
+format_error({changed_kind, {Name, Arity, Previous, Current}}) ->
+  io_lib:format("~ts ~ts/~B already defined as ~ts", [Current, Name, Arity, Previous]);
+
+format_error({no_alias, Atom}) ->
+  io_lib:format("function names should start with lowercase characters or underscore, invalid name ~ts", [Atom]);
+
+format_error({invalid_def, Kind, NameAndArgs}) ->
+  io_lib:format("invalid syntax in ~ts ~ts", [Kind, 'Elixir.Macro':to_string(NameAndArgs)]);
+
+format_error(invalid_args_for_bodyless_clause) ->
+  "only variables and \\\\ are allowed as arguments in definition header.\n"
+  "\n"
+  "If you did not intend to define a header, make sure your function "
+  "definition has the proper syntax by wrapping the arguments in parentheses "
+  "and ensuring there is no space between the function name and arguments";
+
+format_error({'__info__', Kind}) ->
+  io_lib:format("cannot define ~ts __info__/1 as it is automatically defined by Elixir", [Kind]);
+
+format_error({module_info, Kind, Arity}) ->
+  io_lib:format("cannot define ~ts module_info/~B as it is automatically defined by Erlang", [Kind, Arity]);
+
+format_error({is_record, Kind}) ->
+  io_lib:format("cannot define ~ts is_record/2 due to compatibility "
+                "issues with the Erlang compiler (it is a known limitation)", [Kind]).
