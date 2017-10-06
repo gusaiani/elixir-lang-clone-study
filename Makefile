@@ -134,3 +134,135 @@ LOGO_PATH = $(shell test -f ../docs/logo.png && echo "--logo ../docs/logo.png")
 SOURCE_REF = $(shell tag="$(call GIT_TAG)" revision="$(call GIT_REVISION)"; echo "$${tag:-$$revision}\c")
 DOCS_FORMAT = html
 COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" -m "$(3)" -u "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) -o doc/$(2) -n https://hexdocs.pm/$(2)/$(CANONICAL) -p http://elixir-lang.org/docs.html -f "$(DOCS_FORMAT)" $(4)
+
+docs: compile ../ex_doc/bin/ex_doc docs_elixir docs_eex docs_mix docs_iex docs_ex_unit docs_logger
+
+docs_elixir: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (elixir)"
+	$(Q) rm -rf doc/elixir
+	$(call COMPILE_DOCS,Elixir,elixir,Kernel,-c scripts/docs.exs)
+
+docs_eex: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (eex)"
+	$(Q) rm -rf doc/eex
+	$(call COMPILE_DOCS,EEx,eex,EEx)
+
+docs_mix: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (mix)"
+	$(Q) rm -rf doc/mix
+	$(call COMPILE_DOCS,Mix,mix,Mix)
+
+docs_iex: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (iex)"
+	$(Q) rm -rf doc/iex
+	$(call COMPILE_DOCS,IEx,iex,IEx)
+
+docs_ex_unit: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (ex_unit)"
+	$(Q) rm -rf doc/ex_unit
+	$(call COMPILE_DOCS,ExUnit,ex_unit,ExUnit)
+
+docs_logger: compile ../ex_doc/bin/ex_doc
+	@ echo "==> ex_doc (logger)"
+	$(Q) rm -rf doc/logger
+	$(call COMPILE_DOCS,Logger,logger,Logger)
+
+../ex_doc/bin/ex_doc:
+	@ echo "ex_doc is not found in ../ex_doc as expected. See README for more information."
+	@ false
+
+#==> Zip tasks
+
+Docs.zip: docs
+	rm -f Docs-v$(VERSION).zip
+	zip -9 -r Docs-v$(VERSION).zip CHANGELOG.md doc NOTICE LICENSE README.md
+	@ echo "Docs file created $(CURDIR)/Docs-v$(VERSION).zip"
+
+Precompiled.zip: build_man compile
+	rm -f Precompiled-v$(VERSION).zip
+	zip -9 -r Precompiled-v$(VERSION).zip bin CHANGELOG.md lib/*/ebin lib/*/lib LICENSE man NOTICE README.md VERSION
+	@ echo "Precompiled file created $(CURDIR)/Precompiled-v$(VERSION).zip"
+
+zips: Precompiled.zip Docs.zip
+
+#==> Test tasks
+
+test: test_erlang test_elixir
+
+test_windows: test test_taskkill
+
+test_taskkill:
+	taskkill //IM erl.exe //F //T //FI "MEMUSAGE gt 0"
+	taskkill //IM epmd.exe //F //T //FI "MEMUSAGE gt 0"
+
+TEST_ERL = lib/elixir/test/erlang
+TEST_EBIN = lib/elixir/test/ebin
+TEST_ERLS = $(addprefix $(TEST_EBIN)/, $(addsuffix .beam, $(basename $(notdir $(wildcard $(TEST_ERL)/*.erl)))))
+
+test_erlang: compile $(TEST_ERLS)
+	@ echo "==> elixir (eunit)"
+	$(Q) $(ERL) -pa $(TEST_EBIN) -s test_helper test;
+	@ echo ""
+
+$(TEST_EBIN)/%.beam: $(TEST_ERL)/%.erl
+	$(Q) mkdir -p $(TEST_EBIN)
+	$(Q) $(ERLC) -o $(TEST_EBIN) $<
+
+test_elixir: test_stdlib test_ex_unit test_logger test_mix test_eex test_iex
+
+test_stdlib: compile
+	@ echo "==> elixir (exunit)"
+	$(Q) exec epmd & exit
+	$(Q) if [ "$(OS)" = "Windows_NT" ]; then \
+		cd lib/elixir && cmd //C call ../../bin/elixir.bat -r "test/elixir/test_helper.exs" -pr "test/elixir/**/*_test.exs"; \
+	else \
+		cd lib/elixir && ../../bin/elixir -r "test/elixir/test_helper.exs" -pr "test/elixir/**/*_test.exs"; \
+	fi
+
+#==> Dialyzer tasks
+
+DIALYZER_OPTS = --no_check_plt --fullpath -Werror_handling -Wunmatched_returns -Wunderspecs
+PLT = .elixir.plt
+
+$(PLT):
+	@ echo "==> Building PLT with Elixir's dependencies..."
+	$(Q) dialyzer --output_plt $(PLT) --build_plt --apps erts kernel stdlib compiler syntax_tools parsetools tools ssl inets
+
+clean_plt:
+	$(Q) rm -f $(PLT)
+
+build_plt: clean_plt $(PLT)
+
+dialyze: compile $(PLT)
+	@ echo "==> Dialyzing Elixir..."
+	$(Q) dialyzer --plt $(PLT) $(DIALYZER_OPTS) lib/*/ebin
+
+#==> Man page tasks
+
+build_man: man/iex.1 man/elixir.1
+
+man/iex.1:
+	$(Q) cp man/iex.1.in man/iex.1
+	$(Q) sed -i.bak "/{COMMON}/r common" man/iex.1
+	$(Q) sed -i.bak "/{COMMON}/d" man/iex.1
+	$(Q) rm -f man/iex.1.bak
+
+man/elixir.1:
+	$(Q) cp man/elixir.1.in man/elixir.1
+	$(Q) sed -i.bak "/{COMMON}/r common" man/elixir.1
+	$(Q) sed -i.bak "/{COMMON}/d" man/elixir.1
+	$(Q) rm -f man/elixir.1.bak
+
+clean_man:
+	rm -f man/elixir.1
+	rm -f man/elixir.1.bak
+	rm -f man/iex.1
+	rm -f man/iex.1.bak
+
+install_man: build_man
+	$(Q) mkdir -p $(DESTDIR)$(SHARE_PREFIX)/man/man1
+	$(Q) $(INSTALL_DATA) man/elixir.1  $(DESTDIR)$(SHARE_PREFIX)/man/man1
+	$(Q) $(INSTALL_DATA) man/elixirc.1 $(DESTDIR)$(SHARE_PREFIX)/man/man1
+	$(Q) $(INSTALL_DATA) man/iex.1     $(DESTDIR)$(SHARE_PREFIX)/man/man1
+	$(Q) $(INSTALL_DATA) man/mix.1     $(DESTDIR)$(SHARE_PREFIX)/man/man1
+	$(MAKE) clean_man
