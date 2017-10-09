@@ -40,7 +40,7 @@ defmodule Keyword do
   the given key, regardless if duplicated entries exist.
   Similarly, `Keyword.put/3` and `Keyword.delete/3` ensure all
   duplicated entries for a given key are removed when invoked.
-  Note that operatios that require keys to be found in the keyword
+  Note that operations that require keys to be found in the keyword
   list (like `Keyword.get/3`) need to traverse the list in order
   to find keys, so these operations may be slower than their map
   counterparts.
