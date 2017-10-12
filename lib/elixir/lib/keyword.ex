@@ -88,7 +88,7 @@ defmodule Keyword do
   def keyword?(term)
 
   def keyword?([{key, _value} | rest]) when is_atom(key), do: keyword?(rest)
-  def keyword?([]),     do: true
+  def keyword?([]), do: true
   def keyword?(_other), do: false
 
   @doc """
@@ -119,7 +119,7 @@ defmodule Keyword do
       [a: 3]
 
   """
-  @spec new(Enum.t) :: t
+  @spec new(Enum.t()) :: t
   def new(pairs) do
     new(pairs, fn pair -> pair end)
   end
@@ -137,12 +137,13 @@ defmodule Keyword do
       [a: :a, b: :b]
 
   """
-  @spec new(Enum.t, (term -> {key, value})) :: t
+  @spec new(Enum.t(), (term -> {key, value})) :: t
   def new(pairs, transform) do
     fun = fn el, acc ->
       {k, v} = transform.(el)
       put_new(acc, k, v)
     end
+
     :lists.foldl(fun, [], Enum.reverse(pairs))
   end
 
@@ -213,5 +214,208 @@ defmodule Keyword do
       {^key, value} -> value
       false -> fun.()
     end
+  end
+
+  @doc """
+  Gets the value from `key` and updates it, all in one pass.
+
+  This `fun` argument receives the value of `key` (or `nil` if `key`
+  is not present) and must return a two-element tuple: the "get" value
+  (the retrieved value, which can be operated on before being returned)
+  and the new value to be stored under `key`. The `fun` may also
+  return `:pop`, implying the current value shall be removed from the
+  keyword list and returned.
+
+  The returned value is a tuple with the "get" value returned by
+  `fun` and a new keyword list with the updated value under `key`.
+
+  ## Examples
+
+      iex> Keyword.get_and_update([a: 1], :a, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      {1, [a: "new value!"]}
+
+      iex> Keyword.get_and_update([a: 1], :b, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      {nil, [b: "new value!", a: 1]}
+
+      iex> Keyword.get_and_update([a: 1], :a, fn _ -> :pop end)
+      {1, []}
+
+      iex> Keyword.get_and_update([a: 1], :b, fn _ -> :pop end)
+      {nil, [a: 1]}
+
+  """
+  @spec get_and_update(t, key, (value -> {get, value} | :pop)) :: {get, t} when get: term
+  def get_and_update(keywords, key, fun)
+      when is_list(keywords) and is_atom(key),
+      do: get_and_update(keywords, [], key, fun)
+
+  defp get_and_update([{key, current} | t], acc, key, fun) do
+    case fun.(current) do
+      {get, value} ->
+        {get, :lists.reverse(acc, [{key, value} | t])}
+
+      :pop ->
+        {current, :lists.reverse(acc, t)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
+    end
+  end
+
+  defp get_and_update([{_, _} = h | t], acc, key, fun), do: get_and_update(t, [h | acc], key, fun)
+
+  defp get_and_update([], acc, key, fun) do
+    case fun.(nil) do
+      {get, update} ->
+        {get, [{key, update} | :lists.reverse(acc)]}
+
+      :pop ->
+        {nil, :lists.reverse(acc)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
+    end
+  end
+
+  @doc """
+  Gets the value from `key` and updates it. Raises if there is no `key`.
+
+  This `fun` argument receives the value of `key` and must return a
+  two-element tuple: the "get" value (the retrieved value, which can be
+  operated on before being returned) and the new value to be stored under
+  `key`.
+
+  The returned value is a tuple with the "get" value returned by `fun` and a new
+  keyword list with the updated value under `key`.
+
+  ## Examples
+
+      iex> Keyword.get_and_update!([a: 1], :a, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      {1, [a: "new value!"]}
+
+      iex> Keyword.get_and_update!([a: 1], :b, fn current_value ->
+      ...>   {current_value, "new value!"}
+      ...> end)
+      ** (KeyError) key :b not found in: [a: 1]
+
+      iex> Keyword.get_and_update!([a: 1], :a, fn _ ->
+      ...>   :pop
+      ...> end)
+      {1, []}
+
+  """
+  @spec get_and_update!(t, key, (value -> {get, value})) :: {get, t} | no_return when get: term
+  def get_and_update!(keywords, key, fun) do
+    get_and_update!(keywords, key, fun, [])
+  end
+
+  defp get_and_update!([{key, value} | keywords], key, fun, acc) do
+    case fun.(value) do
+      {get, value} ->
+        {get, :lists.reverse(acc, [{key, value} | delete(keywords, key)])}
+
+      :pop ->
+        {value, :lists.reverse(acc, keywords)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
+    end
+  end
+
+  defp get_and_update!([{_, _} = e | keywords], key, fun, acc) do
+    get_and_update!(keywords, key, fun, [e | acc])
+  end
+
+  defp get_and_update!([], key, _fun, acc) when is_atom(key) do
+    raise(KeyError, key: key, term: acc)
+  end
+
+  @doc """
+  Fetches the value for a specific `key` and returns it in a tuple.
+
+  If the `key` does not exist, returns `:error`.
+
+  ## Examples
+
+      iex> Keyword.fetch([a: 1], :a)
+      {:ok, 1}
+      iex> Keyword.fetch([a: 1], :b)
+      :error
+
+  """
+  @spec fetch(t, key) :: {:ok, value} | :error
+  def fetch(keywords, key) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, value} -> {:ok, value}
+      false -> :error
+    end
+  end
+
+  @doc """
+  Fetches the value for specific `key`.
+
+  If `key` does not exist, a `KeyError` is raised.
+
+  ## Examples
+
+      iex> Keyword.fetch!([a: 1], :a)
+      1
+      iex> Keyword.fetch!([a: 1], :b)
+      ** (KeyError) key :b not found in: [a: 1]
+
+  """
+  @spec fetch!(t, key) :: value | no_return
+  def fetch!(keywords, key) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, value} -> value
+      false -> raise(KeyError, key: key, term: keywords)
+    end
+  end
+
+  @doc """
+  Gets all values for a specific `key`.
+
+  ## Examples
+
+      iex> Keyword.get_values([], :a)
+      []
+      iex> Keyword.get_values([a: 1], :a)
+      [1]
+      iex> Keyword.get_values([a: 1, a: 2], :a)
+      [1, 2]
+
+  """
+  @spec get_values(t, key) :: [value]
+  def get_values(keywords, key) when is_list(keywords) and is_atom(key) do
+    fun = fn
+      {^key, val} -> {true, val}
+      {_, _} -> false
+    end
+
+    :lists.filtermap(fun, keywords)
+  end
+
+  @doc """
+  Returns all keys from the keyword list.
+
+  Duplicated keys appear duplicated in the final list of keys.
+
+  ## Examples
+
+      iex> Keyword.keys([a: 1, b: 2])
+      [:a, :b]
+      iex> Keyword.keys([a: 1, b: 2, a: 3])
+      [:a, :b, :a]
+
+  """
+  @spec keys(t) :: [key]
+  def keys(keywords) when is_list(keywords) do
+    :lists.map(fn {k, _} -> k end, keywords)
   end
 end
