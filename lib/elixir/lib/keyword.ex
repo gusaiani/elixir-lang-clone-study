@@ -418,4 +418,182 @@ defmodule Keyword do
   def keys(keywords) when is_list(keywords) do
     :lists.map(fn {k, _} -> k end, keywords)
   end
+
+  @doc """
+  Returns all values from the keyword list.
+
+  Values from duplicated keys will be kept in the final list of values.
+
+  ## Examples
+
+      iex> Keyword.values([a: 1, b: 2])
+      [1, 2]
+      iex> Keyword.values([a: 1, b: 2, a: 3])
+      [1, 2, 3]
+
+  """
+  @spec values(t) :: [value]
+  def values(keywords) when is_list(keywords) do
+    :lists.map(fn {_, v} -> v end, keywords)
+  end
+
+  @doc """
+  Deletes the entries in the keyword list for a `key` with `value`.
+
+  If no `key` with `value` exists, returns the keyword list unchanged.
+
+  ## Examples
+
+      iex> Keyword.delete([a: 1, b: 2], :a, 1)
+      [b: 2]
+      iex> Keyword.delete([a: 1, b: 2, a: 3], :a, 3)
+      [a: 1, b: 2]
+      iex> Keyword.delete([a: 1], :a, 5)
+      [a: 1]
+      iex> Keyword.delete([a: 1], :b, 5)
+      [a: 1]
+
+  """
+  @spec delete(t, key, value) :: t
+  def delete(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    delete_key_value(keywords, key, value, _deleted? = false)
+  catch
+    :not_deleted -> keywords
+  end
+
+  defp delete_key_value([{key, value} | rest], key, value, _deleted?),
+    do: delete_key_value(rest, key, value, true)
+
+  defp delete_key_value([{_, _} = pair | rest], key, value, deleted?),
+    do: [pair | delete_key_value(rest, key, value, deleted?)]
+
+  defp delete_key_value([], _key, _value, _deleted? = true), do: []
+  defp delete_key_value([], _key, _value, _deleted? = false), do: throw(:not_deleted)
+
+  @doc """
+  Deletes the entries in the keyword list for a specific `key`.
+
+  If the `key` does not exist, returns the keyword list unchanged.
+  Use `delete_first/2` to delete just the first entry in case of
+  duplicated keys.
+
+  ## Examples
+
+      iex> Keyword.delete([a: 1, b: 2], :a)
+      [b: 2]
+      iex> Keyword.delete([a: 1, b: 2, a: 3], :a)
+      [b: 2]
+      iex> Keyword.delete([b: 2], :a)
+      [b: 2]
+
+  """
+  @spec delete(t, key) :: t
+  @compile {:inline, delete: 2}
+  def delete(keywords, key) when is_list(keywords) and is_atom(key) do
+    delete_key(keywords, key, _deleted? = false)
+  catch
+    :not_deleted -> keywords
+  end
+
+  defp delete_key([{key, _} | rest], key, _deleted?), do: delete_key(rest, key, true)
+
+  defp delete_key([{_, _} = pair | rest], key, deleted?),
+    do: [pair | delete_key(rest, key, deleted?)]
+
+  defp delete_key([], _key, _deleted? = true), do: []
+  defp delete_key([], _key, _deleted? = false), do: throw(:not_deleted)
+
+  @doc """
+  Deletes the first entry in the keyword list for a specific `key`.
+
+  If the `key` does not exist, returns the keyword list unchanged.
+
+  ## Examples
+
+      iex> Keyword.delete_first([a: 1, b: 2, a: 3], :a)
+      [b: 2, a: 3]
+      iex> Keyword.delete_first([b: 2], :a)
+      [b: 2]
+
+  """
+  @spec delete_first(t, key) :: t
+  def delete_first(keywords, key) when is_list(keywords) and is_atom(key) do
+    delete_first_key(keywords, key)
+  catch
+    :not_deleted -> keywords
+  end
+
+  defp delete_first_key([{key, _} | rest], key), do: rest
+  defp delete_first_key([{_, _} = pair | rest], key), do: [pair | delete_first_key(rest, key)]
+  defp delete_first_key([], _key), do: throw(:not_deleted)
+
+  @doc """
+  Puts the given `value` under `key`.
+
+  If a previous value is already stored, all entries are
+  removed and the value is overridden.
+
+  ## Examples
+
+      iex> Keyword.put([a: 1], :b, 2)
+      [b: 2, a: 1]
+      iex> Keyword.put([a: 1, b: 2], :a, 3)
+      [a: 3, b: 2]
+      iex> Keyword.put([a: 1, b: 2, a: 4], :a, 3)
+      [a: 3, b: 2]
+
+  """
+  @spec put(t, key, value) :: t
+  def put(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    [{key, value} | delete(keywords, key)]
+  end
+
+  @doc """
+  Evaluates `fun` and puts the result under `key`
+  in keyword list unless `key` is already present.
+
+  This is useful if the value is very expensive to calculate or
+  generally difficult to setup and teardown again.
+
+  ## Examples
+
+      iex> keyword = [a: 1]
+      iex> fun = fn ->
+      ...>   # some expensive operation here
+      ...>   3
+      ...> end
+      iex> Keyword.put_new_lazy(keyword, :a, fun)
+      [a: 1]
+      iex> Keyword.put_new_lazy(keyword, :b, fun)
+      [b: 3, a: 1]
+
+  """
+  @spec put_new_lazy(t, key, (() -> value)) :: t
+  def put_new_lazy(keywords, key, fun)
+      when is_list(keywords) and is_atom(key) and is_function(fun, 0) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> keywords
+      false -> [{key, fun.()} | keywords]
+    end
+  end
+
+  @doc """
+  Puts the given `value` under `key` unless the entry `key`
+  already exists.
+
+  ## Examples
+
+      iex> Keyword.put_new([a: 1], :b, 2)
+      [b: 2, a: 1]
+      iex> Keyword.put_new([a: 1, b: 2], :a, 3)
+      [a: 1, b: 2]
+
+  """
+  @spec put_new(t, key, value) :: t
+  def put_new(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> keywords
+      false -> [{key, value} | keywords]
+    end
+  end
 end
