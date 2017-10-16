@@ -596,4 +596,176 @@ defmodule Keyword do
       false -> [{key, value} | keywords]
     end
   end
+
+  @doc false
+  def replace(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> [{key, value} | delete(keywords, key)]
+      false -> keywords
+    end
+  end
+
+  @doc """
+  Similar to `replace/3`, but will raise a `KeyError`
+  if the entry `key` does not exist.
+
+  ## Examples
+
+      iex> Keyword.replace!([a: 1, b: 2, a: 4], :a, 3)
+      [a: 3, b: 2]
+
+      iex> Keyword.replace!([a: 1], :b, 2)
+      ** (KeyError) key :b not found in: [a: 1]
+
+  """
+  @spec replace!(t, key, value) :: t
+  def replace!(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> [{key, value} | delete(keywords, key)]
+      false -> raise KeyError, key: key, term: keywords
+    end
+  end
+
+  @doc """
+  Checks if two keywords are equal.
+
+  Two keywords are considered to be equal if they contain
+  the same keys and those keys contain the same values.
+
+  ## Examples
+
+      iex> Keyword.equal?([a: 1, b: 2], [b: 2, a: 1])
+      true
+      iex> Keyword.equal?([a: 1, b: 2], [b: 1, a: 2])
+      false
+      iex> Keyword.equal?([a: 1, b: 2, a: 3], [b: 2, a: 3, a: 1])
+      true
+
+  """
+  @spec equal?(t, t) :: boolean
+  def equal?(left, right) when is_list(left) and is_list(right) do
+    :lists.sort(left) == :lists.sort(right)
+  end
+
+  @doc """
+  Merges two keyword lists into one.
+
+  All keys, including duplicated keys, given in `keywords2` will be added
+  to `keywords1`, overriding any existing one.
+
+  There are no guarantees about the order of keys in the returned keyword.
+
+  ## Examples
+
+      iex> Keyword.merge([a: 1, b: 2], [a: 3, d: 4])
+      [b: 2, a: 3, d: 4]
+
+      iex> Keyword.merge([a: 1, b: 2], [a: 3, d: 4, a: 5])
+      [b: 2, a: 3, d: 4, a: 5]
+
+      iex> Keyword.merge([a: 1], [2, 3])
+      ** (ArgumentError) expected a keyword list as the second argument, got: [2, 3]
+
+  """
+  @spec merge(t, t) :: t
+  def merge(keywords1, keywords2) when is_list(keywords1) and is_list(keywords2) do
+    if keyword?(keywords2) do
+      fun = fn
+        {key, _value} when is_atom(key) ->
+          not has_key?(keywords2, key)
+
+        _ ->
+          raise ArgumentError,
+            message: "expected a keyword list as the first argument, got: #{inspect(keywords1)}"
+      end
+
+      :lists.filter(fun, keywords1) ++ keywords2
+    else
+      raise ArgumentError,
+        message: "expected a keyword list as the second argument, got: #{inspect(keywords2)}"
+    end
+  end
+
+  @doc """
+  Merges two keyword lists into one.
+
+  All keys, including duplicated keys, given in `keywords2` will be added
+  to `keywords1`. The given function will be invoked to solve conflicts.
+
+  If `keywords2` has duplicate keys, the given function will be invoked
+  for each matching pair in `keywords1`.
+
+  There are no guarantees about the order of keys in the returned keyword.
+
+  ## Examples
+
+      iex> Keyword.merge([a: 1, b: 2], [a: 3, d: 4], fn _k, v1, v2 ->
+      ...>   v1 + v2
+      ...> end)
+      [b: 2, a: 4, d: 4]
+
+      iex> Keyword.merge([a: 1, b: 2], [a: 3, d: 4, a: 5], fn :a, v1, v2 ->
+      ...>  v1 + v2
+      ...> end)
+      [b: 2, a: 4, d: 4, a: 5]
+
+      iex> Keyword.merge([a: 1, b: 2, a: 3], [a: 3, d: 4, a: 5], fn :a, v1, v2 ->
+      ...>  v1 + v2
+      ...> end)
+      [b: 2, a: 4, d: 4, a: 8]
+
+      iex> Keyword.merge([a: 1, b: 2], [:a, :b], fn :a, v1, v2 ->
+      ...>  v1 + v2
+      ...> end)
+      ** (ArgumentError) expected a keyword list as the second argument, got: [:a, :b]
+
+  """
+  @spec merge(t, t, (key, value, value -> value)) :: t
+  def merge(keywords1, keywords2, fun)
+      when is_list(keywords1) and is_list(keywords2) and is_function(fun, 3) do
+    if keyword?(keywords1) do
+      do_merge(keywords2, [], keywords1, keywords1, fun, keywords2)
+    else
+      raise ArgumentError,
+        message: "expected a keyword list as the first argument, got: #{inspect(keywords1)}"
+    end
+  end
+
+  defp do_merge([{key, value2} | tail], acc, rest, original, fun, keywords2) when is_atom(key) do
+    case :lists.keyfind(key, 1, original) do
+      {^key, value1} ->
+        acc = [{key, fun.(key, value1, value2)} | acc]
+        original = :lists.keydelete(key, 1, original)
+        do_merge(tail, acc, delete(rest, key), original, fun, keywords2)
+
+      false ->
+        do_merge(tail, [{key, value2} | acc], rest, original, fun, keywords2)
+    end
+  end
+
+  defp do_merge([], acc, rest, _original, _fun, _keywords2) do
+    rest ++ :lists.reverse(acc)
+  end
+
+  defp do_merge(_other, _acc, _rest, _original, _fun, keywords2) do
+    raise ArgumentError,
+      message: "expected a keyword list as the second argument, got: #{inspect(keywords2)}"
+  end
+
+  @doc """
+  Returns whether a given `key` exists in the given `keywords`.
+
+  ## Examples
+
+      iex> Keyword.has_key?([a: 1], :a)
+      true
+      iex> Keyword.has_key?([a: 1], :b)
+      false
+
+  """
+  @spec has_key?(t, key) :: boolean
+  def has_key?(keywords, key) when is_list(keywords) and is_atom(key) do
+    :lists.keymember(key, 1, keywords)
+  end
+
 end
