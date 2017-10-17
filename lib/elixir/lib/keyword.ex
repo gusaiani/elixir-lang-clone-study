@@ -768,4 +768,170 @@ defmodule Keyword do
     :lists.keymember(key, 1, keywords)
   end
 
+  @doc """
+  Updates the `key` with the given function.
+
+  If the `key` does not exist, raises `KeyError`.
+
+  If there are duplicated keys, they are all removed and only the first one
+  is updated.
+
+  ## Examples
+
+      iex> Keyword.update!([a: 1], :a, &(&1 * 2))
+      [a: 2]
+      iex> Keyword.update!([a: 1, a: 2], :a, &(&1 * 2))
+      [a: 2]
+
+      iex> Keyword.update!([a: 1], :b, &(&1 * 2))
+      ** (KeyError) key :b not found in: [a: 1]
+
+  """
+  @spec update!(t, key, (value -> value)) :: t | no_return
+  def update!(keywords, key, fun) do
+    update!(keywords, key, fun, keywords)
+  end
+
+  defp update!([{key, value} | keywords], key, fun, _dict) do
+    [{key, fun.(value)} | delete(keywords, key)]
+  end
+
+  defp update!([{_, _} = e | keywords], key, fun, dict) do
+    [e | update!(keywords, key, fun, dict)]
+  end
+
+  defp update!([], key, _fun, dict) when is_atom(key) do
+    raise(KeyError, key: key, term: dict)
+  end
+
+  @doc """
+  Updates the `key` in `keywords` with the given function.
+
+  If the `key` does not exist, inserts the given `initial` value.
+
+  If there are duplicated keys, they are all removed and only the first one
+  is updated.
+
+  ## Examples
+
+      iex> Keyword.update([a: 1], :a, 13, &(&1 * 2))
+      [a: 2]
+      iex> Keyword.update([a: 1, a: 2], :a, 13, &(&1 * 2))
+      [a: 2]
+      iex> Keyword.update([a: 1], :b, 11, &(&1 * 2))
+      [a: 1, b: 11]
+
+  """
+  @spec update(t, key, value, (value -> value)) :: t
+  def update(keywords, key, initial, fun)
+
+  def update([{key, value} | keywords], key, _initial, fun) do
+    [{key, fun.(value)} | delete(keywords, key)]
+  end
+
+  def update([{_, _} = e | keywords], key, initial, fun) do
+    [e | update(keywords, key, initial, fun)]
+  end
+
+  def update([], key, initial, _fun) when is_atom(key) do
+    [{key, initial}]
+  end
+
+  @doc """
+  Takes all entries corresponding to the given keys and extracts them into a
+  separate keyword list.
+
+  Returns a tuple with the new list and the old list with removed keys.
+
+  Keys for which there are no entries in the keyword list are ignored.
+
+  Entries with duplicated keys end up in the same keyword list.
+
+  ## Examples
+
+      iex> Keyword.split([a: 1, b: 2, c: 3], [:a, :c, :e])
+      {[a: 1, c: 3], [b: 2]}
+      iex> Keyword.split([a: 1, b: 2, c: 3, a: 4], [:a, :c, :e])
+      {[a: 1, c: 3, a: 4], [b: 2]}
+
+  """
+  @spec split(t, [key]) :: {t, t}
+  def split(keywords, keys) when is_list(keywords) do
+    fun = fn {k, v}, {take, drop} ->
+      case k in keys do
+        true -> {[{k, v} | take], drop}
+        false -> {take, [{k, v} | drop]}
+      end
+    end
+
+    acc = {[], []}
+    {take, drop} = :lists.foldl(fun, acc, keywords)
+    {:lists.reverse(take), :lists.reverse(drop)}
+  end
+
+  @doc """
+  Takes all entries corresponding to the given keys and returns them in a new
+  keyword list.
+
+  Duplicated keys are preserved in the new keyword list.
+
+  ## Examples
+
+      iex> Keyword.take([a: 1, b: 2, c: 3], [:a, :c, :e])
+      [a: 1, c: 3]
+      iex> Keyword.take([a: 1, b: 2, c: 3, a: 5], [:a, :c, :e])
+      [a: 1, c: 3, a: 5]
+
+  """
+  @spec take(t, [key]) :: t
+  def take(keywords, keys) when is_list(keywords) do
+    :lists.filter(fn {k, _} -> k in keys end, keywords)
+  end
+
+  @doc """
+  Drops the given keys from the keyword list.
+
+  Duplicated keys are preserved in the new keyword list.
+
+  ## Examples
+
+      iex> Keyword.drop([a: 1, b: 2, c: 3], [:b, :d])
+      [a: 1, c: 3]
+      iex> Keyword.drop([a: 1, b: 2, b: 3, c: 3, a: 5], [:b, :d])
+      [a: 1, c: 3, a: 5]
+
+  """
+  @spec drop(t, [key]) :: t
+  def drop(keywords, keys) when is_list(keywords) do
+    :lists.filter(fn {key, _} -> key not in keys end, keywords)
+  end
+
+  @doc """
+  Returns and removes all values associated with `key` in the keyword list.
+
+  All duplicated keys are removed. See `pop_first/3` for
+  removing only the first entry.
+
+  ## Examples
+
+      iex> Keyword.pop([a: 1], :a)
+      {1, []}
+      iex> Keyword.pop([a: 1], :b)
+      {nil, [a: 1]}
+      iex> Keyword.pop([a: 1], :b, 3)
+      {3, [a: 1]}
+      iex> Keyword.pop([a: 1, a: 2], :a)
+      {1, []}
+
+  """
+  @spec pop(t, key, value) :: {value, t}
+  def pop(keywords, key, default \\ nil) when is_list(keywords) do
+    case fetch(keywords, key) do
+      {:ok, value} ->
+        {value, delete(keywords, key)}
+
+      :error ->
+        {default, keywords}
+    end
+  end
 end
