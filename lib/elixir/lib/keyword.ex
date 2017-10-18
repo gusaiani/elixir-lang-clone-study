@@ -934,4 +934,84 @@ defmodule Keyword do
         {default, keywords}
     end
   end
+
+  @doc """
+  Lazily returns and removes all values associated with `key` in the keyword list.
+
+  This is useful if the default value is very expensive to calculate or
+  generally difficult to setup and teardown again.
+
+  All duplicated keys are removed. See `pop_first/3` for
+  removing only the first entry.
+
+  ## Examples
+
+      iex> keyword = [a: 1]
+      iex> fun = fn ->
+      ...>   # some expensive operation here
+      ...>   13
+      ...> end
+      iex> Keyword.pop_lazy(keyword, :a, fun)
+      {1, []}
+      iex> Keyword.pop_lazy(keyword, :b, fun)
+      {13, [a: 1]}
+
+  """
+  @spec pop_lazy(t, key, (() -> value)) :: {value, t}
+  def pop_lazy(keywords, key, fun)
+      when is_list(keywords) and is_function(fun, 0) do
+    case fetch(keywords, key) do
+      {:ok, value} ->
+        {value, delete(keywords, key)}
+
+      :error ->
+        {fun.(), keywords}
+    end
+  end
+
+  @doc """
+  Returns and removes the first value associated with `key` in the keyword list.
+
+  Duplicated keys are not removed.
+
+  ## Examples
+
+      iex> Keyword.pop_first([a: 1], :a)
+      {1, []}
+      iex> Keyword.pop_first([a: 1], :b)
+      {nil, [a: 1]}
+      iex> Keyword.pop_first([a: 1], :b, 3)
+      {3, [a: 1]}
+      iex> Keyword.pop_first([a: 1, a: 2], :a)
+      {1, [a: 2]}
+
+  """
+  @spec pop_first(t, key, value) :: {value, t}
+  def pop_first(keywords, key, default \\ nil) when is_list(keywords) do
+    case :lists.keytake(key, 1, keywords) do
+      {:value, {^key, value}, rest} -> {value, rest}
+      false -> {default, keywords}
+    end
+  end
+
+  @doc """
+  Returns the keyword list itself.
+
+  ## Examples
+
+      iex> Keyword.to_list([a: 1])
+      [a: 1]
+
+  """
+  @spec to_list(t) :: t
+  def to_list(keyword) when is_list(keyword) do
+    keyword
+  end
+
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def size(keyword) do
+    length(keyword)
+  end
 end
