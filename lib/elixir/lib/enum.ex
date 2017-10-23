@@ -8,10 +8,10 @@ defprotocol Enumerable do
 
       Enum.map([1, 2, 3], &(&1 * 2))
 
-  invokes `Enumerable.reduce/3` to perform the reducing
-  operation that builds a mapped list by calling the mapping function
-  `&(&1 * 2)` on every element in the collection and consuming the
-  element with an accumulated list.
+  invokes `Enumerable.reduce/3` to perform the reducing operation that
+  builds a mapped list by calling the mapping function `&(&1 * 2)` on
+  every element in the collection and consuming the element with an
+  accumulated list.
 
   Internally, `Enum.map/2` is implemented as follows:
 
@@ -22,16 +22,22 @@ defprotocol Enumerable do
 
   Notice the user-supplied function is wrapped into a `t:reducer/0` function.
   The `t:reducer/0` function must return a tagged tuple after each step,
-  as described in the `t:acc/0` type.
+  as described in the `t:acc/0` type. At the end, `Enumerable.reduce/3`
+  returns `t:result/0`.
 
-  The reason the accumulator requires a tagged tuple is to allow the
-  `t:reducer/0` function to communicate the end of enumeration to the underlying
-  enumerable, allowing any open resources to be properly closed.
-  It also allows suspension of the enumeration, which is useful when
-  interleaving between many enumerables is required (as in zip).
+  This protocol uses tagged tuples to exchange information between the
+  reducer function and the data type that implements the protocol. This
+  allows enumeration of resources, such as files, to be done efficiently
+  while also guaranteeing the resource will be closed at the end of the
+  enumeration. This protocol also allows suspension of the enumeration,
+  which is useful when interleaving between many enumerables is required
+  (as in zip).
 
-  Finally, `Enumerable.reduce/3` will return another tagged tuple,
-  as represented by the `t:result/0` type.
+  This protocol requires four functions to be implemented, `reduce/3`,
+  `count/1`, `member?/2`, and `slice/1`. The core of the protocol is the
+  `reduce/3` function. All other functions exist as optimizations paths
+  for data structures that can implement certain properties in better
+  than linear time.
   """
 
   @typedoc """
@@ -89,13 +95,26 @@ defprotocol Enumerable do
   the enumeration is suspended. When invoked, it expects
   a new accumulator and it returns the result.
 
-  A continuation is easily implemented as long as the reduce
+  A continuation can be trivially implemented as long as the reduce
   function is defined in a tail recursive fashion. If the function
   is tail recursive, all the state is passed as arguments, so
-  the continuation would simply be the reducing function partially
-  applied.
+  the continuation is the reducing function partially applied.
   """
   @type continuation :: (acc -> result)
+
+  @typedoc """
+  A slicing function that receives the initial position and the
+  number of elements in the slice.
+
+  The `start` position is a number `>= 0` and guaranteed to
+  exist in the enumerable. The length is a number `>= 1` in a way
+  that `start + length <= count`, where `count` is the maximum
+  amount of elements in the enumerable.
+
+  The function should return a non empty list where
+  the amount of elements is equal to `length`.
+  """
+  @type slicing_fun :: (start :: non_neg_integer, length :: pos_integer -> [term()])
 
   @doc """
   Reduces the enumerable into an element.
@@ -104,6 +123,11 @@ defprotocol Enumerable do
   This function should apply the given `t:reducer/0` function to each
   item in the enumerable and proceed as expected by the returned
   accumulator.
+
+  See the documentation of the types `t:result/0` and `t:acc/0` for
+  more information.
+
+  ## Examples
 
   As an example, here is the implementation of `reduce` for lists:
 
@@ -117,19 +141,52 @@ defprotocol Enumerable do
   def reduce(enumerable, acc, fun)
 
   @doc """
+  Retrieves the number of elements in the enumerable.
+
+  It should return `{:ok, count}` if you can count the number of elements
+  in the enumerable more efficiently than manually traversing each element
+  in the enumerable one by one.
+
+  Otherwise it should return `{:error, __MODULE__}` and a default algorithm
+  built on top of `reduce/3` that runs in linear time will be used.
+  """
+  @spec count(t) :: {:ok, non_neg_integer} | {:error, module}
+  def count(enumerable)
+
+  @doc """
   Checks if an element exists within the enumerable.
 
-  It should return `{:ok, boolean}`.
+  It should return `{:ok, boolean}` if you can check the membership of a
+  given element in the enumerable with `===` without traversing the whole
+  enumerable.
 
-  If `{:error, __MODULE__}` is returned a default algorithm using
-  `reduce` and the match (`===`) operator is used. This algorithm runs
-  in linear time.
-
-  Please force use of the default algorithm unless you can implement an
-  algorithm that is significantly faster.
+  Otherwise it should return `{:error, __MODULE__}` and a default algorithm
+  built on top of `reduce/3` that runs in linear time will be used.
   """
   @spec member?(t, term) :: {:ok, boolean} | {:error, module}
   def member?(enumerable, element)
+
+  @doc """
+  Returns a function that slices the data structure contiguously.
+
+  It should return `{:ok, size, slicing_fun}` if the enumerable has
+  a known bound and can access a position in the enumerable without
+  traversing all previous elements.
+
+  Otherwise it should return `{:error, __MODULE__}` and a default
+  algorithm built on top of `reduce/3` that runs in linear time will be
+  used.
+
+  ## Differences to `count/1`
+
+  The `size` value returned by this function is used for boundary checks,
+  therefore it is extremely important that this function only returns `:ok`
+  if retrieving the `size` of the enumerable is cheap, fast and takes constant
+  time. Otherwise the simplest of operations, such as `Enum.at(enumerable, 0)`,
+  will become too expensive.
+
+  On the other hand, ``
+  """
 
   @doc """
   Retrieves the enumerable's size.
@@ -228,4 +285,159 @@ defmodule Enum do
       false
 
   """
+  @spec all?(t, (element -> as_boolean(term))) :: boolean
+
+  def all?(enumerable, fun \\ fn x -> x end)
+
+  def all?(enumerable, fun) when is_list(enumerable) do
+    all_list(enumerable, fun)
+  end
+
+  def all?(enumerable, fun) do
+    Enumerable.reduce(enumerable, {:cont, true}, fn entry, _ ->
+      if fun.(entry), do: {:cont, true}, else: {:halt, false}
+    end)
+    |> elem(1)
+  end
+
+  @doc """
+  Returns true if the given `fun` evaluates to true on any of the items in the enumerable.
+
+  It stops the iteration at the first invocation that returns a truthy value (not `false` or `nil`).
+
+  ## Examples
+
+      iex> Enum.any?([2, 4, 6], fn(x) -> rem(x, 2) == 1 end)
+      false
+
+      iex> Enum.any?([2, 3, 4], fn(x) -> rem(x, 2) == 1 end)
+      true
+
+  If no function is given, it defaults to checking if at least one item
+  in the enumerable is a truthy value.
+
+      iex> Enum.any?([false, false, false])
+      false
+
+      iex> Enum.any?([false, true, false])
+      true
+
+  """
+  @spec any?(t, (element -> as_boolean(term))) :: boolean
+
+  def any?(enumerable, fun \\ fn x -> x end)
+
+  def any?(enumerable, fun) when is_list(enumerable) do
+    any_list(enumerable, fun)
+  end
+
+  def any?(enumerable, fun) do
+    Enumerable.reduce(enumerable, {:cont, false}, fn entry, _ ->
+      if fun.(entry), do: {:halt, true}, else: {:cont, false}
+    end)
+    |> elem(1)
+  end
+
+  @doc """
+  Finds the element at the given `index` (zero-based).
+
+  Returns `default` if `index` is out of bounds.
+
+  A negative `index` can be passed, which means the `enumerable` is
+  enumerated once and the `index` is counted from the end (e.g.
+  `-1` finds the last element).
+
+  Note this operation takes linear time. In order to access
+  the element at index `index`, it will need to traverse `index`
+  previous elements.
+
+  ## Examples
+
+      iex> Enum.at([2, 4, 6], 0)
+      2
+
+      iex> Enum.at([2, 4, 6], 2)
+      6
+
+      iex> Enum.at([2, 4, 6], 4)
+      nil
+
+      iex> Enum.at([2, 4, 6], 4, :none)
+      :none
+
+  """
+  @spec at(t, index, default) :: element | default
+  def at(enumerable, index, default \\ nil) do
+    case fetch(enumerable, index) do
+      {:ok, h} -> h
+      :error -> default
+    end
+  end
+
+  @doc """
+  Finds the element at the given `index` (zero-based).
+
+  Returns `{:ok, element}` if found, otherwise `:error`.
+
+  A negative `index` can be passed, which means the `enumerable` is
+  enumerated once and the `index` is counted from the end (e.g.
+  `-1` fetches the last element).
+
+  Note this operation takes linear time. In order to access
+  the element at index `index`, it will need to traverse `index`
+  previous elements.
+
+  ## Examples
+
+      iex> Enum.fetch([2, 4, 6], 0)
+      {:ok, 2}
+
+      iex> Enum.fetch([2, 4, 6], -3)
+      {:ok, 2}
+
+      iex> Enum.fetch([2, 4, 6], 2)
+      {:ok, 6}
+
+      iex> Enum.fetch([2, 4, 6], 4)
+      :error
+
+  """
+  @spec fetch(t, index) :: {:ok, element} | :error
+  def fetch(enumerable, index)
+
+  def fetch(enumerable, index) when is_list(enumerable) and is_integer(index) do
+    if index < 0 do
+      enumerable |> :lists.reverse() |> fetch_list(-index - 1)
+    else
+      fetch_list(enumerable, index)
+    end
+  end
+
+  ## Implementations
+
+  ## all?
+
+  defp all_list([h | t], fun) do
+    if fun.(h) do
+      all_list(t, fun)
+    else
+      false
+    end
+  end
+
+  defp all_list([], _) do
+    true
+  end
+
+  defp any_list([h | t], fun) do
+    if fun.(h) do
+      true
+    else
+      any_list(t, fun)
+    end
+  end
+
+  defp any_list([], _) do
+    false
+  end
 end
