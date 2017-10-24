@@ -144,8 +144,7 @@ defprotocol Enumerable do
   Retrieves the number of elements in the enumerable.
 
   It should return `{:ok, count}` if you can count the number of elements
-  in the enumerable more efficiently than manually traversing each element
-  in the enumerable one by one.
+  in the enumerable.
 
   Otherwise it should return `{:error, __MODULE__}` and a default algorithm
   built on top of `reduce/3` that runs in linear time will be used.
@@ -185,22 +184,13 @@ defprotocol Enumerable do
   time. Otherwise the simplest of operations, such as `Enum.at(enumerable, 0)`,
   will become too expensive.
 
-  On the other hand, ``
+  On the other hand, the `count/1` function in this protocol should be
+  implemented whenever you can count the number of elements in the collection.
   """
-
-  @doc """
-  Retrieves the enumerable's size.
-
-  It should return `{:ok, size}`.
-
-  If `{:error, __MODULE__}` is returned a default algorithm using
-  `reduce` is used. This algorithm runs in linear time.
-
-  Please force use of the default algorithm unless you can implement an
-  algorithm that is significantly faster.
-  """
-  @spec count(t) :: {:ok, non_neg_integer} | {:error, module}
-  def count(enumerable)
+  @spec slice(t) ::
+          {:ok, size :: non_neg_integer(), slicing_fun()}
+          | {:error, module()}
+  def slice(enumerable)
 end
 
 defmodule Enum do
@@ -368,12 +358,97 @@ defmodule Enum do
   """
   @spec at(t, index, default) :: element | default
   def at(enumerable, index, default \\ nil) do
-    case fetch(enumerable, index) do
-      {:ok, h} -> h
-      :error -> default
+    case slice_any(enumerable, index, 1) do
+      [value] -> value
+      [] -> default
     end
   end
 
+  # Deprecate on v1.7
+  @doc false
+  def chunk(enumerable, count), do: chunk(enumerable, count, count, nil)
+
+  # Deprecate on v1.7
+  @doc false
+  def chunk(enumerable, count, step, leftover \\ nil) do
+    chunk_every(enumerable, count, step, leftover || :discard)
+  end
+
+  @doc """
+  Shortcut to `chunk_every(enumerable, count, count)`.
+  """
+  @spec chunk_every(t, pos_integer) :: [list]
+  def chunk_every(enumerable, count), do: chunk_every(enumerable, count, count, [])
+
+  @doc """
+  Returns list of lists containing `count` items each, where
+  each new chunk starts `step` elements into the enumerable.
+
+  `step` is optional and, if not passed, defaults to `count`, i.e.
+  chunks do not overlap.
+
+  If the last chunk does not have `count` elements to fill the chunk,
+  elements are taken from `leftover` to fill in the chunk. If `leftover`
+  does not have enough elements to fill the chunk, then a partial chunk
+  is returned with less than `count` elements.
+
+  If `:discard` is given in `leftover`, the last chunk is discarded
+  unless it has exactly `count` elements.
+
+  ## Examples
+
+      iex> Enum.chunk_every([1, 2, 3, 4, 5, 6], 2)
+      [[1, 2], [3, 4], [5, 6]]
+
+      iex> Enum.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, :discard)
+      [[1, 2, 3], [3, 4, 5]]
+
+      iex> Enum.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, [7])
+      [[1, 2, 3], [3, 4, 5], [5, 6, 7]]
+
+      iex> Enum.chunk_every([1, 2, 3, 4], 3, 3, [])
+      [[1, 2, 3], [4]]
+
+      iex> Enum.chunk_every([1, 2, 3, 4], 10)
+      [[1, 2, 3, 4]]
+
+  """
+  @spec chunk_every(t, pos_integer, pos_integer, t | :discard) :: [list]
+  def chunk_every(enumerable, count, step, leftover \\ [])
+      when is_integer(count) and count > 0 and is_integer(step) and step > 0 do
+    R.chunk_every(&chunk_while/4, enumerable, count, step, leftover)
+  end
+
+  @doc """
+  Chunks the `enum` with fine grained control when every chunk is emitted.
+
+  `chunk_fun` receives the current element and the accumulator and
+  must return `{:cont, element, acc}` to emit the given chunk and
+  continue with accumulator or `{:cont, acc}` to not emit any chunk
+  and continue with the return accumulator.
+
+  `after_fun` is invoked when iteration is done and must also return
+  `{:cont, element, acc}` or `{:cont, acc}`.
+
+  Returns a list of lists.
+
+  ## Examples
+
+      iex> chunk_fun = fn i, acc ->
+      ...>   if rem(i, 2) == 0 do
+      ...>     {:cont, Enum.reverse([i | acc]), []}
+      ...>   else
+      ...>     {:cont, [i | acc]}
+      ...>   end
+      ...> end
+      iex> after_fun = fn
+      ...>   [] -> {:cont, []}
+      ...>   acc -> {:cont, Enum.reverse(acc), []}
+      ...> end
+      iex> Enum.chunk_while(1..10, [], chunk_fun, after_fun)
+      [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
+
+  """
   @doc """
   Finds the element at the given `index` (zero-based).
 
@@ -440,4 +515,54 @@ defmodule Enum do
   defp any_list([], _) do
     false
   end
+
+  ## slice
+
+  defp slice_any(enumerable, start, amount) when start < 0 do
+    {count, fun} = slice_count_and_fun(enumerable)
+    start = count + start
+
+    if start >= 0 do
+      fun.(start, Kernel.min(amount, count - start))
+    else
+      []
+    end
+  end
+
+  defp slice_any(list, start, amount) when is_list(list) do
+    Enumerable.List.slice(list, start, amount)
+  end
+
+  defp slice_any(enumerable, start, amount) do
+    case Enumerable.slice(enumerable) do
+      {:ok, count, _} when start >= count ->
+        []
+
+      {:ok, count, fun} when is_function(fun) ->
+        fun.(start, Kernel.min(amount, count - start))
+
+      {:error, module} ->
+        slice_enum(enumerable, module, start, amount)
+    end
+  end
+
+  defp slice_count_and_fun(enumerable) when is_list(enumerable) do
+    {length(enumerable), &Enumerable.List.slice(enumerable, &1, &2)}
+  end
+
+  defp slice_count_and_fun(enumerable) do
+    case Enumerable.slice(enumerable) do
+      {:ok, count, fun} when is_function(fun) ->
+        {count, fun}
+
+      {:error, module} ->
+        {_, {list, count}} =
+          module.reduce(enumerable, {:cont, {[], 0}}, fn elem, {acc, count} ->
+            {:cont, {[elem | acc], count + 1}}
+          end)
+
+        {count, &Enumerable.List.slice(:lists.reverse(list), &1, &2)}
+    end
+  end
+
 end
