@@ -449,6 +449,220 @@ defmodule Enum do
       [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
 
   """
+  @spec chunk_while(
+          t,
+          acc,
+          (element, acc -> {:cont, chunk, acc} | {:cont, acc} | {:halt, acc}),
+          (acc -> {:cont, chunk, acc} | {:cont, acc})
+        ) :: Enumerable.t()
+        when chunk: any
+  def chunk_while(enum, acc, chunk_fun, after_fun) do
+    {_, {res, acc}} =
+      Enumerable.reduce(enum, {:cont, {[], acc}}, fn entry, {buffer, acc} ->
+        case chunk_fun.(entry, acc) do
+          {:cont, emit, acc} -> {:cont, {[emit | buffer], acc}}
+          {:cont, acc} -> {:cont, {buffer, acc}}
+          {:halt, acc} -> {:halt, {buffer, acc}}
+        end
+      end)
+
+    case after_fun.(acc) do
+      {:cont, _acc} -> :lists.reverse(res)
+      {:cont, elem, _acc} -> :lists.reverse([elem | res])
+    end
+  end
+
+  @doc """
+  Splits enumerable on every element for which `fun` returns a new
+  value.
+
+  Returns a list of lists.
+
+  ## Examples
+
+      iex> Enum.chunk_by([1, 2, 2, 3, 4, 4, 6, 7, 7], &(rem(&1, 2) == 1))
+      [[1], [2, 2], [3], [4, 4, 6], [7, 7]]
+
+  """
+  @spec chunk_by(t, (element -> any)) :: [list]
+  def chunk_by(enumerable, fun) do
+    R.chunk_by(&chunk_while/4, enumerable, fun)
+  end
+
+  @doc """
+  Given an enumerable of enumerables, concatenates the enumerables into
+  a single list.
+
+  ## Examples
+
+      iex> Enum.concat([1..3, 4..6, 7..9])
+      [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+      iex> Enum.concat([[1, [2], 3], [4], [5, 6]])
+      [1, [2], 3, 4, 5, 6]
+
+  """
+  @spec concat(t) :: t
+  def concat(enumerables) do
+    fun = &[&1 | &2]
+    reduce(enumerables, [], &reduce(&1, &2, fun)) |> :lists.reverse()
+  end
+
+  @doc """
+  Concatenates the enumerable on the right with the enumerable on the
+  left.
+
+  This function produces the same result as the `Kernel.++/2` operator
+  for lists.
+
+  ## Examples
+
+      iex> Enum.concat(1..3, 4..6)
+      [1, 2, 3, 4, 5, 6]
+
+      iex> Enum.concat([1, 2, 3], [4, 5, 6])
+      [1, 2, 3, 4, 5, 6]
+
+  """
+  @spec concat(t, t) :: t
+  def concat(left, right) when is_list(left) and is_list(right) do
+    left ++ right
+  end
+
+  def concat(left, right) do
+    concat([left, right])
+  end
+
+  @doc """
+  Returns the size of the enumerable.
+
+  ## Examples
+
+      iex> Enum.count([1, 2, 3])
+      3
+
+  """
+  @spec count(t) :: non_neg_integer
+  def count(enumerable) when is_list(enumerable) do
+    length(enumerable)
+  end
+
+  def count(enumerable) do
+    case Enumerable.count(enumerable) do
+      {:ok, value} when is_integer(value) ->
+        value
+
+      {:error, module} ->
+        module.reduce(enumerable, {:cont, 0}, fn _, acc -> {:cont, acc + 1} end) |> elem(1)
+    end
+  end
+
+  @doc """
+  Returns the count of items in the enumerable for which `fun` returns
+  a truthy value.
+
+  ## Examples
+
+      iex> Enum.count([1, 2, 3, 4, 5], fn(x) -> rem(x, 2) == 0 end)
+      2
+
+  """
+  @spec count(t, (element -> as_boolean(term))) :: non_neg_integer
+  def count(enumerable, fun) do
+    reduce(enumerable, 0, fn entry, acc ->
+      if(fun.(entry), do: acc + 1, else: acc)
+    end)
+  end
+
+  @doc """
+  Enumerates the `enumerable`, returning a list where all consecutive
+  duplicated elements are collapsed to a single element.
+
+  Elements are compared using `===`.
+
+  If you want to remove all duplicated elements, regardless of order,
+  see `uniq/1`.
+
+  ## Examples
+
+      iex> Enum.dedup([1, 2, 3, 3, 2, 1])
+      [1, 2, 3, 2, 1]
+
+      iex> Enum.dedup([1, 1, 2, 2.0, :three, :"three"])
+      [1, 2, 2.0, :three]
+
+  """
+  @spec dedup(t) :: list
+  def dedup(enumerable) do
+    dedup_by(enumerable, fn x -> x end)
+  end
+
+  @doc """
+  Enumerates the `enumerable`, returning a list where all consecutive
+  duplicated elements are collapsed to a single element.
+
+  The function `fun` maps every element to a term which is used to
+  determine if two elements are duplicates.
+
+  ## Examples
+
+      iex> Enum.dedup_by([{1, :a}, {2, :b}, {2, :c}, {1, :a}], fn {x, _} -> x end)
+      [{1, :a}, {2, :b}, {1, :a}]
+
+      iex> Enum.dedup_by([5, 1, 2, 3, 2, 1], fn x -> x > 2 end)
+      [5, 1, 3, 2]
+
+  """
+  @spec dedup_by(t, (element -> term)) :: list
+  def dedup_by(enumerable, fun) do
+    {list, _} = reduce(enumerable, {[], []}, R.dedup(fun))
+    :lists.reverse(list)
+  end
+
+  @doc """
+  Drops the `amount` of items from the enumerable.
+
+  If a negative `amount` is given, the `amount` of last values will be dropped.
+  The `enumerable` will be enumerated once to retrieve the proper index and
+  the remaining calculation is performed from the end.
+
+  ## Examples
+
+      iex> Enum.drop([1, 2, 3], 2)
+      [3]
+
+      iex> Enum.drop([1, 2, 3], 10)
+      []
+
+      iex> Enum.drop([1, 2, 3], 0)
+      [1, 2, 3]
+
+      iex> Enum.drop([1, 2, 3], -1)
+      [1, 2]
+
+  """
+  @spec drop(t, integer) :: list
+  def drop(enumerable, amount)
+      when is_list(enumerable) and is_integer(amount) and amount >= 0 do
+    drop_list(enumerable, amount)
+  end
+
+  def drop(enumerable, amount) when is_integer(amount) and amount >= 0 do
+    {result, _} = reduce(enumerable, {[], amount}, R.drop())
+    if is_list(result), do: :lists.reverse(result), else: []
+  end
+
+  def drop(enumerable, amount) when is_integer(amount) and amount < 0 do
+    {count, fun} = slice_count_and_fun(enumerable)
+    amount = Kernel.min(amount + count, count)
+
+    if amount > 0 do
+      fun.(0, amount)
+    else
+      []
+    end
+  end
+
   @doc """
   Finds the element at the given `index` (zero-based).
 
