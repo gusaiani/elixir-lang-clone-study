@@ -664,6 +664,117 @@ defmodule Enum do
   end
 
   @doc """
+  Returns a list of every `nth` item in the enumerable dropped,
+  starting with the first element.
+
+  The first item is always dropped, unless `nth` is 0.
+
+  The second argument specifying every `nth` item must be a non-negative
+  integer.
+
+  ## Examples
+
+      iex> Enum.drop_every(1..10, 2)
+      [2, 4, 6, 8, 10]
+
+      iex> Enum.drop_every(1..10, 0)
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+      iex> Enum.drop_every([1, 2, 3], 1)
+      []
+
+  """
+  @spec drop_every(t, non_neg_integer) :: list
+  def drop_every(enumerable, nth)
+
+  def drop_every(_enumerable, 1), do: []
+  def drop_every(enumerable, 0), do: to_list(enumerable)
+  def drop_every([], nth) when is_integer(nth), do: []
+
+  def drop_every(enumerable, nth) when is_integer(nth) and nth > 1 do
+    {res, _} = reduce(enumerable, {[], :first}, R.drop_every(nth))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Drops items at the beginning of the enumerable while `fun` returns a
+  truthy value.
+
+  ## Examples
+
+      iex> Enum.drop_while([1, 2, 3, 2, 1], fn(x) -> x < 3 end)
+      [3, 2, 1]
+
+  """
+  @spec drop_while(t, (element -> as_boolean(term))) :: list
+  def drop_while(enumerable, fun) when is_list(enumerable) do
+    drop_while_list(enumerable, fun)
+  end
+
+  def drop_while(enumerable, fun) do
+    {res, _} = reduce(enumerable, {[], true}, R.drop_while(fun))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Invokes the given `fun` for each item in the enumerable.
+
+  Returns `:ok`.
+
+  ## Examples
+
+      Enum.each(["some", "example"], fn(x) -> IO.puts x end)
+      "some"
+      "example"
+      #=> :ok
+
+  """
+  @spec each(t, (element -> any)) :: :ok
+  def each(enumerable, fun) when is_list(enumerable) do
+    :lists.foreach(fun, enumerable)
+    :ok
+  end
+
+  def each(enumerable, fun) do
+    reduce(enumerable, nil, fn entry, _ ->
+      fun.(entry)
+      nil
+    end)
+
+    :ok
+  end
+
+  @doc """
+  Determines if the enumerable is empty.
+
+  Returns `true` if `enumerable` is empty, otherwise `false`.
+
+  ## Examples
+
+      iex> Enum.empty?([])
+      true
+
+      iex> Enum.empty?([1, 2, 3])
+      false
+
+  """
+  @spec empty?(t) :: boolean
+  def empty?(enumerable) when is_list(enumerable) do
+    enumerable == []
+  end
+
+  def empty?(enumerable) do
+    case Enumerable.slice(enumerable) do
+      {:ok, value, _} ->
+        value == 0
+
+      {:error, module} ->
+        module.reduce(enumerable, {:cont, true}, fn _, _ -> {:halt, false} end)
+        |> elem(1)
+    end
+  end
+
+  @doc """
   Finds the element at the given `index` (zero-based).
 
   Returns `{:ok, element}` if found, otherwise `:error`.
@@ -692,14 +803,76 @@ defmodule Enum do
 
   """
   @spec fetch(t, index) :: {:ok, element} | :error
-  def fetch(enumerable, index)
-
-  def fetch(enumerable, index) when is_list(enumerable) and is_integer(index) do
-    if index < 0 do
-      enumerable |> :lists.reverse() |> fetch_list(-index - 1)
-    else
-      fetch_list(enumerable, index)
+  def fetch(enumerable, index) do
+    case slice_any(enumerable, index, 1) do
+      [value] -> {:ok, value}
+      [] -> :error
     end
+  end
+
+  @doc """
+  Finds the element at the given `index` (zero-based).
+
+  Raises `OutOfBoundsError` if the given `index` is outside the range of
+  the enumerable.
+
+  Note this operation takes linear time. In order to access the element
+  at index `index`, it will need to traverse `index` previous elements.
+
+  ## Examples
+
+      iex> Enum.fetch!([2, 4, 6], 0)
+      2
+
+      iex> Enum.fetch!([2, 4, 6], 2)
+      6
+
+      iex> Enum.fetch!([2, 4, 6], 4)
+      ** (Enum.OutOfBoundsError) out of bounds error
+
+  """
+  @spec fetch!(t, index) :: element | no_return
+  def fetch!(enumerable, index) do
+    case slice_any(enumerable, index, 1) do
+      [value] -> value
+      [] -> raise Enum.OutOfBoundsError
+    end
+  end
+
+  @doc """
+  Filters the enumerable, i.e. returns only those elements
+  for which `fun` returns a truthy value.
+
+  See also `reject/2` which discards all elements where the
+  function returns true.
+
+  ## Examples
+
+      iex> Enum.filter([1, 2, 3], fn(x) -> rem(x, 2) == 0 end)
+      [2]
+
+  Keep in mind that `filter` is not capable of filtering and
+  transforming an element at the same time. If you would like
+  to do so, consider using `flat_map/2`. For example, if you
+  want to convert all strings that represent an integer and
+  discard the invalid one in one pass:
+
+      strings = ["1234", "abc", "12ab"]
+      Enum.flat_map(strings, fn string ->
+        case Integer.parse(string) do
+          {int, _rest} -> [int] # transform to integer
+          :error -> [] # skip the value
+        end
+      end)
+
+  """
+  @spec filter(t, (element -> as_boolean(term))) :: list
+  def filter(enumerable, fun) when is_list(enumerable) do
+    filter_list(enumerable, fun)
+  end
+
+  def filter(enumerable, fun) do
+    reduce(enumerable, [], R.filter(fun)) |> :lists.reverse()
   end
 
   ## Implementations
@@ -728,6 +901,26 @@ defmodule Enum do
 
   defp any_list([], _) do
     false
+  end
+
+  ## drop
+
+  defp drop_list(list, 0), do: list
+  defp drop_list([_ | tail], counter), do: drop_list(tail, counter - 1)
+  defp drop_list([], _), do: []
+
+  ## drop_while
+
+  defp drop_while_list([head | tail], fun) do
+    if fun.(head) do
+      drop_while_list(tail, fun)
+    else
+      [head | tail]
+    end
+  end
+
+  defp drop_while_list([], _) do
+    []
   end
 
   ## slice
