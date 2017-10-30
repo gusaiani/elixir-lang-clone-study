@@ -979,6 +979,162 @@ defmodule Enum do
     |> elem(1)
   end
 
+  @doc """
+  Maps the given `fun` over `enumerable` and flattens the result.
+
+  This function returns a new enumerable built by appending the result of invoking `fun`
+  on each element of `enumerable` together; conceptually, this is similar to a
+  combination of `map/2` and `concat/1`.
+
+  ## Examples
+
+      iex> Enum.flat_map([:a, :b, :c], fn(x) -> [x, x] end)
+      [:a, :a, :b, :b, :c, :c]
+
+      iex> Enum.flat_map([{1, 3}, {4, 6}], fn({x, y}) -> x..y end)
+      [1, 2, 3, 4, 5, 6]
+
+      iex> Enum.flat_map([:a, :b, :c], fn(x) -> [[x]] end)
+      [[:a], [:b], [:c]]
+
+  """
+  @spec flat_map(t, (element -> t)) :: list
+  def flat_map(enumerable, fun) when is_list(enumerable) do
+    flat_map_list(enumerable, fun)
+  end
+
+  def flat_map(enumerable, fun) do
+    reduce(enumerable, [], fn entry, acc ->
+      case fun.(entry) do
+        list when is_list(list) -> :lists.reverse(list, acc)
+        other -> reduce(other, acc, &[&1 | &2])
+      end
+    end)
+    |> :lists.reverse()
+  end
+
+  @doc """
+  Maps and reduces an enumerable, flattening the given results (only one level deep).
+
+  It expects an accumulator and a function that receives each enumerable
+  item, and must return a tuple containing a new enumerable (often a list)
+  with the new accumulator or a tuple with `:halt` as first element and
+  the accumulator as second.
+
+  ## Examples
+
+      iex> enum = 1..100
+      iex> n = 3
+      iex> Enum.flat_map_reduce(enum, 0, fn i, acc ->
+      ...>   if acc < n, do: {[i], acc + 1}, else: {:halt, acc}
+      ...> end)
+      {[1, 2, 3], 3}
+
+      iex> Enum.flat_map_reduce(1..5, 0, fn(i, acc) -> {[[i]], acc + i} end)
+      {[[1], [2], [3], [4], [5]], 15}
+
+  """
+  @spec flat_map_reduce(t, acc, fun) :: {[any], any}
+        when fun: (element, acc -> {t, acc} | {:halt, acc}),
+             acc: any
+  def flat_map_reduce(enumerable, acc, fun) do
+    {_, {list, acc}} =
+      Enumerable.reduce(enumerable, {:cont, {[], acc}}, fn entry, {list, acc} ->
+        case fun.(entry, acc) do
+          {:halt, acc} ->
+            {:halt, {list, acc}}
+
+          {[], acc} ->
+            {:cont, {list, acc}}
+
+          {[entry], acc} ->
+            {:cont, {[entry | list], acc}}
+
+          {entries, acc} ->
+            {:cont, {reduce(entries, list, &[&1 | &2]), acc}}
+        end
+      end)
+
+    {:lists.reverse(list), acc}
+  end
+
+  @doc """
+  Splits the enumerable into groups based on `key_fun`.
+
+  The result is a map where each key is given by `key_fun`
+  and each value is a list of elements given by `value_fun`.
+  The order of elements within each list is preserved from the enumerable.
+  However, like all maps, the resulting map is unordered.
+
+  ## Examples
+
+      iex> Enum.group_by(~w{ant buffalo cat dingo}, &String.length/1)
+      %{3 => ["ant", "cat"], 5 => ["dingo"], 7 => ["buffalo"]}
+
+      iex> Enum.group_by(~w{ant buffalo cat dingo}, &String.length/1, &String.first/1)
+      %{3 => ["a", "c"], 5 => ["d"], 7 => ["b"]}
+
+  """
+  @spec group_by(t, (element -> any), (element -> any)) :: map
+  def group_by(enumerable, key_fun, value_fun \\ fn x -> x end)
+
+  def group_by(enumerable, key_fun, value_fun) when is_function(key_fun) do
+    reduce(reverse(enumerable), %{}, fn entry, categories ->
+      value = value_fun.(entry)
+      Map.update(categories, key_fun.(entry), [value], &[value | &1])
+    end)
+  end
+
+  # TODO: Remove on 2.0
+  def group_by(enumerable, dict, fun) do
+    IO.warn(
+      "Enum.group_by/3 with a map/dictionary as second element is deprecated. " <>
+        "A map is used by default and it is no longer required to pass one to this function"
+    )
+
+    # Avoid warnings about Dict
+    dict_module = Dict
+
+    reduce(reverse(enumerable), dict, fn entry, categories ->
+      dict_module.update(categories, fun.(entry), [entry], &[entry | &1])
+    end)
+  end
+
+  @doc """
+  Intersperses `element` between each element of the enumeration.
+
+  Complexity: 0(n).
+
+  ## Examples
+
+      iex> Enum.intersperse([1, 2, 3], 0)
+      [1, 0, 2, 0, 3]
+
+      iex> Enum.intersperse([1], 0)
+      [1]
+
+      iex> Enum.intersperse([], 0)
+      []
+
+  """
+  @spec intersperse(t, element) :: list
+  def intersperse(enumerable, element) do
+    list =
+      reduce(enumerable, [], fn x, acc ->
+        [x, element | acc]
+      end)
+      |> :lists.reverse()
+
+    case list do
+      [] ->
+        []
+
+      # Head is a superfluous intersperser element
+      [_ | t] ->
+        t
+    end
+  end
+
   ## Implementations
 
   ## all?
@@ -1063,6 +1219,19 @@ defmodule Enum do
 
   defp find_value_list([], default, _) do
     default
+  end
+
+  ## flat_map
+
+  defp flat_map_list([head | tail], fun) do
+    case fun.(head) do
+      list when is_list(list) -> list ++ flat_map_list(tail, fun)
+      other -> to_list(other) ++ flat_map_list(tail, fun)
+    end
+  end
+
+  defp flat_map_list([], _fun) do
+    []
   end
 
   ## slice
