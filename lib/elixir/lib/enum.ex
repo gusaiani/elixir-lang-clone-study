@@ -505,7 +505,7 @@ defmodule Enum do
   @spec concat(t) :: t
   def concat(enumerables) do
     fun = &[&1 | &2]
-    reduce(enumerables, [], &reduce(&1, &2, fun)) |> :lists.reverse()
+    enumerables |> reduce([], &reduce(&1, &2, fun)) |> :lists.reverse()
   end
 
   @doc """
@@ -553,7 +553,7 @@ defmodule Enum do
         value
 
       {:error, module} ->
-        module.reduce(enumerable, {:cont, 0}, fn _, acc -> {:cont, acc + 1} end) |> elem(1)
+        enumerable |> module.reduce({:cont, 0}, fn _, acc -> {:cont, acc + 1} end) |> elem(1)
     end
   end
 
@@ -769,7 +769,8 @@ defmodule Enum do
         value == 0
 
       {:error, module} ->
-        module.reduce(enumerable, {:cont, true}, fn _, _ -> {:halt, false} end)
+        enumerable
+        |> module.reduce({:cont, true}, fn _, _ -> {:halt, false} end)
         |> elem(1)
     end
   end
@@ -1103,7 +1104,7 @@ defmodule Enum do
   @doc """
   Intersperses `element` between each element of the enumeration.
 
-  Complexity: 0(n).
+  Complexity: O(n).
 
   ## Examples
 
@@ -1120,20 +1121,155 @@ defmodule Enum do
   @spec intersperse(t, element) :: list
   def intersperse(enumerable, element) do
     list =
-      reduce(enumerable, [], fn x, acc ->
-        [x, element | acc]
-      end)
+      enumerable
+      |> reduce([], fn x, acc -> [x, element | acc] end)
       |> :lists.reverse()
 
+    # Head is a superfluous intersperser element
     case list do
-      [] ->
-        []
-
-      # Head is a superfluous intersperser element
-      [_ | t] ->
-        t
+      [] -> []
+      [_ | t] -> t
     end
   end
+
+  @doc """
+  Inserts the given `enumerable` into a `collectable`.
+
+  ## Examples
+
+      iex> Enum.into([1, 2], [0])
+      [0, 1, 2]
+
+      iex> Enum.into([a: 1, b: 2], %{})
+      %{a: 1, b: 2}
+
+      iex> Enum.into(%{a: 1}, %{b: 2})
+      %{a: 1, b: 2}
+
+      iex> Enum.into([a: 1, a: 2], %{})
+      %{a: 2}
+
+  """
+  @spec into(Enumerable.t(), Collectable.t()) :: Collectable.t()
+  def into(enumerable, collectable) when is_list(collectable) do
+    collectable ++ to_list(enumerable)
+  end
+
+  def into(%_{} = enumerable, collectable) do
+    into_protocol(enumerable, collectable)
+  end
+
+  def into(enumerable, %_{} = collectable) do
+    into_protocol(enumerable, collectable)
+  end
+
+  def into(%{} = enumerable, %{} = collectable) do
+    Map.merge(collectable, enumerable)
+  end
+
+  def into(enumerable, %{} = collectable) when is_list(enumerable) do
+    Map.merge(collectable, :maps.from_list(enumerable))
+  end
+
+  def into(enumerable, %{} = collectable) do
+    reduce(enumerable, collectable, fn {key, val}, acc ->
+      Map.put(acc, key, val)
+    end)
+  end
+
+  def into(enumerable, collectable) do
+    into_protocol(enumerable, collectable)
+  end
+
+  defp into_protocol(enumerable, collectable) do
+    {initial, fun} = Collectable.into(collectable)
+
+    into(enumerable, initial, fun, fn entry, acc ->
+      fun.(acc, {:cont, entry})
+    end)
+  end
+
+  @doc """
+  Inserts the given `enumerable` into a `collectable` according to the
+  transformation function.
+
+  ## Examples
+
+      iex> Enum.into([2, 3], [3], fn x -> x * 3 end)
+      [3, 6, 9]
+
+      iex> Enum.into(%{a: 1, b: 2}, %{c: 3}, fn {k, v} -> {k, v * 2} end)
+      %{a: 2, b: 4, c: 3}
+
+  """
+  @spec into(Enumerable.t(), Collectable.t(), (term -> term)) :: Collectable.t()
+
+  def into(enumerable, collectable, transform) when is_list(collectable) do
+    collectable ++ map(enumerable, transform)
+  end
+
+  def into(enumerable, collectable, transform) do
+    {initial, fun} = Collectable.into(collectable)
+
+    into(enumerable, initial, fun, fn entry, acc ->
+      fun.(acc, {:cont, transform.(entry)})
+    end)
+  end
+
+  defp into(enumerable, initial, fun, callback) do
+    try do
+      reduce(enumerable, initial, callback)
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        fun.(initial, :halt)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      acc -> fun.(acc, :done)
+    end
+  end
+
+  @doc """
+  Joins the given enumerable into a binary using `joiner` as a
+  separator.
+
+  If `joiner` is not passed at all, it defaults to the empty binary.
+
+  All items in the enumerable must be convertible to a binary,
+  otherwise an error is raised.
+
+  ## Examples
+
+      iex> Enum.join([1, 2, 3])
+      "123"
+
+      iex> Enum.join([1, 2, 3], " = ")
+      "1 = 2 = 3"
+
+  """
+  @spec join(t, String.t()) :: String.t()
+  def join(enumerable, joiner \\ "")
+
+  def join(enumerable, joiner) when is_binary(joiner) do
+    reduced =
+      reduce(enumerable, :first, fn
+        entry, :first -> entry_to_string(entry)
+        entry, acc -> [acc, joiner | entry_to_string(entry)]
+      end)
+
+    if reduced == :first do
+      ""
+    else
+      IO.iodata_to_binary(reduced)
+    end
+  end
+
+  ## Helpers
+
+  @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
+
+  defp entry_to_string(entry) when is_binary(entry), do: entry
+  defp entry_to_string(entry), do: String.Chars.to_string(entry)
 
   ## Implementations
 
