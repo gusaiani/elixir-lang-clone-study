@@ -764,7 +764,7 @@ defmodule Enum do
   end
 
   def empty?(enumerable) do
-    case Enumerable.slice(enumerable) do
+    case backwards_compatible_slice(enumerable) do
       {:ok, value, _} ->
         value == 0
 
@@ -1264,12 +1264,390 @@ defmodule Enum do
     end
   end
 
+  @doc """
+  Returns a list where each item is the result of invoking
+  `fun` on each corresponding item of `enumerable`.
+
+  For maps, the function expects a key-value tuple.
+
+  ## Examples
+
+      iex> Enum.map([1, 2, 3], fn(x) -> x * 2 end)
+      [2, 4, 6]
+
+      iex> Enum.map([a: 1, b: 2], fn({k, v}) -> {k, -v} end)
+      [a: -1, b: -2]
+
+  """
+  @spec map(t, (element -> any)) :: list
+  def map(enumerable, fun)
+
+  def map(enumerable, fun) when is_list(enumerable) do
+    :lists.map(fun, enumerable)
+  end
+
+  def map(enumerable, fun) do
+    reduce(enumerable, [], R.map(fun)) |> :lists.reverse()
+  end
+
+  @doc """
+  Returns a list of results of invoking `fun` on every `nth`
+  item of `enumerable`, starting with the first element.
+
+  The first item is always passed to the given function, unless `nth` is `0`.
+
+  The second argument specifying every `nth` item must be a non-negative
+  integer.
+
+  If `nth` is `0`, then `enumerable` is directly converted to a list,
+  without `fun` being ever applied.
+
+  ## Examples
+
+      iex> Enum.map_every(1..10, 2, fn x -> x + 1000 end)
+      [1001, 2, 1003, 4, 1005, 6, 1007, 8, 1009, 10]
+
+      iex> Enum.map_every(1..10, 3, fn x -> x + 1000 end)
+      [1001, 2, 3, 1004, 5, 6, 1007, 8, 9, 1010]
+
+      iex> Enum.map_every(1..5, 0, fn x -> x + 1000 end)
+      [1, 2, 3, 4, 5]
+
+      iex> Enum.map_every([1, 2, 3], 1, fn x -> x + 1000 end)
+      [1001, 1002, 1003]
+
+  """
+  @spec map_every(t, non_neg_integer, (element -> any)) :: list
+  def map_every(enumerable, nth, fun)
+
+  def map_every(enumerable, 1, fun), do: map(enumerable, fun)
+  def map_every(enumerable, 0, _fun), do: to_list(enumerable)
+  def map_every([], nth, _fun) when is_integer(nth) and nth > 1, do: []
+
+  def map_every(enumerable, nth, fun) when is_integer(nth) and nth > 1 do
+    {res, _} = reduce(enumerable, {[], :first}, R.map_every(nth, fun))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Maps and joins the given enumerable in one pass.
+
+  `joiner` can be either a binary or a list and the result will be of
+  the same type as `joiner`.
+  If `joiner` is not passed at all, it defaults to an empty binary.
+
+  All items returned from invoking the `mapper` must be convertible to
+  a binary, otherwise an error is raised.
+
+  ## Examples
+
+      iex> Enum.map_join([1, 2, 3], &(&1 * 2))
+      "246"
+
+      iex> Enum.map_join([1, 2, 3], " = ", &(&1 * 2))
+      "2 = 4 = 6"
+
+  """
+  @spec map_join(t, String.t(), (element -> String.Chars.t())) :: String.t()
+  def map_join(enumerable, joiner \\ "", mapper)
+
+  def map_join(enumerable, joiner, mapper) when is_binary(joiner) do
+    reduced =
+      reduce(enumerable, :first, fn
+        entry, :first -> entry_to_string(mapper.(entry))
+        entry, acc -> [acc, joiner | entry_to_string(mapper.(entry))]
+      end)
+
+    if reduced == :first do
+      ""
+    else
+      IO.iodata_to_binary(reduced)
+    end
+  end
+
+  @doc """
+  Invokes the given function to each item in the enumerable to reduce
+  it to a single element, while keeping an accumulator.
+
+  Returns a tuple where the first element is the mapped enumerable and
+  the second one is the final accumulator.
+
+  The function, `fun`, receives two arguments: the first one is the
+  element, and the second one is the accumulator. `fun` must return
+  a tuple with two elements in the form of `{result, accumulator}`.
+
+  For maps, the first tuple element must be a `{key, value}` tuple.
+
+  ## Examples
+
+      iex> Enum.map_reduce([1, 2, 3], 0, fn(x, acc) -> {x * 2, x + acc} end)
+      {[2, 4, 6], 6}
+
+  """
+  @spec map_reduce(t, any, (element, any -> {any, any})) :: {any, any}
+  def map_reduce(enumerable, acc, fun) when is_list(enumerable) do
+    :lists.mapfoldl(fun, acc, enumerable)
+  end
+
+  def map_reduce(enumerable, acc, fun) do
+    {list, acc} =
+      reduce(enumerable, {[], acc}, fn entry, {list, acc} ->
+        {new_entry, acc} = fun.(entry, acc)
+        {[new_entry | list], acc}
+      end)
+
+    {:lists.reverse(list), acc}
+  end
+
+  @doc """
+  Returns the maximal element in the enumerable according
+  to Erlang's term ordering.
+
+  If multiple elements are considered maximal, the first one that was found
+  is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.max([1, 2, 3])
+      3
+
+      iex> Enum.max([], fn -> 0 end)
+      0
+
+  The fact this function uses Erlang's term ordering means that the comparison
+  is structural and not semantic. For example:
+
+      iex> Enum.max([~D[2017-03-31], ~D[2017-04-01]])
+      ~D[2017-03-31]
+
+  In the example above, `max/1` returned March 31st instead of April 1st
+  because the structural comparison compares the day before the year. This
+  can be addressed by using `max_by/1` and by relying on structures where
+  the most significant digits come first. In this particular case, we can
+  use `Date.to_erl/1` to get a tuple representation with year, month and day
+  fields:
+
+      iex> Enum.max_by([~D[2017-03-31], ~D[2017-04-01]], &Date.to_erl/1)
+      ~D[2017-04-01]
+
+  """
+  @spec max(t, (() -> empty_result)) :: element | empty_result | no_return when empty_result: any
+  def max(enumerable, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    aggregate(enumerable, &Kernel.max/2, empty_fallback)
+  end
+
+  @doc """
+  Returns the maximal element in the enumerable as calculated
+  by the given function.
+
+  If multiple elements are considered maximal, the first one that was found
+  is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.max_by(["a", "aa", "aaa"], fn(x) -> String.length(x) end)
+      "aaa"
+
+      iex> Enum.max_by(["a", "aa", "aaa", "b", "bbb"], &String.length/1)
+      "aaa"
+
+      iex> Enum.max_by([], &String.length/1, fn -> nil end)
+      nil
+
+  """
+  @spec max_by(t, (element -> any), (() -> empty_result)) :: element | empty_result | no_return
+        when empty_result: any
+  def max_by(enumerable, fun, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    first_fun = &{&1, fun.(&1)}
+
+    reduce_fun = fn entry, {_, fun_max} = old ->
+      fun_entry = fun.(entry)
+      if(fun_entry > fun_max, do: {entry, fun_entry}, else: old)
+    end
+
+    case reduce_by(enumerable, first_fun, reduce_fun) do
+      :empty -> empty_fallback.()
+      {entry, _} -> entry
+    end
+  end
+
+  @doc """
+  Checks if `element` exists within the enumerable.
+
+  Membership is tested with the match (`===`) operator.
+
+  ## Examples
+
+      iex> Enum.member?(1..10, 5)
+      true
+      iex> Enum.member?(1..10, 5.0)
+      false
+
+      iex> Enum.member?([1.0, 2.0, 3.0], 2)
+      false
+      iex> Enum.member?([1.0, 2.0, 3.0], 2.000)
+      true
+
+      iex> Enum.member?([:a, :b, :c], :d)
+      false
+
+  """
+  @spec member?(t, element) :: boolean
+  def member?(enumerable, element) when is_list(enumerable) do
+    :lists.member(element, enumerable)
+  end
+
+  def member?(enumerable, element) do
+    case Enumerable.member?(enumerable, element) do
+      {:ok, element} when is_boolean(element) ->
+        element
+
+      {:error, module} ->
+        module.reduce(enumerable, {:cont, false}, fn
+          v, _ when v === element -> {:halt, true}
+          _, _ -> {:cont, false}
+        end)
+        |> elem(1)
+    end
+  end
+
+  @doc """
+  Returns the minimal element in the enumerable according
+  to Erlang's term ordering.
+
+  If multiple elements are considered minimal, the first one that was found
+  is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.min([1, 2, 3])
+      1
+
+      iex> Enum.min([], fn -> 0 end)
+      0
+
+  The fact this function uses Erlang's term ordering means that the comparison
+  is structural and not semantic. For example:
+
+      iex> Enum.min([~D[2017-03-31], ~D[2017-04-01]])
+      ~D[2017-04-01]
+
+  In the example above, `min/1` returned April 1st instead of March 31st
+  because the structural comparison compares the day before the year. This
+  can be addressed by using `min_by/1` and by relying on structures where
+  the most significant digits come first. In this particular case, we can
+  use `Date.to_erl/1` to get a tuple representation with year, month and day
+  fields:
+
+      iex> Enum.min_by([~D[2017-03-31], ~D[2017-04-01]], &Date.to_erl/1)
+      ~D[2017-03-31]
+
+  """
+  @spec min(t, (() -> empty_result)) :: element | empty_result | no_return when empty_result: any
+  def min(enumerable, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    aggregate(enumerable, &Kernel.min/2, empty_fallback)
+  end
+
+  @doc """
+  Returns the minimal element in the enumerable as calculated
+  by the given function.
+
+  If multiple elements are considered minimal, the first one that was found
+  is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.min_by(["a", "aa", "aaa"], fn(x) -> String.length(x) end)
+      "a"
+
+      iex> Enum.min_by(["a", "aa", "aaa", "b", "bbb"], &String.length/1)
+      "a"
+
+      iex> Enum.min_by([], &String.length/1, fn -> nil end)
+      nil
+
+  """
+  @spec min_by(t, (element -> any), (() -> empty_result)) :: element | empty_result | no_return
+        when empty_result: any
+  def min_by(enumerable, fun, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    first_fun = &{&1, fun.(&1)}
+
+    reduce_fun = fn entry, {_, fun_min} = old ->
+      fun_entry = fun.(entry)
+      if(fun_entry < fun_min, do: {entry, fun_entry}, else: old)
+    end
+
+    case reduce_by(enumerable, first_fun, reduce_fun) do
+      :empty -> empty_fallback.()
+      {entry, _} -> entry
+    end
+  end
+
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
 
   defp entry_to_string(entry) when is_binary(entry), do: entry
   defp entry_to_string(entry), do: String.Chars.to_string(entry)
+
+  defp aggregate([head | tail], fun, _empty) do
+    :lists.foldl(fun, head, tail)
+  end
+
+  defp aggregate([], _fun, empty) do
+    empty.()
+  end
+
+  defp aggregate(left..right, fun, _empty) do
+    fun.(left, right)
+  end
+
+  defp aggregate(enumerable, fun, empty) do
+    ref = make_ref()
+
+    enumerable
+    |> reduce(ref, fn
+        element, ^ref -> element
+        element, acc -> fun.(element, acc)
+      end)
+    |> case do
+          ^ref -> empty.()
+          result -> result
+       end
+  end
+
+  defp reduce_by([head | tail], first, fun) do
+    :lists.foldl(fun, first.(head), tail)
+  end
+
+  defp reduce_by([], _first, _fun) do
+    :empty
+  end
+
+  # TODO: Remove me on Elixir v1.8
+    defp backwards_compatible_slice(args) do
+      try do
+        Enumerable.slice(args)
+      catch
+        :error, :undef ->
+          case System.stacktrace() do
+            [{module, :slice, [^args], _} | _] -> {:error, module}
+            stack -> :erlang.raise(:error, :undef, stack)
+          end
+      end
+    end
 
   ## Implementations
 
