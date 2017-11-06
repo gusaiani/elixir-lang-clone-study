@@ -1595,6 +1595,142 @@ defmodule Enum do
     end
   end
 
+  @doc """
+  Returns a tuple with the minimal and the maximal elements in the
+  enumerable according to Erlang's term ordering.
+
+  If multiple elements are considered maximal or minimal, the first one
+  that was found is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.min_max([2, 3, 1])
+      {1, 3}
+
+      iex> Enum.min_max([], fn -> {nil, nil} end)
+      {nil, nil}
+
+  """
+  @spec min_max(t, (() -> empty_result)) :: {element, element} | empty_result | no_return
+        when empty_result: any
+  def min_max(enumerable, empty_fallback \\ fn -> raise Enum.EmptyError end)
+
+  def min_max(left..right, _empty_fallback) do
+    {Kernel.min(left, right), Kernel.max(left, right)}
+  end
+
+  def min_max(enumerable, empty_fallback) do
+    first_fun = &{&1, &1}
+
+    reduce_fun = fn entry, {min, max} ->
+      {Kernel.min(entry, min), Kernel.max(entry, max)}
+    end
+
+    case reduce_by(enumerable, first_fun, reduce_fun) do
+      :empty -> empty_fallback.()
+      entry -> entry
+    end
+  end
+
+  @doc """
+  Returns a tuple with the minimal and the maximal elements in the
+  enumerable as calculated by the given function.
+
+  If multiple elements are considered maximal or minimal, the first one
+  that was found is returned.
+
+  Calls the provided `empty_fallback` function and returns its value if
+  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+
+  ## Examples
+
+      iex> Enum.mix_max_by(["aaa", "bb", "c"], fn(x) -> String.length(x) end)
+      {"c", "aaa"}
+
+      iex> Enum.min_max_by(["aaa", "a", "bb", "c", "ccc"], &String.length/1)
+      {"a", "aaa"}
+
+      iex> Enum.min_max_by([], &String.length/1, fn -> {nil, nil} end)
+      {nil, nil}
+
+  """
+  @spec min_max_by(t, (element -> any), (() -> empty_result)) ::
+          {element, element} | empty_result | no_return
+        when empty_result: any
+  def min_max_by(enumerable, fun, empty_fallback \\ fn -> raise Enum.EmptyError end)
+
+  def min_max_by(enumerable, fun, empty_fallback) do
+    first_fun = fn entry ->
+      fun_entry = fun.(entry)
+      {{entry, entry}, {fun_entry, fun_entry}}
+    end
+
+    reduce_fun = fn entry, {{prev_min, prev_max}, {fun_min, fun_max}} = acc ->
+      fun_entry = fun.(entry)
+
+      cond do
+        fun_entry < fun_min ->
+          {{entry, prev_max}, {fun_entry, fun_max}}
+
+        fun_entry > fun_max ->
+          {{prev_min, entry}, {fun_min, fun_entry}}
+
+        true ->
+          acc
+      end
+    end
+
+    case reduce_by(enumerable, first_fun, reduce_fun) do
+      :empty -> empty_fallback.()
+      {entry, _} -> entry
+    end
+  end
+
+  @doc """
+  Splits the `enumerable` in two lists according to the given function `fun`.
+
+  Splits the given `enumerable` in two lists by calling `fun` with each element
+  in the `enumerable` as its only argument. Returns a tuple with the first list
+  containing all the elements in `enumerable` for which applying `fun` returned
+  a truthy value, and a second list with all the elements for which applying
+  `fun` returned a falsy value (`false` or `nil`).
+
+  The elements in both the returned lists are in the same relative order as they
+  were in the original enumerable (if such enumerable was ordered, e.g. a
+  list); see the examples below.
+
+  ## Examples
+
+      iex> Enum.split_with([5, 4, 3, 2, 1, 0], fn(x) -> rem(x, 2) == 0 end)
+      {[4, 2, 0], [5, 3, 1]}
+
+      iex> Enum.split_with(%{a: 1, b: -2, c: 1, d: -3}, fn(_k, v) -> v < 0 end)
+      {[b: -2, d: -3], [a: 1, c: 1]}
+
+      iex> Enum.split_with(%{a: 1, b: -2, c: 1, d: -3}, fn({_k, v}) -> v > 50 end)
+      {[], [a: 1, b: -2, c: 1, d: -3]}
+
+      iex> Enum.split_with(%{}, fn({_k, v}) -> v > 50 end)
+      {[], []}
+
+  """
+  @spec split_with(t, (element -> any)) :: {list, list}
+  def split_with(enumerable, fun) do
+    {acc1, acc2} =
+      reduce(enumerable, {[], []}, fn entry, {acc1, acc2} ->
+        if fun.(entry) do
+          {[entry | acc1], acc2}
+        else
+          {acc1, [entry | acc2]}
+        end
+      end)
+
+    {:lists.reverse(acc1), :lists.reverse(acc2)}
+  end
+
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
