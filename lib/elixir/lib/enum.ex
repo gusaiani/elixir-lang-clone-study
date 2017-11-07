@@ -1647,7 +1647,7 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.mix_max_by(["aaa", "bb", "c"], fn(x) -> String.length(x) end)
+      iex> Enum.min_max_by(["aaa", "bb", "c"], fn(x) -> String.length(x) end)
       {"c", "aaa"}
 
       iex> Enum.min_max_by(["aaa", "a", "bb", "c", "ccc"], &String.length/1)
@@ -1699,7 +1699,7 @@ defmodule Enum do
   `fun` returned a falsy value (`false` or `nil`).
 
   The elements in both the returned lists are in the same relative order as they
-  were in the original enumerable (if such enumerable was ordered, e.g. a
+  were in the original enumerable (if such enumerable was ordered, e.g., a
   list); see the examples below.
 
   ## Examples
@@ -1707,7 +1707,7 @@ defmodule Enum do
       iex> Enum.split_with([5, 4, 3, 2, 1, 0], fn(x) -> rem(x, 2) == 0 end)
       {[4, 2, 0], [5, 3, 1]}
 
-      iex> Enum.split_with(%{a: 1, b: -2, c: 1, d: -3}, fn(_k, v) -> v < 0 end)
+      iex> Enum.split_with(%{a: 1, b: -2, c: 1, d: -3}, fn({_k, v}) -> v < 0 end)
       {[b: -2, d: -3], [a: 1, c: 1]}
 
       iex> Enum.split_with(%{a: 1, b: -2, c: 1, d: -3}, fn({_k, v}) -> v > 50 end)
@@ -1731,6 +1731,161 @@ defmodule Enum do
     {:lists.reverse(acc1), :lists.reverse(acc2)}
   end
 
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def partition(enumerable, fun) do
+    split_with(enumerable, fun)
+  end
+
+  @doc """
+  Returns a random element of an enumerable.
+
+  Raises `Enum.EmptyError` if `enumerable` is empty.
+
+  This function uses Erlang's [`:rand` module](http://www.erlang.org/doc/man/rand.html) to calculate
+  the random value. Check its documentation for setting a
+  different random algorithm or a different seed.
+
+  The implementation is based on the
+  [reservoir sampling](https://en.wikipedia.org/wiki/Reservoir_sampling#Relation_to_Fisher-Yates_shuffle)
+  algorithm.
+  It assumes that the sample being returned can fit into memory;
+  the input `enumerable` doesn't have to, as it is traversed just once.
+
+  If a range is passed into the function, this function will pick a
+  random value between the range limits, without traversing the whole
+  range (thus executing in constant time and constant memory).
+
+  ## Examples
+
+      # Although not necessary, let's seed the random algorithm
+      iex> :rand.seed(:exsplus, {101, 102, 103})
+      iex> Enum.random([1, 2, 3])
+      2
+      iex> Enum.random([1, 2, 3])
+      1
+      iex> Enum.random(1..1_000)
+      776
+
+  """
+  @spec random(t) :: element | no_return
+  def random(enumerable)
+
+  def random(enumerable) when is_list(enumerable) do
+    case take_random(enumerable, 1) do
+      [] -> raise Enum.EmptyError
+      [elem] -> elem
+    end
+  end
+
+  def random(enumerable) do
+    result =
+      case backwards_compatible_slice(enumerable) do
+        {:ok, 0, _} ->
+          []
+
+        {:ok, count, fun} when is_function(fun) ->
+          fun.(random_integer(0, count - 1), 1)
+
+        {:error, _} ->
+          take_random(enumerable, 1)
+      end
+
+    case result do
+      [] -> raise Enum.EmptyError
+      [elem] -> elem
+    end
+  end
+
+  @doc """
+  Invokes `fun` for each element in the `enumerable` with the
+  accumulator.
+
+  Raises `Enum.EmptyError` if `enumerable` is empty.
+
+  The first element of the enumerable is used as the initial value
+  of the accumulator. Then the function is invoked with the next
+  element and the accumulator. The result returned by the function
+  is used as the accumulator for the next iteration, recursively.
+  When the enumerable is done, the last accumulator is returned.
+
+  Since the first element of the enumerable is used as the initial
+  value of the accumulator, `fun` will only be executed `n - 1` times
+  where `n` is the length of the enumerable. This function won't call
+  the specified function for enumerables that are one-element long.
+
+  If you wish to use another value for the accumulator, use
+  `Enum.reduce/3`.
+
+  ## Examples
+
+      iex> Enum.reduce([1, 2, 3, 4], fn(x, acc) -> x * acc end)
+      24
+
+  """
+  @spec reduce(t, (element, any -> any)) :: any
+  def reduce(enumerable, fun)
+
+  def reduce([h | t], fun) do
+    reduce(t, h, fun)
+  end
+
+  def reduce([], _fun) do
+    raise Enum.EmptyError
+  end
+
+  def reduce(enumerable, fun) do
+    result =
+      Enumerable.reduce(enumerable, {:cont, :first}, fn
+        x, :first -> {:cont, {:acc, x}}
+        x, {:acc, acc} -> {:cont, {:acc, fun.(x, acc)}}
+      end)
+      |> elem(1)
+
+    case result do
+      :first -> raise Enum.EmptyError
+      {:acc, acc} -> acc
+    end
+  end
+
+  @doc """
+  Invokes `fun` for each element in the `enumerable` with the accumulator.
+
+  The initial value of the accumulator is `acc`. The function is invoked for
+  each element in the enumerable with the accumulator. The result returned
+  by the function is used as the accumulator for the next iteration.
+  The function returns the last accumulator.
+
+  ## Examples
+
+      iex> Enum.reduce([1, 2, 3], 0, fn(x, acc) -> x + acc end)
+      6
+
+  ## Reduce as a building block
+
+  Reduce (sometimes called `fold`) is a basic building block in functional
+  programming. Almost all of the functions in the `Enum` module can be
+  implemented on top of reduce. Those functions often rely on other operations,
+  such as `Enum.reverse/1`, which are optimized by the runtime.
+
+  For example, we could implement `map/2` in terms of `reduce/3` as follows:
+
+      def my_map(enumerable, fun) do
+        enumerable
+        |> Enum.reduce([], fn(x, acc) -> [fun.(x) | acc] end)
+        |> Enum.reverse
+      end
+
+  In the example above, `Enum.reduce/3` accumulates the result of each call
+  to `fun` into a list in reverse order, which is correctly ordered at the
+  end by calling `Enum.reverse/1`.
+
+  Implementing functions like `map/2`, `filter/2` and others are a good
+  exercise for understanding the power behind `Enum.reduce/3`. When an
+  operation cannot be expressed by any of the functions in the `Enum`
+  module, developers will most likely resort to `reduce/3`.
+  """
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
