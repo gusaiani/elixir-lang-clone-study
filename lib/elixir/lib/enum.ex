@@ -1886,6 +1886,196 @@ defmodule Enum do
   operation cannot be expressed by any of the functions in the `Enum`
   module, developers will most likely resort to `reduce/3`.
   """
+  @spec reduce(t, any, (element, any -> any)) :: any
+  def reduce(enumerable, acc, fun) when is_list(enumerable) do
+    :lists.foldl(fun, acc, enumerable)
+  end
+
+  def reduce(first..last, acc, fun) do
+    if first <= last do
+      reduce_range_inc(first, last, acc, fun)
+    else
+      reduce_range_dec(first, last, acc, fun)
+    end
+  end
+
+  def reduce(%_{} = enumerable, acc, fun) do
+    Enumerable.reduce(enumerable, {:cont, acc}, fn x, acc -> {:cont, fun.(x, acc)} end) |> elem(1)
+  end
+
+  def reduce(%{} = enumerable, acc, fun) do
+    :maps.fold(fn k, v, acc -> fun.({k, v}, acc) end, acc, enumerable)
+  end
+
+  def reduce(enumerable, acc, fun) do
+    Enumerable.reduce(enumerable, {:cont, acc}, fn x, acc -> {:cont, fun.(x, acc)} end) |> elem(1)
+  end
+
+  @doc """
+  Reduces the enumerable until `fun` returns `{:halt, term}`.
+
+  The return value for `fun` is expected to be
+
+    * `{:cont, acc}` to continue the reduction with `acc` as the new
+      accumulator or
+    * `{:halt, acc}` to halt the reduction and return `acc` as the return
+      value of this function
+
+  ## Examples
+
+      iex> Enum.reduce_while(1..100, 0, fn i, acc ->
+      ...>   if i < 3, do: {:cont, acc + i}, else: {:halt, acc}
+      ...> end)
+      3
+
+  """
+  @spec reduce_while(t, any, (element, any -> {:cont, any} | {:halt, any})) :: any
+  def reduce_while(enumerable, acc, fun) do
+    Enumerable.reduce(enumerable, {:cont, acc}, fun) |> elem(1)
+  end
+
+  @doc """
+  Returns elements of `enumerable` for which the function `fun` returns
+  `false` or `nil`.
+
+  See also `filter/2`.
+
+  ## Examples
+
+      iex> Enum.reject([1, 2, 3], fn(x) -> rem(x, 2) == 0 end)
+      [1, 3]
+
+  """
+  @spec reject(t, (element -> as_boolean(term))) :: list
+  def reject(enumerable, fun) when is_list(enumerable) do
+    reject_list(enumerable, fun)
+  end
+
+  def reject(enumerable, fun) do
+    reduce(enumerable, [], R.reject(fun)) |> :lists.reverse()
+  end
+
+  @doc """
+  Returns a list of elements in `enumerable` in reverse order.
+
+  ## Examples
+
+      iex> Enum.reverse([1, 2, 3])
+      [3, 2, 1]
+
+  """
+  @spec reverse(t) :: list
+  def reverse(enumerable)
+
+  def reverse([]), do: []
+  def reverse([_] = list), do: list
+  def reverse([item1, item2]), do: [item2, item1]
+  def reverse([item1, item2 | rest]), do: :lists.reverse(rest, [item2, item1])
+  def reverse(enumerable), do: reduce(enumerable, [], &[&1 | &2])
+
+  @doc """
+  Reverses the elements in `enumerable`, appends the tail, and returns
+  it as a list.
+
+  This is an optimization for
+  `Enum.concat(Enum.reverse(enumerable), tail)`.
+
+  ## Examples
+
+      iex> Enum.reverse([1, 2, 3], [4, 5, 6])
+      [3, 2, 1, 4, 5, 6]
+
+  """
+  @spec reverse(t, t) :: list
+  def reverse(enumerable, tail) when is_list(enumerable) do
+    :lists.reverse(enumerable, to_list(tail))
+  end
+
+  def reverse(enumerable, tail) do
+    reduce(enumerable, to_list(tail), fn entry, acc ->
+      [entry | acc]
+    end)
+  end
+
+  @doc """
+  Reverses the enumerable in the range from initial position `start`
+  through `count` elements.
+
+  If `count` is greater than the size of the rest of the enumerable,
+  then this function will reverse the rest of the enumerable.
+
+  ## Examples
+
+      iex> Enum.reverse_slice([1, 2, 3, 4, 5, 6], 2, 4)
+      [1, 2, 6, 5, 4, 3]
+
+  """
+  @spec reverse_slice(t, non_neg_integer, non_neg_integer) :: list
+  def reverse_slice(enumerable, start, count)
+      when is_integer(start) and start >= 0 and is_integer(count) and count >= 0 do
+    list = reverse(enumerable)
+    length = length(list)
+    count = Kernel.min(count, length - start)
+
+    if count > 0 do
+      reverse_slice(list, length, start + count, count, [])
+    else
+      :lists.reverse(list)
+    end
+  end
+
+  @doc """
+  Applies the given function to each element in the enumerable,
+  storing the result in a list and passing it as the accumulator
+  for the next computation. Uses the first element in the enumerable
+  as the starting value.
+
+  ## Examples
+
+      iex> Enum.scan(1..5, &(&1 + &2))
+      [1, 3, 6, 10, 15]
+
+  """
+  @spec scan(t, (element, any -> any)) :: list
+  def scan(enumerable, fun) do
+    {res, _} = reduce(enumerable, {[], :first}, R.scan2(fun))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Applies the given function to each element in the enumerable,
+  storing the result in a list and passing it as the accumulator
+  for the next computation. Uses the given `acc` as the starting value.
+
+  ## Examples
+
+      iex> Enum.scan(1..5, 0, &(&1 + &2))
+      [1, 3, 6, 10, 15]
+
+  """
+  @spec scan(t, any, (element, any -> any)) :: list
+  def scan(enumerable, acc, fun) do
+    {res, _} = reduce(enumerable, {[], acc}, R.scan3(fun))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Returns a list with the elements of `enumerable` shuffled.
+
+  This function uses Erlang's [`:rand` module](http://www.erlang.org/doc/man/rand.html) to calculate
+  the random value. Check its documentation for setting a
+  different random algorithm or a different seed.
+
+  ## Examples
+
+      # Although not necessary, let's seed the random algorithm
+      iex> :rand.seed(:exsplus, {1, 2, 3})
+      iex> Enum.shuffle([1, 2, 3])
+      [2, 1, 3]
+      iex> Enum.shuffle([1, 2, 3])
+      [2, 3, 1]
+
+  """
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
@@ -2038,6 +2228,39 @@ defmodule Enum do
   defp flat_map_list([], _fun) do
     []
   end
+
+  ## reduce
+
+  defp reduce_range_inc(first, first, acc, fun) do
+    fun.(first, acc)
+  end
+
+  defp reduce_range_inc(first, last, acc, fun) do
+    reduce_range_inc(first + 1, last, fun.(first, acc), fun)
+  end
+
+  defp reduce_range_dec(first, first, acc, fun) do
+    fun.(first, acc)
+  end
+
+  defp reduce_range_dec(first, last, acc, fun) do
+    reduce_range_dec(first, - 1, last, fun.(first, acc), fun)
+  end
+
+  ## reject
+
+  defp reject_list([head | tail], fun) do
+    if fun.(head) do
+      reject_list(tail, fun)
+    else
+      [head | reject_list(tail, fun)]
+    end
+  end
+
+  defp reject_list([], _fun) do
+    []
+  end
+
 
   ## slice
 
