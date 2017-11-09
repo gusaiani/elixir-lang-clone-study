@@ -2076,6 +2076,196 @@ defmodule Enum do
       [2, 3, 1]
 
   """
+  @spec shuffle(t) :: list
+  def shuffle(enumerable) do
+    randomized =
+      reduce(enumerable, [], fn x, acc ->
+        [{:rand.uniform(), x} | acc]
+      end)
+
+    shuffle_unwrap(:lists.keysort(1, randomized), [])
+  end
+
+  @doc """
+  Returns a subset list of the given enumerable, from `range.first` to `range.last` positions.
+
+  Given `enumerable`, it drops elements until element position `range.first`,
+  then takes elements until element position `range.last` (inclusive).
+
+  Positions are normalized, meaning that negative positions will be counted from the end
+  (e.g. `-1` means the last element of the enumerable).
+  If `range.last` is out of bounds, then it is assigned as the position of the last element.
+
+  If the normalized `range.first` position is out of bounds of the given enumerable,
+  or this one is greater than the normalized `range.last` position, then `[]` is returned.
+
+  ## Examples
+
+      iex> Enum.slice(1..100, 5..10)
+      [6, 7, 8, 9, 10, 11]
+
+      iex> Enum.slice(1..10, 5..20)
+      [6, 7, 8, 9, 10]
+
+      # last five elements (negative positions)
+      iex> Enum.slice(1..30, -5..-1)
+      [26, 27, 28, 29, 30]
+
+      # last five elements (mixed positive and negative positions)
+      iex> Enum.slice(1..30, 25..-1)
+      [26, 27, 28, 29, 30]
+
+      # out of bounds
+      iex> Enum.slice(1..10, 11..20)
+      []
+
+      # range.first is greater than range.last
+      iex> Enum.slice(1..10, 6..5)
+      []
+
+  """
+  @spec slice(t, Range.t()) :: list
+  def slice(enumerable, first..last) do
+    {count, fun} = slice_count_and_fun(enumerable)
+    corr_first = if first >= 0, do: first, else: first + count
+    corr_last = if last >= 0, do: last, else: last + count
+    amount = corr_last - corr_first + 1
+
+    if corr_first >= 0 and corr_first < count and amount > 0 do
+      fun.(corr_first, Kernel.min(amount, count - corr_first))
+    else
+      []
+    end
+  end
+
+  @doc """
+  Returns a subset list of the given enumerable, from `start` position with `amount` of elements if available.
+
+  Given `enumerable`, it drops elements until element position `start`,
+  then takes `amount` of elements until the end of the enumerable.
+
+  If `start` is out of bounds, it returns `[]`.
+
+  If `amount` is greater than `enumerable` length, it returns as many elements as possible.
+  If `amount` is zero, then `[]` is returned.
+
+  ## Examples
+
+      iex> Enum.slice(1..100, 5, 10)
+      [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+      # amount to take is greater than the number of elements
+      iex> Enum.slice(1..10, 5, 100)
+      [6, 7, 8, 9, 10]
+
+      iex> Enum.slice(1..10, 5, 0)
+      []
+
+      # out of bound start position
+      iex> Enum.slice(1..10, 10, 5)
+      []
+
+      # out of bound start position (negative)
+      iex> Enum.slice(1..10, -11, 5)
+      []
+
+  """
+  @spec slice(t, index, non_neg_integer) :: list
+  def slice(_enumerable, start, 0) when is_integer(start), do: []
+
+  def slice(enumerable, start, amount)
+      when is_integer(start) and is_integer(amount) and amount >= 0 do
+    slice_any(enumerable, start, amount)
+  end
+
+  @doc """
+  Sorts the enumerable according to Erlang's term ordering.
+
+  Uses the merge sort algorithm.
+
+  ## Examples
+
+      iex> Enum.sort([3, 2, 1])
+      [1, 2, 3]
+
+  """
+  @spec sort(t) :: list
+  def sort(enumerable) when is_list(enumerable) do
+    :lists.sort(enumerable)
+  end
+
+  def sort(enumerable) do
+    sort(enumerable, &(&1 <= &2))
+  end
+
+  @doc """
+  Sorts the enumerable by the given function.
+
+  This function uses the merge sort algorithm. The given function should compare
+  two arguments, and return `true` if the first argument precedes the second one.
+
+  ## Examples
+
+      iex> Enum.sort([1, 2, 3], &(&1 >= &2))
+      [3, 2, 1]
+
+  The sorting algorithm will be stable as long as the given function
+  returns `true` for values considered equal:
+
+      iex> Enum.sort ["some", "kind", "of", "monster"], &(byte_size(&1) <= byte_size(&2))
+      ["of", "some", "kind", "monster"]
+
+  If the function does not return `true` for equal values, the sorting
+  is not stable and the order of equal terms may be shuffled.
+  For example:
+
+      iex> Enum.sort ["some", "kind", "of", "monster"], &(byte_size(&1) < byte_size(&2))
+      ["of", "kind", "some", "monster"]
+
+  """
+  @spec sort(t, (element, element -> boolean)) :: list
+  def sort(enumerable, fun) when is_list(enumerable) do
+    :lists.sort(fun, enumerable)
+  end
+
+  def sort(enumerable, fun) do
+    reduce(enumerable, [], &sort_reducer(&1, &2, fun))
+    |> sort_terminator(fun)
+  end
+
+  @doc """
+  Sorts the mapped results of the enumerable according to the provided `sorter`
+  function.
+
+  This function maps each element of the enumerable using the provided `mapper`
+  function. The enumerable is then sorted by the mapped elements
+  using the `sorter` function, which defaults to `Kernel.<=/2`.
+
+  `sort_by/3` differs from `sort/2` in that it only calculates the
+  comparison value for each element in the enumerable once instead of
+  once for each element in each comparison.
+  If the same function is being called on both elements, it's also more
+  compact to use `sort_by/3`.
+
+  ## Examples
+
+  Using the default `sorter` of `<=/2`:
+
+      iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1)
+      ["of", "some", "kind", "monster"]
+
+  Using a custom `sorter` to override the order:
+
+      iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1, &>=/2)
+      ["monster", "some", "kind", "of"]
+
+  Sorting by multiple properties - first by size, then by first letter
+  (this takes advantage of the fact that tuples are compared element-by-element):
+
+      iex> Enum.sort_by(["some", "kind", "of", "monster"], &{byte_size(&1), String.first(&1)})
+      ["of", "kind", "some", "monster"]
+
+  """
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
@@ -2261,6 +2451,13 @@ defmodule Enum do
     []
   end
 
+  ## shuffle
+
+  defp shuffle_unwrap([{_, h} | enumerable], t) do
+    shuffle_unwrap(enumerable, [h | t])
+  end
+
+  defp shuffle_unwrap([], t), do: t
 
   ## slice
 
