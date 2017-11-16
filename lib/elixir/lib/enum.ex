@@ -2266,6 +2266,371 @@ defmodule Enum do
       ["of", "kind", "some", "monster"]
 
   """
+  @spec sort_by(t, (element -> mapped_element), (mapped_element, mapped_element -> boolean)) ::
+          list
+        when mapped_element: element
+
+  def sort_by(enumerable, mapper, sorter \\ &<=/2) do
+    enumerable
+    |> map(&{&1, mapper.(&1)})
+    |> sort(&sorter.(elem(&1, 1), elem(&2, 1)))
+    |> map(&elem(&1, 0))
+  end
+
+  @doc """
+  Splits the `enumerable` into two enumerables, leaving `count`
+  elements in the first one.
+
+  If `count` is a negative number, it starts counting from the
+  back to the beginning of the enumerable.
+
+  Be aware that a negative `count` implies the `enumerable`
+  will be enumerated twice: once to calculate the position, and
+  a second time to do the actual splitting.
+
+  ## Examples
+
+      iex> Enum.split([1, 2, 3], 2)
+      {[1, 2], [3]}
+
+      iex> Enum.split([1, 2, 3], 10)
+      {[1, 2, 3], []}
+
+      iex> Enum.split([1, 2, 3], 0)
+      {[], [1, 2, 3]}
+
+      iex> Enum.split([1, 2, 3], -1)
+      {[1, 2], [3]}
+
+      iex> Enum.split([1, 2, 3], -5)
+      {[], [1, 2, 3]}
+
+  """
+  @spec split(t, integer) :: {list, list}
+  def split(enumerable, count) when is_list(enumerable) and count >= 0 do
+    split_list(enumerable, count, [])
+  end
+
+  def split(enumerable, count) when count >= 0 do
+    {_, list1, list2} =
+      reduce(enumerable, {count, [], []}, fn entry, {counter, acc1, acc2} ->
+        if counter > 0 do
+          {counter - 1, [entry | acc1], acc2}
+        else
+          {counter, acc1, [entry | acc2]}
+        end
+      end)
+
+    {:lists.reverse(list1), :lists.reverse(list2)}
+  end
+
+  def split(enumerable, count) when count < 0 do
+    split_reverse_list(reverse(enumerable), -count, [])
+  end
+
+  @doc """
+  Splits enumerable in two at the position of the element for which
+  `fun` returns `false` for the first time.
+
+  ## Examples
+
+      iex> Enum.split_while([1, 2, 3, 4], fn(x) -> x < 3 end)
+      {[1, 2], [3, 4]}
+
+  """
+  @spec split_while(t, (element -> as_boolean(term))) :: {list, list}
+  def split_while(enumerable, fun) when is_list(enumerable) do
+    split_while_list(enumerable, fun, [])
+  end
+
+  def split_while(enumerable, fun) do
+    {list1, list2} =
+      reduce(enumerable, {[], []}, fn
+        entry, {acc1, []} ->
+          if(fun.(entry), do: {[entry | acc1], []}, else: {acc1, [entry]})
+
+        entry, {acc1, acc2} ->
+          {acc1, [entry | acc2]}
+      end)
+
+    {:lists.reverse(list1), :lists.reverse(list2)}
+  end
+
+  @doc """
+  Returns the sum of all elements.
+
+  Raises `ArithmeticError` if `enumerable` contains a non-numeric value.
+
+  ## Examples
+
+      iex> Enum.sum([1, 2, 3])
+      6
+
+  """
+  @spec sum(t) :: number
+  def sum(enumerable)
+
+  def sum(first..last) do
+    div((last + first) * (abs(last - first) + 1), 2)
+  end
+
+  def sum(enumerable) do
+    reduce(enumerable, 0, &+/2)
+  end
+
+  @doc """
+  Takes the first `amount` items from the enumerable.
+
+  If a negative `amount` is given, the `amount` of last values will be taken.
+  The `enumerable` will be enumerated once to retrieve the proper index and
+  the remaining calculation is performed from the end.
+
+  ## Examples
+
+      iex> Enum.take([1, 2, 3], 2)
+      [1, 2]
+
+      iex> Enum.take([1, 2, 3], 10)
+      [1, 2, 3]
+
+      iex> Enum.take([1, 2, 3], 0)
+      []
+
+      iex> Enum.take([1, 2, 3], -1)
+      [3]
+
+  """
+  @spec take(t, integer) :: list
+  def take(enumerable, amount)
+
+  def take(_enumerable, 0), do: []
+
+  def take(enumerable, amount)
+      when is_list(enumerable) and is_integer(amount) and amount > 0 do
+    take_list(enumerable, amount)
+  end
+
+  def take(enumerable, amount) when is_integer(amount) and amount > 0 do
+    {_, {res, _}} =
+      Enumerable.reduce(enumerable, {:cont, {[], amount}}, fn entry, {list, n} ->
+        case n do
+          1 -> {:halt, {[entry | list], n - 1}}
+          _ -> {:cont, {[entry | list], n - 1}}
+        end
+      end)
+
+    :lists.reverse(res)
+  end
+
+  def take(enumerable, amount) when is_integer(amount) and amount < 0 do
+    {count, fun} = slice_count_and_fun(enumerable)
+    first = Kernel.max(amount + count, 0)
+    fun.(first, count - first)
+  end
+
+  @doc """
+  Returns a list of every `nth` item in the enumerable,
+  starting with the first element.
+
+  The first item is always included, unless `nth` is 0.
+
+  The second argument specifying every `nth` item must be a non-negative
+  integer.
+
+  ## Examples
+
+      iex> Enum.take_every(1..10, 2)
+      [1, 3, 5, 7, 9]
+
+      iex> Enum.take_every(1..10, 0)
+      []
+
+      iex> Enum.take_every([1, 2, 3], 1)
+      [1, 2, 3]
+
+  """
+  @spec take_every(t, non_neg_integer) :: list
+  def take_every(enumerable, nth)
+
+  def take_every(enumerable, 1), do: to_list(enumerable)
+  def take_every(_enumerable, 0), do: []
+  def take_every([], nth) when is_integer(nth) and nth > 1, do: []
+
+  def take_every(enumerable, nth) when is_integer(nth) and nth > 1 do
+    {res, _} = reduce(enumerable, {[], :first}, R.take_every(nth))
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Takes `count` random items from `enumerable`.
+
+  Notice this function will traverse the whole `enumerable` to
+  get the random sublist.
+
+  See `random/1` for notes on implementation and random seed.
+
+  ## Examples
+
+      # Although not necessary, let's seed the random algorithm
+      iex> :rand.seed(:exsplus, {1, 2, 3})
+      iex> Enum.take_random(1..10, 2)
+      [5, 4]
+      iex> Enum.take_random(?a..?z, 5)
+      'ipybz'
+
+  """
+  @spec take_random(t, non_neg_integer) :: list
+  def take_random(enumerable, count)
+  def take_random(_enumerable, 0), do: []
+
+  def take_random(enumerable, count) when is_integer(count) and count > 128 do
+    reducer = fn elem, {idx, sample} ->
+      jdx = random_integer(0, idx)
+
+      cond do
+        idx < count ->
+          value = Map.get(sample, jdx)
+          {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
+
+        jdx < count ->
+          {idx + 1, Map.put(sample, jdx, elem)}
+
+        true ->
+          {idx + 1, sample}
+      end
+    end
+
+    {size, sample} = reduce(enumerable, {0, %{}}, reducer)
+    take_random(sample, Kernel.min(count, size), [])
+  end
+
+  def take_random(enumerable, count) when is_integer(count) and count > 0 do
+    sample = Tuple.duplicate(nil, count)
+
+    reducer = fn elem, {idx, sample} ->
+      jdx = random_integer(0, idx)
+
+      cond do
+        idx < count ->
+          value = elem(sample, jdx)
+          {idx + 1, put_elem(sample, idx, value) |> put_elem(jdx, elem)}
+
+        jdx < count ->
+          {idx + 1, put_elem(sample, jdx, elem)}
+
+        true ->
+          {idx + 1, sample}
+      end
+    end
+
+    {size, sample} = reduce(enumerable, {0, sample}, reducer)
+    sample |> Tuple.to_list() |> take(Kernel.min(count, size))
+  end
+
+  defp take_random(_sample, 0, acc), do: acc
+
+  defp take_random(sample, position, acc) do
+    position = position - 1
+    take_random(sample, position, [Map.get(sample, position) | acc])
+  end
+
+  @doc """
+  Takes the items from the beginning of the enumerable while `fun` returns
+  a truthy value.
+
+  ## Examples
+
+      iex> Enum.take_while([1, 2, 3], fn(x) -> x < 3 end)
+      [1, 2]
+
+  """
+  @spec take_while(t, (element -> as_boolean(term))) :: list
+  def take_while(enumerable, fun) when is_list(enumerable) do
+    take_while_list(enumerable, fun)
+  end
+
+  def take_while(enumerable, fun) do
+    {_, res} =
+      Enumerable.reduce(enumerable, {:cont, []}, fn entry, acc ->
+        if fun.(entry) do
+          {:cont, [entry | acc]}
+        else
+          {:halt, acc}
+        end
+      end)
+
+    :lists.reverse(res)
+  end
+
+  @doc """
+  Converts `enumerable` to a list.
+
+  ## Examples
+
+      iex> Enum.to_list(1..3)
+      [1, 2, 3]
+
+  """
+  @spec to_list(t) :: [element]
+  def to_list(enumerable) when is_list(enumerable) do
+    enumerable
+  end
+
+  def to_list(enumerable) do
+    reverse(enumerable) |> :lists.reverse()
+  end
+
+  @doc """
+  Enumerates the `enumerable`, removing all duplicated elements.
+
+  ## Examples
+
+      iex> Enum.uniq([1, 2, 3, 3, 2, 1])
+      [1, 2, 3]
+
+  """
+  @spec uniq(t) :: list
+  def uniq(enumerable) do
+    uniq_by(enumerable, fn x -> x end)
+  end
+
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def uniq(enumerable, fun) do
+    uniq_by(enumerable, fun)
+  end
+
+  @doc """
+  Enumerates the `enumerable`, by removing the elements for which
+  function `fun` returned duplicate items.
+
+  The function `fun` maps every element to a term. Two elements are
+  considered duplicates if the return value of `fun` is equal for
+  both of them.
+
+  The first occurrence of each element is kept.
+
+  ## Example
+
+      iex> Enum.uniq_by([{1, :x}, {2, :y}, {1, :z}], fn {x, _} -> x end)
+      [{1, :x}, {2, :y}]
+
+      iex> Enum.uniq_by([a: {:tea, 2}, b: {:tea, 2}, c: {:coffee, 1}], fn {_, y} -> y end)
+      [a: {:tea, 2}, c: {:coffee, 1}]
+
+  """
+  @spec uniq_by(t, (element -> term)) :: list
+
+  def uniq_by(enumerable, fun) when is_list(enumerable) do
+    uniq_list(enumerable, %{}, fun)
+  end
+
+  def uniq_by(enumerable, fun) do
+    {list, _} = reduce(enumerable, {[], %{}}, R.uniq_by(fun))
+    :lists.reverse(list)
+  end
+
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
