@@ -2631,6 +2631,109 @@ defmodule Enum do
     :lists.reverse(list)
   end
 
+  @doc """
+  Opposite of `Enum.zip/2`; extracts a two-element tuples from the
+  enumerable and groups them together.
+
+  It takes an enumerable with items being two-element tuples and returns
+  a tuple with two lists, each of which is formed by the first and
+  second element of each tuple, respectively.
+
+  This function fails unless `enumerable` is or can be converted into a
+  list of tuples with *exactly* two elements in each tuple.
+
+  ## Examples
+
+      iex> Enum.unzip([{:a, 1}, {:b, 2}, {:c, 3}])
+      {[:a, :b, :c], [1, 2, 3]}
+
+      iex> Enum.unzip(%{a: 1, b: 2})
+      {[:a, :b], [1, 2]}
+
+  """
+  @spec unzip(t) :: {[element], [element]}
+  def unzip(enumerable) do
+    {list1, list2} =
+      reduce(enumerable, {[], []}, fn {el1, el2}, {list1, list2} ->
+        {[el1 | list1], [el2 | list2]}
+      end)
+
+    {:lists.reverse(list1), :lists.reverse(list2)}
+  end
+
+  @doc """
+  Returns the enumerable with each element wrapped in a tuple
+  alongside its index.
+
+  If an `offset` is given, we will index from the given offset instead of from zero.
+
+  ## Examples
+
+      iex> Enum.with_index([:a, :b, :c])
+      [a: 0, b: 1, c: 2]
+
+      iex> Enum.with_index([:a, :b, :c], 3)
+      [a: 3, b: 4, c: 5]
+
+  """
+  @spec with_index(t, integer) :: [{element, index}]
+  def with_index(enumerable, offset \\ 0) do
+    map_reduce(enumerable, offset, fn x, acc ->
+      {{x, acc}, acc + 1}
+    end)
+    |> elem(0)
+  end
+
+  @doc """
+  Zips corresponding elements from two enumerables into one list
+  of tuples.
+
+  The zipping finishes as soon as any enumerable completes.
+
+  ## Examples
+
+      iex> Enum.zip([1, 2, 3], [:a, :b, :c])
+      [{1, :a}, {2, :b}, {3, :c}]
+
+      iex> Enum.zip([1, 2, 3, 4, 5], [:a, :b, :c])
+      [{1, :a}, {2, :b}, {3, :c}]
+
+  """
+  @spec zip(t, t) :: [{any, any}]
+  def zip(enumerable1, enumerable2)
+      when is_list(enumerable1) and is_list(enumerable2) do
+    zip_list(enumerable1, enumerable2)
+  end
+
+  def zip(enumerable1, enumerable2) do
+    zip([enumerable1, enumerable2])
+  end
+
+  @doc """
+  Zips corresponding elements from a list of enumerables
+  into one list of tuples.
+
+  The zipping finishes as soon as any enumerable in the given list completes.
+
+  ## Examples
+
+      iex> Enum.zip([[1, 2, 3], [:a, :b, :c], ["foo", "bar", "baz"]])
+      [{1, :a, "foo"}, {2, :b, "bar"}, {3, :c, "baz"}]
+
+      iex> Enum.zip([[1, 2, 3, 4, 5], [:a, :b, :c]])
+      [{1, :a}, {2, :b}, {3, :c}]
+
+  """
+  @spec zip([t]) :: t
+
+  def zip([]), do: []
+
+  def zip(enumerables) when is_list(enumerables) do
+    Stream.zip(enumerables).({:cont, []}, &{:cont, [&1 | &2]})
+    |> elem(1)
+    |> :lists.reverse()
+  end
+
   ## Helpers
 
   @compile {:inline, aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3}
@@ -2655,12 +2758,12 @@ defmodule Enum do
 
     enumerable
     |> reduce(ref, fn
-        element, ^ref -> element
-        element, acc -> fun.(element, acc)
-      end)
+         element, ^ref -> element
+         element, acc -> fun.(element, acc)
+       end)
     |> case do
-          ^ref -> empty.()
-          result -> result
+         ^ref -> empty.()
+         result -> result
        end
   end
 
@@ -2672,18 +2775,37 @@ defmodule Enum do
     :empty
   end
 
+  defp reduce_by(enumerable, first, fun) do
+    reduce(enumerable, :empty, fn
+      element, {_, _} = acc -> fun.(element, acc)
+      element, :empty -> first.(element)
+    end)
+  end
+
+  defp random_integer(limit, limit) when is_integer(limit) do
+    limit
+  end
+
+  defp random_integer(lower_limit, upper_limit) when upper_limit < lower_limit do
+    random_integer(upper_limit, lower_limit)
+  end
+
+  defp random_integer(lower_limit, upper_limit) do
+    lower_limit + :rand.uniform(upper_limit - lower_limit + 1) - 1
+  end
+
   # TODO: Remove me on Elixir v1.8
-    defp backwards_compatible_slice(args) do
-      try do
-        Enumerable.slice(args)
-      catch
-        :error, :undef ->
-          case System.stacktrace() do
-            [{module, :slice, [^args], _} | _] -> {:error, module}
-            stack -> :erlang.raise(:error, :undef, stack)
-          end
-      end
+  defp backwards_compatible_slice(args) do
+    try do
+      Enumerable.slice(args)
+    catch
+      :error, :undef ->
+        case System.stacktrace() do
+          [{module, :slice, [^args], _} | _] -> {:error, module}
+          stack -> :erlang.raise(:error, :undef, stack)
+        end
     end
+  end
 
   ## Implementations
 
@@ -2700,6 +2822,8 @@ defmodule Enum do
   defp all_list([], _) do
     true
   end
+
+  ## any?
 
   defp any_list([h | t], fun) do
     if fun.(h) do
@@ -2733,6 +2857,20 @@ defmodule Enum do
     []
   end
 
+  ## filter
+
+  defp filter_list([head | tail], fun) do
+    if fun.(head) do
+      [head | filter_list(tail, fun)]
+    else
+      filter_list(tail, fun)
+    end
+  end
+
+  defp filter_list([], _fun) do
+    []
+  end
+
   ## find
 
   defp find_list([head | tail], default, fun) do
@@ -2761,7 +2899,7 @@ defmodule Enum do
     nil
   end
 
-  # find_value
+  ## find_value
 
   defp find_value_list([head | tail], default, fun) do
     fun.(head) || find_value_list(tail, default, fun)
@@ -2799,7 +2937,7 @@ defmodule Enum do
   end
 
   defp reduce_range_dec(first, last, acc, fun) do
-    reduce_range_dec(first, - 1, last, fun.(first, acc), fun)
+    reduce_range_dec(first - 1, last, fun.(first, acc), fun)
   end
 
   ## reject
@@ -2814,6 +2952,23 @@ defmodule Enum do
 
   defp reject_list([], _fun) do
     []
+  end
+
+  ## reverse_slice
+
+  defp reverse_slice(rest, idx, idx, count, acc) do
+    {slice, rest} = head_slice(rest, count, [])
+    :lists.reverse(rest, :lists.reverse(slice, acc))
+  end
+
+  defp reverse_slice([elem | rest], idx, start, count, acc) do
+    reverse_slice(rest, idx - 1, start, count, [elem | acc])
+  end
+
+  defp head_slice(rest, 0, acc), do: {acc, rest}
+
+  defp head_slice([elem | rest], count, acc) do
+    head_slice(rest, count - 1, [elem | acc])
   end
 
   ## shuffle
@@ -2842,7 +2997,7 @@ defmodule Enum do
   end
 
   defp slice_any(enumerable, start, amount) do
-    case Enumerable.slice(enumerable) do
+    case backwards_compatible_slice(enumerable) do
       {:ok, count, _} when start >= count ->
         []
 
@@ -2854,12 +3009,28 @@ defmodule Enum do
     end
   end
 
+  defp slice_enum(enumerable, module, start, amount) do
+    {_, {_, _, slice}} =
+      module.reduce(enumerable, {:cont, {start, amount, []}}, fn
+        _entry, {start, amount, _list} when start > 0 ->
+          {:cont, {start - 1, amount, []}}
+
+        entry, {start, amount, list} when amount > 1 ->
+          {:cont, {start, amount - 1, [entry | list]}}
+
+        entry, {start, amount, list} ->
+          {:halt, {start, amount, [entry | list]}}
+      end)
+
+    :lists.reverse(slice)
+  end
+
   defp slice_count_and_fun(enumerable) when is_list(enumerable) do
     {length(enumerable), &Enumerable.List.slice(enumerable, &1, &2)}
   end
 
   defp slice_count_and_fun(enumerable) do
-    case Enumerable.slice(enumerable) do
+    case backwards_compatible_slice(enumerable) do
       {:ok, count, fun} when is_function(fun) ->
         {count, fun}
 
@@ -2873,4 +3044,248 @@ defmodule Enum do
     end
   end
 
+  ## sort
+
+  defp sort_reducer(entry, {:split, y, x, r, rs, bool}, fun) do
+    cond do
+      fun.(y, entry) == bool ->
+        {:split, entry, y, [x | r], rs, bool}
+
+      fun.(x, entry) == bool ->
+        {:split, y, entry, [x | r], rs, bool}
+
+      r == [] ->
+        {:split, y, x, [entry], rs, bool}
+
+      true ->
+        {:pivot, y, x, r, rs, entry, bool}
+    end
+  end
+
+  defp sort_reducer(entry, {:pivot, y, x, r, rs, s, bool}, fun) do
+    cond do
+      fun.(y, entry) == bool ->
+        {:pivot, entry, y, [x | r], rs, s, bool}
+
+      fun.(x, entry) == bool ->
+        {:pivot, y, entry, [x | r], rs, s, bool}
+
+      fun.(s, entry) == bool ->
+        {:split, entry, s, [], [[y, x | r] | rs], bool}
+
+      true ->
+        {:split, s, entry, [], [[y, x | r] | rs], bool}
+    end
+  end
+
+  defp sort_reducer(entry, [x], fun) do
+    {:split, entry, x, [], [], fun.(x, entry)}
+  end
+
+  defp sort_reducer(entry, acc, _fun) do
+    [entry | acc]
+  end
+
+  defp sort_terminator({:split, y, x, r, rs, bool}, fun) do
+    sort_merge([[y, x | r] | rs], fun, bool)
+  end
+
+  defp sort_terminator({:pivot, y, x, r, rs, s, bool}, fun) do
+    sort_merge([[s], [y, x | r] | rs], fun, bool)
+  end
+
+  defp sort_terminator(acc, _fun) do
+    acc
+  end
+
+  defp sort_merge(list, fun, true), do: reverse_sort_merge(list, [], fun, true)
+
+  defp sort_merge(list, fun, false), do: sort_merge(list, [], fun, false)
+
+  defp sort_merge([t1, [h2 | t2] | l], acc, fun, true),
+    do: sort_merge(l, [sort_merge1(t1, h2, t2, [], fun, false) | acc], fun, true)
+
+  defp sort_merge([[h2 | t2], t1 | l], acc, fun, false),
+    do: sort_merge(l, [sort_merge1(t1, h2, t2, [], fun, false) | acc], fun, false)
+
+  defp sort_merge([l], [], _fun, _bool), do: l
+
+  defp sort_merge([l], acc, fun, bool),
+    do: reverse_sort_merge([:lists.reverse(l, []) | acc], [], fun, bool)
+
+  defp sort_merge([], acc, fun, bool), do: reverse_sort_merge(acc, [], fun, bool)
+
+  defp reverse_sort_merge([[h2 | t2], t1 | l], acc, fun, true),
+    do: reverse_sort_merge(l, [sort_merge1(t1, h2, t2, [], fun, true) | acc], fun, true)
+
+  defp reverse_sort_merge([t1, [h2 | t2] | l], acc, fun, false),
+    do: reverse_sort_merge(l, [sort_merge1(t1, h2, t2, [], fun, true) | acc], fun, false)
+
+  defp reverse_sort_merge([l], acc, fun, bool),
+    do: sort_merge([:lists.reverse(l, []) | acc], [], fun, bool)
+
+  defp reverse_sort_merge([], acc, fun, bool), do: sort_merge(acc, [], fun, bool)
+
+  defp sort_merge1([h1 | t1], h2, t2, m, fun, bool) do
+    if fun.(h1, h2) == bool do
+      sort_merge2(h1, t1, t2, [h2 | m], fun, bool)
+    else
+      sort_merge1(t1, h2, t2, [h1 | m], fun, bool)
+    end
+  end
+
+  defp sort_merge1([], h2, t2, m, _fun, _bool), do: :lists.reverse(t2, [h2 | m])
+
+  defp sort_merge2(h1, t1, [h2 | t2], m, fun, bool) do
+    if fun.(h1, h2) == bool do
+      sort_merge2(h1, t1, t2, [h2 | m], fun, bool)
+    else
+      sort_merge1(t1, h2, t2, [h1 | m], fun, bool)
+    end
+  end
+
+  defp sort_merge2(h1, t1, [], m, _fun, _bool), do: :lists.reverse(t1, [h1 | m])
+
+  ## split
+
+  defp split_list([head | tail], counter, acc) when counter > 0 do
+    split_list(tail, counter - 1, [head | acc])
+  end
+
+  defp split_list(list, 0, acc) do
+    {:lists.reverse(acc), list}
+  end
+
+  defp split_list([], _, acc) do
+    {:lists.reverse(acc), []}
+  end
+
+  defp split_reverse_list([head | tail], counter, acc) when counter > 0 do
+    split_reverse_list(tail, counter - 1, [head | acc])
+  end
+
+  defp split_reverse_list(list, 0, acc) do
+    {:lists.reverse(list), acc}
+  end
+
+  defp split_reverse_list([], _, acc) do
+    {[], acc}
+  end
+
+  ## split_while
+
+  defp split_while_list([head | tail], fun, acc) do
+    if fun.(head) do
+      split_while_list(tail, fun, [head | acc])
+    else
+      {:lists.reverse(acc), [head | tail]}
+    end
+  end
+
+  defp split_while_list([], _, acc) do
+    {:lists.reverse(acc), []}
+  end
+
+  ## take
+
+  defp take_list([head | _], 1), do: [head]
+  defp take_list([head | tail], counter), do: [head | take_list(tail, counter - 1)]
+  defp take_list([], _counter), do: []
+
+  ## take_while
+
+  defp take_while_list([head | tail], fun) do
+    if fun.(head) do
+      [head | take_while_list(tail, fun)]
+    else
+      []
+    end
+  end
+
+  defp take_while_list([], _) do
+    []
+  end
+
+  ## uniq
+
+  defp uniq_list([head | tail], set, fun) do
+    value = fun.(head)
+
+    case set do
+      %{^value => true} -> uniq_list(tail, set, fun)
+      %{} -> [head | uniq_list(tail, Map.put(set, value, true), fun)]
+    end
+  end
+
+  defp uniq_list([], _set, _fun) do
+    []
+  end
+
+  ## zip
+
+  defp zip_list([h1 | next1], [h2 | next2]) do
+    [{h1, h2} | zip_list(next1, next2)]
+  end
+
+  defp zip_list(_, []), do: []
+  defp zip_list([], _), do: []
+end
+
+defimpl Enumerable, for: List do
+  def count(_list), do: {:error, __MODULE__}
+  def member?(_list, _value), do: {:error, __MODULE__}
+  def slice(_list), do: {:error, __MODULE__}
+
+  def reduce(_, {:halt, acc}, _fun), do: {:halted, acc}
+  def reduce(list, {:suspend, acc}, fun), do: {:suspended, acc, &reduce(list, &1, fun)}
+  def reduce([], {:cont, acc}, _fun), do: {:done, acc}
+  def reduce([h | t], {:cont, acc}, fun), do: reduce(t, fun.(h, acc), fun)
+
+  @doc false
+  def slice([], _start, _count), do: []
+  def slice(_list, _start, 0), do: []
+  def slice([head | tail], 0, count), do: [head | slice(tail, 0, count - 1)]
+  def slice([_ | tail], start, count), do: slice(tail, start - 1, count)
+end
+
+defimpl Enumerable, for: Map do
+  def count(map) do
+    {:ok, map_size(map)}
+  end
+
+  def member?(map, {key, value}) do
+    {:ok, match?(%{^key => ^value}, map)}
+  end
+
+  def member?(_map, _other) do
+    {:ok, false}
+  end
+
+  def slice(map) do
+    {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
+  end
+
+  def reduce(map, acc, fun) do
+    reduce_list(:maps.to_list(map), acc, fun)
+  end
+
+  defp reduce_list(_, {:halt, acc}, _fun), do: {:halted, acc}
+  defp reduce_list(list, {:suspend, acc}, fun), do: {:suspended, acc, &reduce_list(list, &1, fun)}
+  defp reduce_list([], {:cont, acc}, _fun), do: {:done, acc}
+  defp reduce_list([h | t], {:cont, acc}, fun), do: reduce_list(t, fun.(h, acc), fun)
+end
+
+defimpl Enumerable, for: Function do
+  def count(_function), do: {:error, __MODULE__}
+  def member?(_function, _value), do: {:error, __MODULE__}
+  def slice(_function), do: {:error, __MODULE__}
+
+  def reduce(function, acc, fun) when is_function(function, 2), do: function.(acc, fun)
+
+  def reduce(function, _acc, _fun) do
+    raise Protocol.UndefinedError,
+      protocol: @protocol,
+      value: function,
+      description: "only anonymous functions of arity 2 are enumerable"
+  end
 end
