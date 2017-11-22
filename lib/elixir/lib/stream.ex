@@ -99,3 +99,35 @@ defmodule Stream do
 
   # Require Stream.Reducers and its callbacks
   require Stream.Reducers, as: R
+
+  defmacrop skip(acc) do
+    {:cont, acc}
+  end
+
+  defmacrop next(fun, entry, acc) do
+    quote(do: unquote(fun).(unquote(entry), unquote(acc)))
+  end
+
+  defmacrop acc(head, state, tail) do
+    quote(do: [unquote(head), unquote(state) | unquote(tail)])
+  end
+
+  defmacrop next_with_acc(fun, entry, head, state, tail) do
+    quote do
+      {reason, [head | tail]} = unquote(fun).(unquote(entry), [unquote(head) | unquote(tail)])
+      {reason, [head, unquote(state) | tail]}
+    end
+  end
+
+  ## Transformers
+
+  # Deprecate on v1.7
+  @doc false
+  def chunk(enum, n), do: chunk(enum, n, n, nil)
+
+  # Deprecate on v1.7
+  @doc false
+  def chunk(enum, n, step, leftover \\ nil)
+      when is_integer(n) and n > 0 and is_integer(step) and step > 0 do
+    chunk_every(enum, n, step, leftover || :discard)
+  end
