@@ -131,3 +131,187 @@ defmodule Stream do
       when is_integer(n) and n > 0 and is_integer(step) and step > 0 do
     chunk_every(enum, n, step, leftover || :discard)
   end
+
+  @doc """
+  Shortcut to `chunk_every(enum, count, count)`.
+  """
+  @spec chunk_every(Enumerable.t(), pos_integer) :: Enumerable.t()
+  def chunk_every(enum, count), do: chunk_every(enum, count, count, [])
+
+  @doc """
+  Streams the enumerable in chunks, containing `count` items each,
+  where each new chunk starts `step` elements into the enumerable.
+
+  `step` is optional and, if not passed, defaults to `count`, i.e.
+  chunks do not overlap.
+
+  If the last chunk does not have `count` elements to fill the chunk,
+  elements are taken from `leftover` to fill in the chunk. If `leftover`
+  does not have enough elements to fill the chunk, then a partial chunk
+  is returned with less than `count` elements.
+
+  If `:discard` is given in `leftover`, the last chunk is discarded
+  unless it has exactly `count` elements.
+
+  ## Examples
+
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 2) |> Enum.to_list
+      [[1, 2], [3, 4], [5, 6]]
+
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, :discard) |> Enum.to_list
+      [[1, 2, 3], [3, 4, 5]]
+
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, [7]) |> Enum.to_list
+      [[1, 2, 3], [3, 4, 5], [5, 6, 7]]
+
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 3, []) |> Enum.to_list
+      [[1, 2, 3], [4, 5, 6]]
+
+  """
+  @spec chunk_every(Enumerable.t(), pos_integer, pos_integer, Enumerable.t() | :discard) ::
+          Enumerable.t()
+  def chunk_every(enum, count, step, leftover \\ [])
+      when is_integer(count) and count > 0 and is_integer(step) and step > 0 do
+    R.chunk_every(&chunk_while/4, enum, count, step, leftover)
+  end
+
+  @doc """
+  Chunks the `enum` by buffering elements for which `fun` returns the same value.
+
+  Elements are only emitted when `fun` returns a new value or the `enum` finishes.
+
+  ## Examples
+
+      iex> stream = Stream.chunk_by([1, 2, 2, 3, 4, 4, 6, 7, 7], &(rem(&1, 2) == 1))
+      iex> Enum.to_list(stream)
+      [[1], [2, 2], [3], [4, 4, 6], [7, 7]]
+
+  """
+  @spec chunk_by(Enumerable.t(), (element -> any)) :: Enumerable.t()
+  def chunk_by(enum, fun) do
+    R.chunk_by(&chunk_while/4, enum, fun)
+  end
+
+  @doc """
+  Chunks the `enum` with fine grained control when every chunk is emitted.
+
+  `chunk_fun` receives the current element and the accumulator and
+  must return `{:cont, element, acc}` to emit the given chunk and
+  continue with accumulator or `{:cont, acc}` to not emit any chunk
+  and continue with the return accumulator.
+
+  `after_fun` is invoked when iteration is done and must also return
+  `{:cont, element, acc}` or `{:cont, acc}`.
+
+  ## Examples
+
+      iex> chunk_fun = fn i, acc ->
+      ...>   if rem(i, 2) == 0 do
+      ...>     {:cont, Enum.reverse([i | acc]), []}
+      ...>   else
+      ...>     {:cont, [i | acc]}
+      ...>   end
+      ...> end
+      iex> after_fun = fn
+      ...>   [] -> {:cont, []}
+      ...>   acc -> {:cont, Enum.reverse(acc), []}
+      ...> end
+      iex> stream = Stream.chunk_while(1..10, [], chunk_fun, after_fun)
+      iex> Enum.to_list(stream)
+      [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
+
+  """
+  @spec chunk_while(
+          Enumerable.t(),
+          acc,
+          (element, acc -> {:cont, chunk, acc} | {:cont, acc} | {:halt, acc}),
+          (acc -> {:cont, chunk, acc} | {:cont, acc})
+        ) :: Enumerable.t()
+        when chunk: any
+  def chunk_while(enum, acc, chunk_fun, after_fun) do
+    lazy(
+      enum,
+      acc,
+      fn f1 -> R.chunk_while(chunk_fun, f1) end,
+      &after_chunk_while(&1, &2, after_fun)
+    )
+  end
+
+  defp after_chunk_while(acc(h, acc, t), f1, after_fun) do
+    case after_fun.(acc) do
+      {:cont, emit, acc} -> next_with_acc(f1, emit, h, acc, t)
+      {:cont, acc} -> {:cont, acc(h, acc, t)}
+    end
+  end
+
+  @doc """
+  Creates a stream that only emits elements if they are different from the last emitted element.
+
+  This function only ever needs to store the last emitted element.
+
+  Elements are compared using `===`.
+
+  ## Examples
+
+      iex> Stream.dedup([1, 2, 3, 3, 2, 1]) |> Enum.to_list
+      [1, 2, 3, 2, 1]
+
+  """
+  @spec dedup(Enumerable.t()) :: Enumerable.t()
+  def dedup(enum) do
+    dedup_by(enum, fn x -> x end)
+  end
+
+  @doc """
+  Creates a stream that only emits elements if the result of calling `fun` on the element is
+  different from the (stored) result of calling `fun` on the last emitted element.
+
+  ## Examples
+
+      iex> Stream.dedup_by([{1, :x}, {2, :y}, {2, :z}, {1, :x}], fn {x, _} -> x end) |> Enum.to_list
+      [{1, :x}, {2, :y}, {1, :x}]
+
+  """
+  @spec dedup_by(Enumerable.t(), (element -> term)) :: Enumerable.t()
+  def dedup_by(enum, fun) do
+    lazy(enum, nil, fn f1 -> R.dedup(fun, f1) end)
+  end
+
+  @doc """
+  Lazily drops the next `n` items from the enumerable.
+
+  If a negative `n` is given, it will drop the last `n` items from
+  the collection. Note that the mechanism by which this is implemented
+  will delay the emission of any item until `n` additional items have
+  been emitted by the enum.
+
+  ## Examples
+
+      iex> stream = Stream.drop(1..10, 5)
+      iex> Enum.to_list(stream)
+      [6, 7, 8, 9, 10]
+
+      iex> stream = Stream.drop(1..10, -5)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+  """
+  @spec drop(Enumerable.t(), non_neg_integer) :: Enumerable.t()
+  def drop(enum, n) when n >= 0 do
+    lazy(enum, n, fn f1 -> R.drop(f1) end)
+  end
+
+  def drop(enum, n) when n < 0 do
+    n = abs(n)
+
+    lazy(enum, {0, [], []}, fn f1 ->
+      fn
+        entry, [h, {count, buf1, []} | t] ->
+          do_drop(:cont, n, entry, h, count, buf1, [], t)
+
+        entry, [h, {count, buf1, [next | buf2]} | t] ->
+          {reason, [h | t]} = f1.(next, [h | t])
+          do_drop(reason, n, entry, h, count, buf1, buf2, t)
+      end
+    end)
+  end
