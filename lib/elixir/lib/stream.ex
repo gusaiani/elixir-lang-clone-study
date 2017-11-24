@@ -315,3 +315,159 @@ defmodule Stream do
       end
     end)
   end
+
+  defp do_drop(reason, n, entry, h, count, buf1, buf2, t) do
+    buf1 = [entry | buf1]
+    count = count + 1
+
+    if count == n do
+      {reason, [h, {0, [], :lists.reverse(buf1)} | t]}
+    else
+      {reason, [h, {count, buf1, buf2} | t]}
+    end
+  end
+
+  @doc """
+  Creates a stream that drops every `nth` item from the enumerable.
+
+  The first item is always dropped, unless `nth` is 0.
+
+  `nth` must be a non-negative integer.
+
+  ## Examples
+
+      iex> stream = Stream.drop_every(1..10, 2)
+      iex> Enum.to_list(stream)
+      [2, 4, 6, 8, 10]
+
+      iex> stream = Stream.drop_every(1..1000, 1)
+      iex> Enum.to_list(stream)
+      []
+
+      iex> stream = Stream.drop_every([1, 2, 3, 4, 5], 0)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+  """
+  @spec drop_every(Enumerable.t(), non_neg_integer) :: Enumerable.t()
+  def drop_every(enum, nth)
+  def drop_every(enum, 0), do: %Stream{enum: enum}
+  def drop_every([], _nth), do: %Stream{enum: []}
+
+  def drop_every(enum, nth) when is_integer(nth) and nth > 0 do
+    lazy(enum, nth, fn f1 -> R.drop_every(nth, f1) end)
+  end
+
+  @doc """
+  Lazily drops elements of the enumerable while the given
+  function returns a truthy value.
+
+  ## Examples
+
+      iex> stream = Stream.drop_while(1..10, &(&1 <= 5))
+      iex> Enum.to_list(stream)
+      [6, 7, 8, 9, 10]
+
+  """
+  @spec drop_while(Enumerable.t(), (element -> as_boolean(term))) :: Enumerable.t()
+  def drop_while(enum, fun) do
+    lazy(enum, true, fn f1 -> R.drop_while(fun, f1) end)
+  end
+
+  @doc """
+  Executes the given function for each item.
+
+  Useful for adding side effects (like printing) to a stream.
+
+  ## Examples
+
+      iex> stream = Stream.each([1, 2, 3], fn(x) -> send self(), x end)
+      iex> Enum.to_list(stream)
+      iex> receive do: (x when is_integer(x) -> x)
+      1
+      iex> receive do: (x when is_integer(x) -> x)
+      2
+      iex> receive do: (x when is_integer(x) -> x)
+      3
+
+  """
+  @spec each(Enumerable.t(), (element -> term)) :: Enumerable.t()
+  def each(enum, fun) do
+    lazy(enum, fn f1 ->
+      fn x, acc ->
+        fun.(x)
+        f1.(x, acc)
+      end
+    end)
+  end
+
+  @doc """
+  Maps the given `fun` over `enumerable` and flattens the result.
+
+  This function returns a new stream built by appending the result of invoking `fun`
+  on each element of `enumerable` together.
+
+  ## Examples
+
+      iex> stream = Stream.flat_map([1, 2, 3], fn(x) -> [x, x * 2] end)
+      iex> Enum.to_list(stream)
+      [1, 2, 2, 4, 3, 6]
+
+      iex> stream = Stream.flat_map([1, 2, 3], fn(x) -> [[x]] end)
+      iex> Enum.to_list(stream)
+      [[1], [2], [3]]
+
+  """
+  @spec flat_map(Enumerable.t(), (element -> Enumerable.t())) :: Enumerable.t()
+  def flat_map(enum, mapper) do
+    transform(enum, nil, fn val, nil -> {mapper.(val), nil} end)
+  end
+
+  @doc """
+  Creates a stream that filters elements according to
+  the given function on enumeration.
+
+  ## Examples
+
+      iex> stream = Stream.filter([1, 2, 3], fn(x) -> rem(x, 2) == 0 end)
+      iex> Enum.to_list(stream)
+      [2]
+
+  """
+  @spec filter(Enumerable.t(), (element -> as_boolean(term))) :: Enumerable.t()
+  def filter(enum, fun) do
+    lazy(enum, fn f1 -> R.filter(fun, f1) end)
+  end
+
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def filter_map(enum, filter, mapper) do
+    lazy(enum, fn f1 -> R.filter_map(filter, mapper, f1) end)
+  end
+
+  @doc """
+  Creates a stream that emits a value after the given period `n`
+  in milliseconds.
+
+  The values emitted are an increasing counter starting at `0`.
+  This operation will block the caller by the given interval
+  every time a new item is streamed.
+
+  Do not use this function to generate a sequence of numbers.
+  If blocking the caller process is not necessary, use
+  `Stream.iterate(0, & &1 + 1)` instead.
+
+  ## Examples
+
+      iex> Stream.interval(10) |> Enum.take(10)
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+  """
+  @spec interval(non_neg_integer) :: Enumerable.t()
+  def interval(n) do
+    unfold(0, fn count ->
+      Process.sleep(n)
+      {count, count + 1}
+    end)
+  end
