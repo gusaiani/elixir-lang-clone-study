@@ -471,3 +471,97 @@ defmodule Stream do
       {count, count + 1}
     end)
   end
+
+  @doc """
+  Injects the stream values into the given collectable as a side-effect.
+
+  This function is often used with `run/1` since any evaluation
+  is delayed until the stream is executed. See `run/1` for an example.
+  """
+  @spec into(Enumerable.t(), Collectable.t(), (term -> term)) :: Enumerable.t()
+  def into(enum, collectable, transform \\ fn x -> x end) do
+    &do_into(enum, collectable, transform, &1, &2)
+  end
+
+  defp do_into(enum, collectable, transform, acc, fun) do
+    {initial, into} = Collectable.into(collectable)
+
+    composed = fn x, [acc | collectable] ->
+      collectable = into.(collectable, {:cont, transform.(x)})
+      {reason, acc} = fun.(x, acc)
+      {reason, [acc | collectable]}
+    end
+
+    do_into(&Enumerable.reduce(enum, &1, composed), initial, into, acc)
+  end
+
+  defp do_into(reduce, collectable, into, {command, acc}) do
+    try do
+      reduce.({command, [acc | collectable]})
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        into.(collectable, :halt)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      {:suspended, [acc | collectable], continuation} ->
+        {:suspended, acc, &do_into(continuation, collectable, into, &1)}
+
+      {reason, [acc | collectable]} ->
+        into.(collectable, :done)
+        {reason, acc}
+    end
+  end
+
+  @doc """
+  Creates a stream that will apply the given function on
+  enumeration.
+
+  ## Examples
+
+      iex> stream = Stream.map([1, 2, 3], fn(x) -> x * 2 end)
+      iex> Enum.to_list(stream)
+      [2, 4, 6]
+
+  """
+  @spec map(Enumerable.t(), (element -> any)) :: Enumerable.t()
+  def map(enum, fun) do
+    lazy(enum, fn f1 -> R.map(fun, f1) end)
+  end
+
+  @doc """
+  Creates a stream that will apply the given function on
+  every `nth` item from the enumerable.
+
+  The first item is always passed to the given function.
+
+  `nth` must be a non-negative integer.
+
+  ## Examples
+
+      iex> stream = Stream.map_every(1..10, 2, fn(x) -> x * 2 end)
+      iex> Enum.to_list(stream)
+      [2, 2, 6, 4, 10, 6, 14, 8, 18, 10]
+
+      iex> stream = Stream.map_every([1, 2, 3, 4, 5], 1, fn(x) -> x * 2 end)
+      iex> Enum.to_list(stream)
+      [2, 4, 6, 8, 10]
+
+      iex> stream = Stream.map_every(1..5, 0, fn(x) -> x * 2 end)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+  """
+  @spec map_every(Enumerable.t(), non_neg_integer, (element -> any)) :: Enumerable.t()
+  def map_every(enum, nth, fun)
+
+  def map_every(enum, 1, fun), do: map(enum, fun)
+  def map_every(enum, 0, _fun), do: %Stream{enum: enum}
+  def map_every([], _nth, _fun), do: %Stream{enum: []}
+
+  def map_every(enum, nth, fun) when is_integer(nth) and nth > 0 do
+    lazy(enum, nth, fn f1 -> R.map_every(nth, fun, f1) end)
+  end
+
+
+
