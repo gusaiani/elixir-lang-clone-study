@@ -563,5 +563,255 @@ defmodule Stream do
     lazy(enum, nth, fn f1 -> R.map_every(nth, fun, f1) end)
   end
 
+  @doc """
+  Creates a stream that will reject elements according to
+  the given function on enumeration.
+
+  ## Examples
+
+      iex> stream = Stream.reject([1, 2, 3], fn(x) -> rem(x, 2) == 0 end)
+      iex> Enum.to_list(stream)
+      [1, 3]
+
+  """
+  @spec reject(Enumerable.t(), (element -> as_boolean(term))) :: Enumerable.t()
+  def reject(enum, fun) do
+    lazy(enum, fn f1 -> R.reject(fun, f1) end)
+  end
+
+  @doc """
+  Runs the given stream.
+
+  This is useful when a stream needs to be run, for side effects,
+  and there is no interest in its return result.
+
+  ## Examples
+
+  Open up a file, replace all `#` by `%` and stream to another file
+  without loading the whole file in memory:
+
+      stream = File.stream!("code")
+      |> Stream.map(&String.replace(&1, "#", "%"))
+      |> Stream.into(File.stream!("new"))
+      |> Stream.run
+
+  No computation will be done until we call one of the Enum functions
+  or `Stream.run/1`.
+  """
+  @spec run(Enumerable.t()) :: :ok
+  def run(stream) do
+    _ = Enumerable.reduce(stream, {:cont, nil}, fn _, _ -> {:cont, nil} end)
+    :ok
+  end
+
+  @doc """
+  Creates a stream that applies the given function to each
+  element, emits the result and uses the same result as the accumulator
+  for the next computation. Uses the first element in the enumerable
+  as the starting value.
+
+  ## Examples
+
+      iex> stream = Stream.scan(1..5, &(&1 + &2))
+      iex> Enum.to_list(stream)
+      [1, 3, 6, 10, 15]
+
+  """
+  @spec scan(Enumerable.t(), (element, acc -> any)) :: Enumerable.t()
+  def scan(enum, fun) do
+    lazy(enum, :first, fn f1 -> R.scan2(fun, f1) end)
+  end
+
+  @doc """
+  Creates a stream that applies the given function to each
+  element, emits the result and uses the same result as the accumulator
+  for the next computation. Uses the given `acc` as the starting value.
+
+  ## Examples
+
+      iex> stream = Stream.scan(1..5, 0, &(&1 + &2))
+      iex> Enum.to_list(stream)
+      [1, 3, 6, 10, 15]
+
+  """
+  @spec scan(Enumerable.t(), acc, (element, acc -> any)) :: Enumerable.t()
+  def scan(enum, acc, fun) do
+    lazy(enum, acc, fn f1 -> R.scan3(fun, f1) end)
+  end
+
+  @doc """
+  Lazily takes the next `count` items from the enumerable and stops
+  enumeration.
+
+  If a negative `count` is given, the last `count` values will be taken.
+  For such, the collection is fully enumerated keeping up to `2 * count`
+  elements in memory. Once the end of the collection is reached,
+  the last `count` elements will be executed. Therefore, using
+  a negative `count` on an infinite collection will never return.
+
+  ## Examples
+
+      iex> stream = Stream.take(1..100, 5)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+      iex> stream = Stream.take(1..100, -5)
+      iex> Enum.to_list(stream)
+      [96, 97, 98, 99, 100]
+
+      iex> stream = Stream.cycle([1, 2, 3]) |> Stream.take(5)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 1, 2]
+
+  """
+  @spec take(Enumerable.t(), integer) :: Enumerable.t()
+  def take(_enum, 0), do: %Stream{enum: []}
+  def take([], _count), do: %Stream{enum: []}
+
+  def take(enum, count) when is_integer(count) and count > 0 do
+    lazy(enum, count, fn f1 -> R.take(f1) end)
+  end
+
+  def take(enum, count) when is_integer(count) and count < 0 do
+    &Enumerable.reduce(Enum.take(enum, count), &1, &2)
+  end
+
+  @doc """
+  Creates a stream that takes every `nth` item from the enumerable.
+
+  The first item is always included, unless `nth` is 0.
+
+  `nth` must be a non-negative integer.
+
+  ## Examples
+
+      iex> stream = Stream.take_every(1..10, 2)
+      iex> Enum.to_list(stream)
+      [1, 3, 5, 7, 9]
+
+      iex> stream = Stream.take_every([1, 2, 3, 4, 5], 1)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+      iex> stream = Stream.take_every(1..1000, 0)
+      iex> Enum.to_list(stream)
+      []
+
+  """
+  @spec take_every(Enumerable.t(), non_neg_integer) :: Enumerable.t()
+  def take_every(enum, nth)
+  def take_every(_enum, 0), do: %Stream{enum: []}
+  def take_every([], _nth), do: %Stream{enum: []}
+
+  def take_every(enum, nth) when is_integer(nth) and nth > 0 do
+    lazy(enum, nth, fn f1 -> R.take_every(nth, f1) end)
+  end
+
+  @doc """
+  Lazily takes elements of the enumerable while the given
+  function returns a truthy value.
+
+  ## Examples
+
+      iex> stream = Stream.take_while(1..100, &(&1 <= 5))
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5]
+
+  """
+  @spec take_while(Enumerable.t(), (element -> as_boolean(term))) :: Enumerable.t()
+  def take_while(enum, fun) do
+    lazy(enum, fn f1 -> R.take_while(fun, f1) end)
+  end
+
+  @doc """
+  Creates a stream that emits a single value after `n` milliseconds.
+
+  The value emitted is `0`. This operation will block the caller by
+  the given time until the item is streamed.
+
+  ## Examples
+
+      iex> Stream.timer(10) |> Enum.to_list
+      [0]
+
+  """
+  @spec timer(non_neg_integer) :: Enumerable.t()
+  def timer(n) do
+    take(interval(n), 1)
+  end
+
+  @doc """
+  Transforms an existing stream.
+
+  It expects an accumulator and a function that receives each stream item
+  and an accumulator, and must return a tuple containing a new stream
+  (often a list) with the new accumulator or a tuple with `:halt` as first
+  element and the accumulator as second.
+
+  Note: this function is similar to `Enum.flat_map_reduce/3` except the
+  latter returns both the flat list and accumulator, while this one returns
+  only the stream.
+
+  ## Examples
+
+  `Stream.transform/3` is useful as it can be used as the basis to implement
+  many of the functions defined in this module. For example, we can implement
+  `Stream.take(enum, n)` as follows:
+
+      iex> enum = 1..100
+      iex> n = 3
+      iex> stream = Stream.transform(enum, 0, fn i, acc ->
+      ...>   if acc < n, do: {[i], acc + 1}, else: {:halt, acc}
+      ...> end)
+      iex> Enum.to_list(stream)
+      [1, 2, 3]
+
+  """
+  @spec transform(Enumerable.t(), acc, fun) :: Enumerable.t()
+        when fun: (element, acc -> {Enumerable.t(), acc} | {:halt, acc}),
+             acc: any
+  def transform(enum, acc, reducer) do
+    &do_transform(enum, fn -> acc end, reducer, &1, &2, nil)
+  end
+
+  @doc """
+  Transforms an existing stream with function-based start and finish.
+
+  The accumulator is only calculated when transformation starts. It also
+  allows an after function to be given which is invoked when the stream
+  halts or completes.
+
+  This function can be seen as a combination of `Stream.resource/3` with
+  `Stream.transform/3`.
+  """
+  @spec transform(Enumerable.t(), (() -> acc), fun, (acc -> term)) :: Enumerable.t()
+        when fun: (element, acc -> {Enumerable.t(), acc} | {:halt, acc}),
+             acc: any
+  def transform(enum, start_fun, reducer, after_fun) do
+    &do_transform(enum, start_fun, reducer, &1, &2, after_fun)
+  end
+
+  defp do_transform(enumerables, user_acc, user, inner_acc, fun, after_fun) do
+    inner = &do_transform_each(&1, &2, fun)
+    step = &do_transform_step(&1, &2)
+    next = &Enumerable.reduce(enumerables, &1, step)
+    funs = {user, fun, inner, after_fun}
+    do_transform(user_acc.(), :cont, next, inner_acc, funs)
+  end
+
+  defp do_transform(user_acc, _next_op, next, {:halt, inner_acc}, funs) do
+    {_, _, _, after_fun} = funs
+    next.({:halt, []})
+    do_after(after_fun, user_acc)
+    {:halted, inner_acc}
+  end
+
+  defp do_transform(user_acc, next_op, next, {:suspend, inner_acc}, funs) do
+    {:suspended, inner_acc, &do_transform(user_acc, next_op, next, &1, funs)}
+  end
+
+
+
+
 
 
