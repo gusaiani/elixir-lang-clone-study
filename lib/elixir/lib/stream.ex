@@ -810,8 +810,224 @@ defmodule Stream do
     {:suspended, inner_acc, &do_transform(user_acc, next_op, next, &1, funs)}
   end
 
+  defp do_transform(user_acc, :halt, _next, {_, inner_acc}, funs) do
+    {_, _, _, after_fun} = funs
+    do_after(after_fun, user_acc)
+    {:halted, inner_acc}
+  end
 
+  defp do_transform(user_acc, :cont, next, inner_acc, funs) do
+    {_, _, _, after_fun} = funs
 
+    try do
+      next.({:cont, []})
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        do_after(after_fun, user_acc)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      {:suspended, vals, next} ->
+        do_transform_user(:lists.reverse(vals), user_acc, :cont, next, inner_acc, funs)
 
+      {_, vals} ->
+        do_transform_user(:lists.reverse(vals), user_acc, :halt, next, inner_acc, funs)
+    end
+  end
 
+  defp do_transform_user([], user_acc, next_op, next, inner_acc, funs) do
+    do_transform(user_acc, next_op, next, inner_acc, funs)
+  end
 
+  defp do_transform_user([val | vals], user_acc, next_op, next, inner_acc, funs) do
+    {user, fun, inner, after_fun} = funs
+
+    try do
+      user.(val, user_acc)
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      {[], user_acc} ->
+        do_transform_user(vals, user_acc, next_op, next, inner_acc, funs)
+
+      {list, user_acc} when is_list(list) ->
+        reduce = &Enumerable.List.reduce(list, &1, fun)
+        do_list_transform(vals, user_acc, next_op, next, inner_acc, reduce, funs)
+
+      {:halt, user_acc} ->
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        {:halted, elem(inner_acc, 1)}
+
+      {other, user_acc} ->
+        reduce = &Enumerable.reduce(other, &1, inner)
+        do_enum_transform(vals, user_acc, next_op, next, inner_acc, reduce, funs)
+    end
+  end
+
+  defp do_list_transform(vals, user_acc, next_op, next, inner_acc, reduce, funs) do
+    {_, _, _, after_fun} = funs
+
+    try do
+      reduce.(inner_acc)
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      {:done, acc} ->
+        do_transform_user(vals, user_acc, next_op, next, {:cont, acc}, funs)
+
+      {:halted, acc} ->
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        {:halted, acc}
+
+      {:suspended, acc, continuation} ->
+        resume = &do_list_transform(vals, user_acc, next_op, next, &1, continuation, funs)
+        {:suspended, acc, resume}
+    end
+  end
+
+  defp do_enum_transform(vals, user_acc, next_op, next, {op, inner_acc}, reduce, funs) do
+    {_, _, _, after_fun} = funs
+
+    try do
+      reduce.({op, [:outer | inner_acc]})
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace()
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      # Only take into account outer halts when the op is not halt itself.
+      # Otherwise, we were the ones wishing to halt, so we should just stop.
+      {:halted, [:outer | acc]}
+      when op != :halt ->
+        do_transform_user(vals, user_acc, next_op, next, {:cont, acc}, funs)
+
+      {:halted, [_ | acc]} ->
+        next.({:halt, []})
+        do_after(after_fun, user_acc)
+        {:halted, acc}
+
+      {:done, [_ | acc]} ->
+        do_transform_user(vals, user_acc, next_op, next, {:cont, acc}, funs)
+
+      {:suspended, [_ | acc], continuation} ->
+        resume = &do_enum_transform(vals, user_acc, next_op, next, &1, continuation, funs)
+        {:suspended, acc, resume}
+    end
+  end
+
+  defp do_after(nil, _user_acc), do: :ok
+  defp do_after(fun, user_acc), do: fun.(user_acc)
+
+  defp do_transform_each(x, [:outer | acc], f) do
+    case f.(x, acc) do
+      {:halt, res} -> {:halt, [:inner | res]}
+      {op, res} -> {op, [:outer | res]}
+    end
+  end
+
+  defp do_transform_step(x, acc) do
+    {:suspend, [x | acc]}
+  end
+
+  @doc """
+  Creates a stream that only emits elements if they are unique.
+
+  Keep in mind that, in order to know if an element is unique
+  or not, this function needs to store all unique values emitted
+  by the stream. Therefore, if the stream is infinite, the number
+  of items stored will grow infinitely, never being garbage collected.
+
+  ## Examples
+
+      iex> Stream.uniq([1, 2, 3, 3, 2, 1]) |> Enum.to_list
+      [1, 2, 3]
+
+  """
+  @spec uniq(Enumerable.t()) :: Enumerable.t()
+  def uniq(enum) do
+    uniq_by(enum, fn x -> x end)
+  end
+
+  @doc false
+  # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def uniq(enum, fun) do
+    uniq_by(enum, fun)
+  end
+
+  @doc """
+  Creates a stream that only emits elements if they are unique, by removing the
+  elements for which function `fun` returned duplicate items.
+
+  The function `fun` maps every element to a term which is used to
+  determine if two elements are duplicates.
+
+  Keep in mind that, in order to know if an element is unique
+  or not, this function needs to store all unique values emitted
+  by the stream. Therefore, if the stream is infinite, the number
+  of items stored will grow infinitely, never being garbage collected.
+
+  ## Example
+
+      iex> Stream.uniq_by([{1, :x}, {2, :y}, {1, :z}], fn {x, _} -> x end) |> Enum.to_list
+      [{1, :x}, {2, :y}]
+
+      iex> Stream.uniq_by([a: {:tea, 2}, b: {:tea, 2}, c: {:coffee, 1}], fn {_, y} -> y end) |> Enum.to_list
+      [a: {:tea, 2}, c: {:coffee, 1}]
+
+  """
+  @spec uniq_by(Enumerable.t(), (element -> term)) :: Enumerable.t()
+  def uniq_by(enum, fun) do
+    lazy(enum, %{}, fn f1 -> R.uniq_by(fun, f1) end)
+  end
+
+  @doc """
+  Creates a stream where each item in the enumerable will
+  be wrapped in a tuple alongside its index.
+
+  If an `offset` is given, we will index from the given offset instead of from zero.
+
+  ## Examples
+
+      iex> stream = Stream.with_index([1, 2, 3])
+      iex> Enum.to_list(stream)
+      [{1, 0}, {2, 1}, {3, 2}]
+
+      iex> stream = Stream.with_index([1, 2, 3], 3)
+      iex> Enum.to_list(stream)
+      [{1, 3}, {2, 4}, {3, 5}]
+
+  """
+  @spec with_index(Enumerable.t(), integer) :: Enumerable.t()
+  def with_index(enum, offset \\ 0) do
+    lazy(enum, offset, fn f1 -> R.with_index(f1) end)
+  end
+
+  ## Combiners
+
+  @doc """
+  Creates a stream that enumerates each enumerable in an enumerable.
+
+  ## Examples
+
+      iex> stream = Stream.concat([1..3, 4..6, 7..9])
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+  """
+  @spec concat(Enumerable.t()) :: Enumerable.t()
+  def concat(enumerables) do
+    flat_map(enumerables, & &1)
+  end
