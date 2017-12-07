@@ -135,3 +135,104 @@ defmodule Calendar do
   Converts the date into a string according to the calendar.
   """
   @callback date_to_string(year, month, day) :: String.t()
+
+  @doc """
+  Converts the datetime (without time zone) into a string according to the calendar.
+  """
+  @callback naive_datetime_to_string(year, month, day, hour, minute, second, microsecond) ::
+              String.t()
+
+  @doc """
+  Converts the datetime (with time zone) into a string according to the calendar.
+  """
+  @callback datetime_to_string(
+              year,
+              month,
+              day,
+              hour,
+              minute,
+              second,
+              microsecond,
+              time_zone,
+              zone_abbr,
+              utc_offset,
+              std_offset
+            ) :: String.t()
+
+  @doc """
+  Converts the time into a string according to the calendar.
+  """
+  @callback time_to_string(hour, minute, second, microsecond) :: String.t()
+
+  @doc """
+  Converts the given datetime (with time zone) into the `t:iso_days` format.
+  """
+  @callback naive_datetime_to_iso_days(year, month, day, hour, minute, second, microsecond) ::
+              iso_days
+
+  @doc """
+  Converts `t:iso_days` to the Calendar's datetime format.
+  """
+  @callback naive_datetime_from_iso_days(iso_days) ::
+              {year, month, day, hour, minute, second, microsecond}
+
+  @doc """
+  Converts the given time to the `t:day_fraction` format.
+  """
+  @callback time_to_day_fraction(hour, minute, second, microsecond) :: day_fraction
+
+  @doc """
+  Converts `t:day_fraction` to the Calendar's time format.
+  """
+  @callback time_from_day_fraction(day_fraction) :: {hour, minute, second, microsecond}
+
+  @doc """
+  Define the rollover moment for the given calendar.
+
+  This is the moment, in your calendar, when the current day ends
+  and the next day starts.
+
+  The result of this function is used to check if two calendars rollover at
+  the same time of day. If they do not, we can only convert datetimes and times
+  between them. If they do, this means that we can also convert dates as well
+  as naive datetimes between them.
+
+  This day fraction should be in its most simplified form possible, to make comparisons fast.
+
+  ## Examples
+
+    * If, in your Calendar, a new day starts at midnight, return {0, 1}.
+    * If, in your Calendar, a new day starts at sunrise, return {1, 4}.
+    * If, in your Calendar, a new day starts at noon, return {1, 2}.
+    * If, in your Calendar, a new day starts at sunset, return {3, 4}.
+
+  """
+  @callback day_rollover_relative_to_midnight_utc() :: day_fraction
+
+  @doc """
+  Should return `true` if the given date describes a proper date in the calendar.
+  """
+  @callback valid_date?(year, month, day) :: boolean
+
+  @doc """
+  Should return `true` if the given time describes a proper time in the calendar.
+  """
+  @callback valid_time?(hour, minute, second, microsecond) :: boolean
+
+  # General Helpers
+
+  @doc """
+  Returns `true` if two calendars have the same moment of starting a new day,
+  `false` otherwise.
+
+  If two calendars are not compatible, we can only convert datetimes and times
+  between them. If they are compatible, this means that we can also convert
+  dates as well as naive datetimes between them.
+  """
+  @spec compatible_calendars?(Calendar.calendar(), Calendar.calendar()) :: boolean
+  def compatible_calendars?(calendar, calendar), do: true
+
+  def compatible_calendars?(calendar1, calendar2) do
+    calendar1.day_rollover_relative_to_midnight_utc() ==
+      calendar2.day_rollover_relative_to_midnight_utc()
+  end
