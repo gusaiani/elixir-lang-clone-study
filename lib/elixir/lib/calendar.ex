@@ -236,3 +236,19 @@ defmodule Calendar do
     calendar1.day_rollover_relative_to_midnight_utc() ==
       calendar2.day_rollover_relative_to_midnight_utc()
   end
+
+  @doc """
+  Returns a microsecond tuple truncated to a given precision (`:microsecond`,
+  `:millisecond` or `:second`).
+  """
+  @spec truncate(Calendar.microsecond(), :microsecond | :millisecond | :second) ::
+          Calendar.microsecond()
+  def truncate(microsecond_tuple, :microsecond), do: microsecond_tuple
+
+  def truncate({microsecond, precision}, :millisecond) do
+    output_precision = min(precision, 3)
+    {div(microsecond, 1000) * 1000, output_precision}
+  end
+
+  def truncate(_, :second), do: {0, 0}
+end
