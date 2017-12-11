@@ -220,6 +220,8 @@ defmodule Module do
         end
       end
 
+  Modules compiled with HiPE would not call this hook.
+
   ### `@vsn`
 
   Specify the module version. Accepts any valid Elixir value, for example:
@@ -381,7 +383,7 @@ defmodule Module do
       of the corresponding setting in `Code.compiler_options/1`
 
     * `@compile {:inline, some_fun: 2, other_fun: 3}` - inlines the given
-      name/arity pairs.
+      name/arity pairs
 
     * `@compile {:autoload, false}` - disables automatic loading of
       modules after compilation. Instead, the module will be loaded after
@@ -402,17 +404,17 @@ defmodule Module do
   Each module gets an `__info__/1` function when it's compiled. The function
   takes one of the following atoms:
 
-  * `:functions` - keyword list of public functions along with their arities
+    * `:functions` - keyword list of public functions along with their arities
 
-  * `:macros` - keyword list of public macros along with their arities
+    * `:macros` - keyword list of public macros along with their arities
 
-  * `:module` - the module atom name
+    * `:module` - the module atom name
 
-  * `:md5` - the MD5 of the module
+    * `:md5` - the MD5 of the module
 
-  * `:compile` - a list with compiler metadata
+    * `:compile` - a list with compiler metadata
 
-  * `:attributes` - a list with all persisted attributes
+    * `:attributes` - a list with all persisted attributes
 
   """
   def __info__(kind)
@@ -426,4 +428,154 @@ defmodule Module do
   @spec open?(module) :: boolean
   def open?(module) when is_atom(module) do
     :elixir_module.is_open(module)
+  end
+
+  @doc """
+  Evaluates the quoted contents in the given module's context.
+
+  A list of environment options can also be given as argument.
+  See `Code.eval_string/3` for more information.
+
+  Raises an error if the module was already compiled.
+
+  ## Examples
+
+      defmodule Foo do
+        contents = quote do: (def sum(a, b), do: a + b)
+        Module.eval_quoted __MODULE__, contents
+      end
+
+      Foo.sum(1, 2) #=> 3
+
+  For convenience, you can pass any `Macro.Env` struct, such
+  as  `__ENV__/0`, as the first argument or as options. Both
+  the module and all options will be automatically extracted
+  from the environment:
+
+      defmodule Foo do
+        contents = quote do: (def sum(a, b), do: a + b)
+        Module.eval_quoted __ENV__, contents
+      end
+
+      Foo.sum(1, 2) #=> 3
+
+  Note that if you pass a `Macro.Env` struct as first argument
+  while also passing `opts`, they will be merged with `opts`
+  having precedence.
+  """
+  @spec eval_quoted(module | Macro.Env.t(), Macro.t(), list, keyword | Macro.Env.t()) :: term
+  def eval_quoted(module_or_env, quoted, binding \\ [], opts \\ [])
+
+  def eval_quoted(%Macro.Env{} = env, quoted, binding, opts)
+      when is_list(binding) and is_list(opts) do
+    eval_quoted(env.module, quoted, binding, Keyword.merge(Map.to_list(env), opts))
+  end
+
+  def eval_quoted(module, quoted, binding, %Macro.Env{} = env)
+      when is_atom(module) and is_list(binding) do
+    eval_quoted(module, quoted, binding, Map.to_list(env))
+  end
+
+  def eval_quoted(module, quoted, binding, opts)
+      when is_atom(module) and is_list(binding) and is_list(opts) do
+    assert_not_compiled!(:eval_quoted, module)
+    :elixir_def.reset_last(module)
+
+    {value, binding, _env, _scope} =
+      :elixir.eval_quoted(quoted, binding, Keyword.put(opts, :module, module))
+
+    {value, binding}
+  end
+
+  @doc """
+  Creates a module with the given name and defined by
+  the given quoted expressions.
+
+  The line where the module is defined and its file **must**
+  be passed as options.
+
+  It returns a tuple of shape `{:module, module, binary, term}`
+  where `module` is the module name, `binary` is the module
+  byte code and `term` is the result of the last expression in
+  `quoted`.
+
+  Similar to `Kernel.defmodule/2`, the binary will only be
+  written to disk as a `.beam` file if `Module.create/3` is
+  invoked in a file that is currently being compiled.
+
+  ## Examples
+
+      contents =
+        quote do
+          def world, do: true
+        end
+
+      Module.create(Hello, contents, Macro.Env.location(__ENV__))
+
+      Hello.world #=> true
+
+  ## Differences from `defmodule`
+
+  `Module.create/3` works similarly to `Kernel.defmodule/2`
+  and return the same results. While one could also use
+  `defmodule` to define modules dynamically, this function
+  is preferred when the module body is given by a quoted
+  expression.
+
+  Another important distinction is that `Module.create/3`
+  allows you to control the environment variables used
+  when defining the module, while `Kernel.defmodule/2`
+  automatically uses the environment it is invoked at.
+  """
+  @spec create(module, Macro.t(), Macro.Env.t() | keyword) :: {:module, module, binary, term}
+  def create(module, quoted, opts)
+
+  def create(module, quoted, %Macro.Env{} = env) when is_atom(module) do
+    create(module, quoted, Map.to_list(env))
+  end
+
+  def create(module, quoted, opts) when is_atom(module) and is_list(opts) do
+    unless Keyword.has_key?(opts, :file) do
+      raise ArgumentError, "expected :file to be given as option"
+    end
+
+    next = :erlang.unique_integer()
+    line = Keyword.get(opts, :line, 0)
+    quoted = :elixir_quote.linify_with_context_counter(line, {module, next}, quoted)
+    :elixir_module.compile(module, quoted, [], :elixir.env_for_eval(opts))
+  end
+
+  @doc """
+  Concatenates a list of aliases and returns a new alias.
+
+  ## Examples
+
+      iex> Module.concat([Foo, Bar])
+      Foo.Bar
+
+      iex> Module.concat([Foo, "Bar"])
+      Foo.Bar
+
+  """
+  @spec concat([binary | atom]) :: atom
+  def concat(list) when is_list(list) do
+    :elixir_aliases.concat(list)
+  end
+
+  @doc """
+  Concatenates two aliases and returns a new alias.
+
+  ## Examples
+
+      iex> Module.concat(Foo, Bar)
+      Foo.Bar
+
+      iex> Module.concat(Foo, "Bar")
+      Foo.Bar
+
+  """
+  @spec concat(binary | atom, binary | atom) :: atom
+  def concat(left, right)
+      when (is_binary(left) or is_atom(left)) and (is_binary(right) or is_atom(right)) do
+    :elixir_aliases.concat([left, right])
   end
