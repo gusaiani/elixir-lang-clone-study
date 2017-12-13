@@ -768,3 +768,145 @@ defmodule Module do
 
   # Otherwise, returns a generic guess
   defp merge_signature({_, line, _}, _newer, i), do: {:"arg#{i}", line, Elixir}
+
+  @doc """
+  Checks if the module defines the given function or macro.
+
+  Use `defines?/3` to assert for a specific type.
+
+  This function can only be used on modules that have not yet been compiled.
+  Use `Kernel.function_exported?/3` to check compiled modules.
+
+  ## Examples
+
+      defmodule Example do
+        Module.defines? __MODULE__, {:version, 0} #=> false
+        def version, do: 1
+        Module.defines? __MODULE__, {:version, 0} #=> true
+      end
+
+  """
+  @spec defines?(module, definition) :: boolean
+  def defines?(module, {function_or_macro_name, arity} = tuple)
+      when is_atom(module) and is_atom(function_or_macro_name) and is_integer(arity) and
+             arity >= 0 and arity <= 255 do
+    assert_not_compiled!(:defines?, module)
+    table = defs_table_for(module)
+    :ets.lookup(table, {:def, tuple}) != []
+  end
+
+  @doc """
+  Checks if the module defines a function or macro of the
+  given `kind`.
+
+  `kind` can be any of `:def`, `:defp`, `:defmacro`, or `:defmacrop`.
+
+  This function can only be used on modules that have not yet been compiled.
+  Use `Kernel.function_exported?/3` to check compiled modules.
+
+  ## Examples
+
+      defmodule Example do
+        Module.defines? __MODULE__, {:version, 0}, :defp #=> false
+        def version, do: 1
+        Module.defines? __MODULE__, {:version, 0}, :defp #=> false
+      end
+
+  """
+  @spec defines?(module, definition, def_kind) :: boolean
+  def defines?(module, {function_macro_name, arity} = tuple, def_kind)
+      when is_atom(module) and is_atom(function_macro_name) and is_integer(arity) and arity >= 0 and
+             arity <= 255 and def_kind in [:def, :defp, :defmacro, :defmacrop] do
+    assert_not_compiled!(:defines?, module)
+    table = defs_table_for(module)
+
+    case :ets.lookup(table, {:def, tuple}) do
+      [{_, ^def_kind, _, _, _, _}] -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns all functions defined in `module`.
+
+  ## Examples
+
+      defmodule Example do
+        def version, do: 1
+        Module.definitions_in __MODULE__ #=> [{:version, 0}]
+      end
+
+  """
+  @spec definitions_in(module) :: [definition]
+  def definitions_in(module) when is_atom(module) do
+    assert_not_compiled!(:definitions_in, module)
+    table = defs_table_for(module)
+    :lists.concat(:ets.match(table, {{:def, :"$1"}, :_, :_, :_, :_, :_}))
+  end
+
+  @doc """
+  Returns all functions defined in `module`, according
+  to its kind.
+
+  ## Examples
+
+      defmodule Example do
+        def version, do: 1
+        Module.definitions_in __MODULE__, :def  #=> [{:version, 0}]
+        Module.definitions_in __MODULE__, :defp #=> []
+      end
+
+  """
+  @spec definitions_in(module, def_kind) :: [definition]
+  def definitions_in(module, def_kind)
+      when is_atom(module) and def_kind in [:def, :defp, :defmacro, :defmacrop] do
+    assert_not_compiled!(:definitions_in, module)
+    table = defs_table_for(module)
+    :lists.concat(:ets.match(table, {{:def, :"$1"}, def_kind, :_, :_, :_, :_}))
+  end
+
+  @doc """
+  Makes the given functions in `module` overridable.
+
+  An overridable function is lazily defined, allowing a
+  developer to customize it. See `Kernel.defoverridable/1` for
+  more information and documentation.
+  """
+  @spec make_overridable(module, [definition]) :: :ok
+  def make_overridable(module, tuples) when is_atom(module) and is_list(tuples) do
+    assert_not_compiled!(:make_overridable, module)
+    check_impls_for_overridable(module, tuples)
+
+    func = fn
+      {function_name, arity} = tuple
+      when is_atom(function_name) and is_integer(arity) and arity >= 0 and arity <= 255 ->
+        case :elixir_def.take_definition(module, tuple) do
+          false ->
+            raise ArgumentError,
+                  "cannot make function #{function_name}/#{arity} " <>
+                    "overridable because it was not defined"
+
+          clause ->
+            neighbours = :elixir_locals.yank(tuple, module)
+            overridable_definitions = :elixir_overridable.overridable(module)
+
+            count =
+              case :maps.find(tuple, overridable_definitions) do
+                {:ok, {count, _, _, _}} -> count + 1
+                :error -> 1
+              end
+
+            overridable_definitions =
+              :maps.put(tuple, {count, clause, neighbours, false}, overridable_definitions)
+
+            :elixir_overridable.overridable(module, overridable_definitions)
+        end
+
+      other ->
+        raise ArgumentError,
+              "each element in tuple list has to be a " <>
+                "{function_name :: atom, arity :: 0..255} tuple, got: #{inspect(other)}"
+    end
+
+    :lists.foreach(func, tuples)
+  end
