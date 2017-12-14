@@ -910,3 +910,235 @@ defmodule Module do
 
     :lists.foreach(func, tuples)
   end
+
+  @spec make_overridable(module, module) :: :ok
+  def make_overridable(module, behaviour) when is_atom(module) and is_atom(behaviour) do
+    case check_module_for_overridable(module, behaviour) do
+      :ok ->
+        :ok
+
+      {:error, error_explanation} ->
+        raise ArgumentError,
+              "cannot pass module #{inspect(behaviour)} as argument " <>
+                "to defoverridable/1 because #{error_explanation}"
+    end
+
+    behaviour_callbacks =
+      for callback <- behaviour_info(behaviour, :callbacks) do
+        {pair, _kind} = normalize_macro_or_function_callback(callback)
+        pair
+      end
+
+    tuples =
+      for definition <- definitions_in(module), definition in behaviour_callbacks, do: definition
+
+    make_overridable(module, tuples)
+  end
+
+  defp check_impls_for_overridable(module, tuples) do
+    table = data_table_for(module)
+    impls = :ets.lookup_element(table, {:elixir, :impls}, 2)
+
+    {overridable_impls, impls} =
+      :lists.splitwith(fn {pair, _, _, _, _, _} -> pair in tuples end, impls)
+
+    if overridable_impls != [] do
+      :ets.insert(table, {{:elixir, :impls}, impls})
+      behaviours = :ets.lookup_element(table, :behaviour, 2)
+
+      callbacks =
+        for behaviour <- behaviours,
+            function_exported?(behaviour, :behaviour_info, 1),
+            callback <- behaviour_info(behaviour, :callbacks),
+            {callback, kind} = normalize_macro_or_function_callback(callback),
+            do: {callback, {kind, behaviour, true}},
+            into: %{}
+
+      check_impls(behaviours, callbacks, overridable_impls)
+    end
+  end
+
+  defp check_module_for_overridable(module, behaviour) do
+    behaviour_definitions = :ets.lookup_element(data_table_for(module), :behaviour, 2)
+
+    cond do
+      not Code.ensure_compiled?(behaviour) ->
+        {:error, "it was not defined"}
+
+      not function_exported?(behaviour, :behaviour_info, 1) ->
+        {:error, "it does not define any callbacks"}
+
+      behaviour not in behaviour_definitions ->
+        error_message =
+          "its corresponding behaviour is missing. Did you forget to " <>
+            "add @behaviour #{inspect(behaviour)}?"
+
+        {:error, error_message}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp normalize_macro_or_function_callback({function_name, arity}) do
+    case :erlang.atom_to_list(function_name) do
+      # Macros are always provided one extra argument in behaviour_info/1
+      'MACRO-' ++ tail ->
+        {{:erlang.list_to_atom(tail), arity - 1}, :defmacro}
+
+      _ ->
+        {{function_name, arity}, :def}
+    end
+  end
+
+  defp behaviour_info(module, key) do
+    case module.behaviour_info(key) do
+      list when is_list(list) -> list
+      :undefined -> []
+    end
+  end
+
+  @doc """
+  Returns `true` if `tuple` in `module` is marked as overridable.
+  """
+  @spec overridable?(module, definition) :: boolean
+  def overridable?(module, {function_name, arity} = tuple)
+      when is_atom(function_name) and is_integer(arity) and arity >= 0 and arity <= 255 do
+    :maps.is_key(tuple, :elixir_overridable.overridable(module))
+  end
+
+  @doc """
+  Puts a module attribute with `key` and `value` in the given `module`.
+
+  ## Examples
+
+      defmodule MyModule do
+        Module.put_attribute __MODULE__, :custom_threshold_for_lib, 10
+      end
+
+  """
+  @spec put_attribute(module, atom, term) :: :ok
+  def put_attribute(module, key, value) when is_atom(module) and is_atom(key) do
+    put_attribute(module, key, value, nil, nil)
+  end
+
+  @doc """
+  Gets the given attribute from a module.
+
+  If the attribute was marked with `accumulate` with
+  `Module.register_attribute/3`, a list is always returned.
+  `nil` is returned if the attribute has not been marked with
+  `accumulate` and has not been set to any value.
+
+  The `@` macro compiles to a call to this function. For example,
+  the following code:
+
+      @foo
+
+  Expands to something akin to:
+
+      Module.get_attribute(__MODULE__, :foo)
+
+  ## Examples
+
+      defmodule Foo do
+        Module.put_attribute __MODULE__, :value, 1
+        Module.get_attribute __MODULE__, :value #=> 1
+
+        Module.register_attribute __MODULE__, :value, accumulate: true
+        Module.put_attribute __MODULE__, :value, 1
+        Module.get_attribute __MODULE__, :value #=> [1]
+      end
+
+  """
+  @spec get_attribute(module, atom) :: term
+  def get_attribute(module, key) when is_atom(module) and is_atom(key) do
+    get_attribute(module, key, nil)
+  end
+
+  @doc """
+  Deletes the module attribute that matches the given key.
+
+  It returns the deleted attribute value (or `nil` if nothing was set).
+
+  ## Examples
+
+      defmodule MyModule do
+        Module.put_attribute __MODULE__, :custom_threshold_for_lib, 10
+        Module.delete_attribute __MODULE__, :custom_threshold_for_lib
+      end
+
+  """
+  @spec delete_attribute(module, atom) :: term
+  def delete_attribute(module, key) when is_atom(module) and is_atom(key) do
+    assert_not_compiled!(:delete_attribute, module)
+    table = data_table_for(module)
+
+    case :ets.take(table, key) do
+      [{_, value, _accumulated? = true, _}] ->
+        :ets.insert(table, {key, [], true, nil})
+        value
+
+      [{_, value, _, _}] ->
+        value
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc """
+  Registers an attribute.
+
+  By registering an attribute, a developer is able to customize
+  how Elixir will store and accumulate the attribute values.
+
+  ## Options
+
+  When registering an attribute, two options can be given:
+
+    * `:accumulate` - several calls to the same attribute will
+      accumulate instead of override the previous one. New attributes
+      are always added to the top of the accumulated list.
+
+    * `:persist` - the attribute will be persisted in the Erlang
+      Abstract Format. Useful when interfacing with Erlang libraries.
+
+  By default, both options are `false`.
+
+  ## Examples
+
+      defmodule MyModule do
+        Module.register_attribute __MODULE__,
+          :custom_threshold_for_lib,
+          accumulate: true, persist: false
+
+        @custom_threshold_for_lib 10
+        @custom_threshold_for_lib 20
+        @custom_threshold_for_lib #=> [20, 10]
+      end
+
+  """
+  @spec register_attribute(module, atom, [{:accumulate, boolean}, {:persist, boolean}]) :: :ok
+  def register_attribute(module, attribute, options)
+      when is_atom(module) and is_atom(attribute) and is_list(options) do
+    assert_not_compiled!(:register_attribute, module)
+    table = data_table_for(module)
+
+    if Keyword.get(options, :persist) do
+      attributes = :ets.lookup_element(table, {:elixir, :persisted_attributes}, 2)
+      :ets.insert(table, {{:elixir, :persisted_attributes}, [attribute | attributes]})
+    end
+
+    if Keyword.get(options, :accumulate) do
+      :ets.insert_new(table, {attribute, [], _accumulated? = true, _unread_line = nil}) ||
+        :ets.update_element(table, attribute, {3, true})
+    end
+
+    :ok
+  end
+
+
+
+
+
