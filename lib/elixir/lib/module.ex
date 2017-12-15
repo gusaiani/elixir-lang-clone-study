@@ -1138,7 +1138,154 @@ defmodule Module do
     :ok
   end
 
+  @doc """
+  Splits the given module name into binary parts.
 
+  `module` has to be an Elixir module, as `split/1` won't work with Erlang-style
+  modules (for example, `split(:lists)` raises an error).
 
+  `split/1` also supports splitting the string representation of Elixir modules
+  (that is, the result of calling `Atom.to_string/1` with the module name).
 
+  ## Examples
 
+      iex> Module.split(Very.Long.Module.Name.And.Even.Longer)
+      ["Very", "Long", "Module", "Name", "And", "Even", "Longer"]
+      iex> Module.split("Elixir.String.Chars")
+      ["String", "Chars"]
+
+  """
+  @spec split(module | String.t()) :: [String.t(), ...]
+  def split(module)
+
+  def split(module) when is_atom(module) do
+    split(Atom.to_string(module), _original = module)
+  end
+
+  def split(module) when is_binary(module) do
+    split(module, _original = module)
+  end
+
+  defp split("Elixir." <> name, _original) do
+    String.split(name, ".")
+  end
+
+  defp split(_module, original) do
+    raise ArgumentError, "expected an Elixir module, got: #{inspect(original)}"
+  end
+
+  @doc false
+  # Used internally to compile documentation.
+  # This function is private and must be used only internally.
+  def compile_doc(env, kind, name, args, _guards, _body) do
+    module = env.module
+    table = data_table_for(module)
+    arity = length(args)
+    pair = {name, arity}
+
+    {line, doc} = get_doc_info(table, env)
+
+    # TODO: Store @since alongside the docs
+    _ = get_since_info(table)
+
+    add_doc(table, line, kind, pair, args, doc, env)
+    :ok
+  end
+
+  defp add_doc(_module, line, kind, {name, arity}, _args, doc, env)
+       when kind in [:defp, :defmacrop] do
+    if doc do
+      error_message =
+        "#{kind} #{name}/#{arity} is private, " <>
+          "@doc attribute is always discarded for private functions/macros/types"
+
+      :elixir_errors.warn(line, env.file, error_message)
+    end
+  end
+
+  defp add_doc(table, line, kind, pair, args, doc, env) do
+    signature = build_signature(args, env)
+
+    case :ets.lookup(table, {:doc, pair}) do
+      [] ->
+        :ets.insert(table, {{:doc, pair}, line, kind, signature, doc})
+
+      [{doc_tuple, line, _current_kind, current_sign, current_doc}] ->
+        signature = merge_signatures(current_sign, signature, 1)
+        doc = if is_nil(doc), do: current_doc, else: doc
+        :ets.insert(table, {doc_tuple, line, kind, signature, doc})
+    end
+  end
+
+  @doc false
+  # Used internally to check the validity of arguments to @impl.
+  # This function is private and must be used only internally.
+  def compile_impl(env, kind, name, args, _guards, _body) do
+    %{module: module, line: line, file: file} = env
+    table = data_table_for(module)
+
+    case :ets.take(table, :impl) do
+      [{:impl, value, _, _}] ->
+        impls = :ets.lookup_element(table, {:elixir, :impls}, 2)
+        {total, defaults} = args_count(args, 0, 0)
+
+        impl = {{name, total}, defaults, kind, line, file, value}
+
+        :ets.insert(table, {{:elixir, :impls}, [impl | impls]})
+
+      [] ->
+        :ok
+    end
+
+    :ok
+  end
+
+  defp args_count([{:\\, _, _} | tail], total, defaults) do
+    args_count(tail, total + 1, defaults + 1)
+  end
+
+  defp args_count([_head | tail], total, defaults) do
+    args_count(tail, total + 1, defaults)
+  end
+
+  defp args_count([], total, defaults), do: {total, defaults}
+
+  @doc false
+  def check_behaviours_and_impls(env, table, all_definitions, overridable_pairs) do
+    behaviours = :ets.lookup_element(table, :behaviour, 2)
+    impls = :ets.lookup_element(table, {:elixir, :impls}, 2)
+    callbacks = check_behaviours(env, behaviours)
+
+    pending_callbacks =
+      if impls != [] do
+        non_implemented_callbacks = check_impls(behaviours, callbacks, impls)
+        warn_missing_impls(env, non_implemented_callbacks, all_definitions, overridable_pairs)
+        non_implemented_callbacks
+      else
+        callbacks
+      end
+
+    check_callbacks(env, pending_callbacks, all_definitions)
+    :ok
+  end
+
+  defp check_behaviours(%{lexical_tracker: pid} = env, behaviours) do
+    Enum.reduce(behaviours, %{}, fn behaviour, acc ->
+      cond do
+        not is_atom(behaviour) ->
+          message =
+            "@behaviour #{inspect(behaviour)} must be an atom (in module #{inspect(env.module)})"
+
+          :elixir_errors.warn(env.line, env.file, message)
+          acc
+
+        not Code.ensure_compiled?(behaviour) ->
+          message =
+            "module #{inspect(behaviour)} does not exist (in module #{inspect(env.module)})"
+
+          unless standard_behaviour?(behaviour) do
+            :elixir_errors.warn(env.line, env.file, message)
+          end
+
+          acc
+    end)
