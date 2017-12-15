@@ -15,9 +15,9 @@ defprotocol Enumerable do
 
   Internally, `Enum.map/2` is implemented as follows:
 
-      def map(enum, fun) do
+      def map(enumerable, fun) do
         reducer = fn x, acc -> {:cont, [fun.(x) | acc]} end
-        Enumerable.reduce(enum, {:cont, []}, reducer) |> elem(1) |> :lists.reverse()
+        Enumerable.reduce(enumerable, {:cont, []}, reducer) |> elem(1) |> :lists.reverse()
       end
 
   Notice the user-supplied function is wrapped into a `t:reducer/0` function.
@@ -412,6 +412,9 @@ defmodule Enum do
       iex> Enum.chunk_every([1, 2, 3, 4], 10)
       [[1, 2, 3, 4]]
 
+      iex> Enum.chunk_every([1, 2, 3, 4, 5], 2, 3, [])
+      [[1, 2], [4, 5]]
+
   """
   @spec chunk_every(t, pos_integer, pos_integer, t | :discard) :: [list]
   def chunk_every(enumerable, count, step, leftover \\ [])
@@ -420,7 +423,7 @@ defmodule Enum do
   end
 
   @doc """
-  Chunks the `enum` with fine grained control when every chunk is emitted.
+  Chunks the `enumerable` with fine grained control when every chunk is emitted.
 
   `chunk_fun` receives the current element and the accumulator and
   must return `{:cont, element, acc}` to emit the given chunk and
@@ -456,9 +459,9 @@ defmodule Enum do
           (acc -> {:cont, chunk, acc} | {:cont, acc})
         ) :: Enumerable.t()
         when chunk: any
-  def chunk_while(enum, acc, chunk_fun, after_fun) do
+  def chunk_while(enumerable, acc, chunk_fun, after_fun) do
     {_, {res, acc}} =
-      Enumerable.reduce(enum, {:cont, {[], acc}}, fn entry, {buffer, acc} ->
+      Enumerable.reduce(enumerable, {:cont, {[], acc}}, fn entry, {buffer, acc} ->
         case chunk_fun.(entry, acc) do
           {:cont, emit, acc} -> {:cont, {[emit | buffer], acc}}
           {:cont, acc} -> {:cont, {buffer, acc}}
@@ -1024,9 +1027,9 @@ defmodule Enum do
 
   ## Examples
 
-      iex> enum = 1..100
+      iex> enumerable = 1..100
       iex> n = 3
-      iex> Enum.flat_map_reduce(enum, 0, fn i, acc ->
+      iex> Enum.flat_map_reduce(enumerable, 0, fn i, acc ->
       ...>   if acc < n, do: {[i], acc + 1}, else: {:halt, acc}
       ...> end)
       {[1, 2, 3], 3}
@@ -2763,13 +2766,13 @@ defmodule Enum do
 
     enumerable
     |> reduce(ref, fn
-         element, ^ref -> element
-         element, acc -> fun.(element, acc)
-       end)
+      element, ^ref -> element
+      element, acc -> fun.(element, acc)
+    end)
     |> case do
-         ^ref -> empty.()
-         result -> result
-       end
+      ^ref -> empty.()
+      result -> result
+    end
   end
 
   defp reduce_by([head | tail], first, fun) do
