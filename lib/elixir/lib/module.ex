@@ -1288,4 +1288,77 @@ defmodule Module do
           end
 
           acc
+
+        not function_exported?(behaviour, :behaviour_info, 1) ->
+          message =
+            "module #{inspect(behaviour)} is not a behaviour (in module #{inspect(env.module)})"
+
+          unless standard_behaviour?(behaviour) do
+            :elixir_errors.warn(env.line, env.file, message)
+          end
+
+          acc
+
+        true ->
+          :elixir_lexical.record_remote(behaviour, nil, pid)
+          optional_callbacks = behaviour_info(behaviour, :optional_callbacks)
+          callbacks = behaviour_info(behaviour, :callbacks)
+          Enum.reduce(callbacks, acc, &add_callback(&1, behaviour, env, optional_callbacks, &2))
+      end
     end)
+  end
+
+  defp add_callback(original, behaviour, env, optional_callbacks, acc) do
+    {callback, kind} = normalize_macro_or_function_callback(original)
+
+    case acc do
+      %{^callback => {_kind, conflict, _optional?}} ->
+        message =
+          "conflicting behaviours found. #{format_definition(kind, callback)} is required by " <>
+            "#{inspect(behaviour)} and #{inspect(conflict)} (in module #{inspect(env.module)})"
+
+        :elixir_errors.warn(env.line, env.file, message)
+
+      %{} ->
+        :ok
+    end
+
+    Map.put(acc, callback, {kind, behaviour, original in optional_callbacks})
+  end
+
+  defp standard_behaviour?(behaviour) do
+    behaviour in [
+      Collectable,
+      Enumerable,
+      Inspect,
+      List.Chars,
+      String.Chars
+    ]
+  end
+
+  defp check_callbacks(env, callbacks, all_definitions) do
+    for {callback, {kind, behaviour, optional?}} <- callbacks do
+      case :lists.keyfind(callback, 1, all_definitions) do
+        false when not optional? ->
+          message =
+            format_callback(callback, kind, behaviour) <>
+              " is not implemented (in module #{inspect(env.module)})"
+
+          :elixir_errors.warn(env.line, env.file, message)
+
+        {_, wrong_kind, _, _} when kind != wrong_kind ->
+          message =
+            format_callback(callback, kind, behaviour) <>
+              " was implemented as \"#{wrong_kind}\" but should have been \"#{kind}\" " <>
+              "(in module #{inspect(env.module)})"
+
+          :elixir_errors.warn(env.line, env.file, message)
+
+        _ ->
+          :ok
+      end
+    end
+
+    :ok
+  end
+
