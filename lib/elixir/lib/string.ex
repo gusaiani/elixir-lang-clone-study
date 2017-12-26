@@ -7,7 +7,7 @@ defmodule String do
   ## Codepoints and grapheme cluster
 
   The functions in this module act according to the Unicode
-  Standard, version 6.3.0.
+  Standard, version 10.0.0.
 
   As per the standard, a codepoint is a single Unicode Character,
   which may be represented by one or more bytes.
@@ -54,6 +54,9 @@ defmodule String do
   Standard Annex #29](http://www.unicode.org/reports/tr29/).
   The current Elixir version implements Extended Grapheme Cluster
   algorithm.
+
+  For converting a binary to a different encoding and for Unicode
+  normalization mechanisms, see Erlang's `:unicode` module.
 
   ## String and binary operations
 
@@ -180,7 +183,7 @@ defmodule String do
   ## Patterns
 
   Many functions in this module work with patterns. For example,
-  String.split/2 can split a string into multiple patterns given
+  `String.split/2` can split a string into multiple patterns given
   a pattern. This pattern can be a string, a list of strings or
   a compiled pattern:
 
@@ -203,44 +206,58 @@ defmodule String do
   @type t :: binary
   @type codepoint :: t
   @type grapheme :: t
-  @type pattern :: t | [t] | :binary.cp
+  @type pattern :: t | [t] | :binary.cp()
+
+  @conditional_mappings [:greek]
 
   @doc """
   Checks if a string contains only printable characters.
+
+  Takes an optional `limit` as a second argument. `printable?/2` only
+  checks the printability of the string up to the `limit`.
 
   ## Examples
 
       iex> String.printable?("abc")
       true
 
+      iex> String.printable?("abc" <> <<0>>)
+      false
+
+      iex> String.printable?("abc" <> <<0>>, 2)
+      true
+
   """
   @spec printable?(t) :: boolean
-  def printable?(string)
+  @spec printable?(t, non_neg_integer | :infinity) :: boolean
+  def printable?(string, counter \\ :infinity)
+
+  def printable?(<<>>, _), do: true
+  def printable?(_, 0), do: true
 
   for char <- 0x20..0x7E do
-    def printable?(<<unquote(char), rest::binary>>) do
-      printable?(rest)
+    def printable?(<<unquote(char), rest::binary>>, counter) do
+      printable?(rest, decrement(counter))
     end
   end
-  def printable?(<<?\n, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\r, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\t, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\v, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\b, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\f, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\e, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\d, rest::binary>>), do: printable?(rest)
-  def printable?(<<?\a, rest::binary>>), do: printable?(rest)
 
-  def printable?(<<h::utf8, t::binary>>)
-      when h in 0xA0..0xD7FF
-      when h in 0xE000..0xFFFD
-      when h in 0x10000..0x10FFFF do
-    printable?(t)
+  for char <- '\n\r\t\v\b\f\e\d\a' do
+    def printable?(<<unquote(char), rest::binary>>, counter) do
+      printable?(rest, decrement(counter))
+    end
   end
 
-  def printable?(<<>>), do: true
-  def printable?(binary) when is_binary(binary), do: false
+  def printable?(<<char::utf8, rest::binary>>, counter)
+      when char in 0xA0..0xD7FF
+      when char in 0xE000..0xFFFD
+      when char in 0x10000..0x10FFFF do
+    printable?(rest, decrement(counter))
+  end
+
+  def printable?(binary, _) when is_binary(binary), do: false
+
+  defp decrement(:infinity), do: :infinity
+  defp decrement(counter), do: counter - 1
 
   @doc ~S"""
   Divides a string into substrings at each Unicode whitespace
@@ -256,7 +273,7 @@ defmodule String do
       iex> String.split("foo" <> <<194, 133>> <> "bar")
       ["foo", "bar"]
 
-      iex> String.split(" foo   bar")
+      iex> String.split(" foo   bar ")
       ["foo", "bar"]
 
       iex> String.split("no\u00a0break")
@@ -270,19 +287,29 @@ defmodule String do
   Divides a string into substrings based on a pattern.
 
   Returns a list of these substrings. The pattern can
-  be a string, a list of strings or a regular expression.
+  be a string, a list of strings, or a regular expression.
 
   The string is split into as many parts as possible by
-  default, but can be controlled via the `parts: pos_integer` option.
-  If you pass `parts: :infinity`, it will return all possible parts
-  (`:infinity` is the default).
+  default, but can be controlled via the `:parts` option.
 
   Empty strings are only removed from the result if the
-  `trim` option is set to `true` (default is `false`).
+  `:trim` option is set to `true`.
 
   When the pattern used is a regular expression, the string is
-  split using `Regex.split/3`. In that case this function accepts
-  additional options which are documented in `Regex.split/3`.
+  split using `Regex.split/3`.
+
+  ## Options
+
+    * `:parts` (positive integer or `:infinity`) - the string
+      is split into at most as many parts as this option specifies.
+      If `:infinity`, the string will be split into all possible
+      parts. Defaults to `:infinity`.
+
+    * `:trim` (boolean) - if `true`, empty strings are removed from
+      the resulting list.
+
+  This function also accepts all options accepted by `Regex.split/3`
+  if `pattern` is a regular expression.
 
   ## Examples
 
@@ -316,19 +343,19 @@ defmodule String do
       iex> String.split("abc", ~r{b}, include_captures: true)
       ["a", "b", "c"]
 
-  Splitting on empty patterns returns graphemes:
-
-      iex> String.split("abc", ~r{})
-      ["a", "b", "c", ""]
+  Splitting on empty string returns graphemes:
 
       iex> String.split("abc", "")
-      ["a", "b", "c", ""]
+      ["", "a", "b", "c", ""]
 
       iex> String.split("abc", "", trim: true)
       ["a", "b", "c"]
 
-      iex> String.split("abc", "", parts: 2)
-      ["a", "bc"]
+      iex> String.split("abc", "", parts: 1)
+      ["abc"]
+
+      iex> String.split("abc", "", parts: 3)
+      ["", "a", "bc"]
 
   A precompiled pattern can also be given:
 
@@ -336,22 +363,46 @@ defmodule String do
       iex> String.split("1,2 3,4", pattern)
       ["1", "2", "3", "4"]
 
+  Note this function can split within or across grapheme boundaries.
+  For example, take the grapheme "é" which is made of the characters
+  "e" and the acute accent. The following returns true:
+
+      iex> String.split(String.normalize("é", :nfd), "e")
+      ["", "́"]
+
+  However, if "é" is represented by the single character "e with acute"
+  accent, then it will return false:
+
+      iex> String.split(String.normalize("é", :nfc), "e")
+      ["é"]
+
   """
-  @spec split(t, pattern | Regex.t) :: [t]
-  @spec split(t, pattern | Regex.t, Keyword.t) :: [t]
+  @spec split(t, pattern | Regex.t(), keyword) :: [t]
   def split(string, pattern, options \\ [])
 
   def split(string, %Regex{} = pattern, options) when is_binary(string) do
     Regex.split(pattern, string, options)
   end
 
-  def split(string, pattern, []) when is_binary(string) and pattern != "" do
+  def split(string, "", options) when is_binary(string) do
+    parts = Keyword.get(options, :parts, :infinity)
+    index = parts_to_index(parts)
+    trim = Keyword.get(options, :trim, false)
+
+    if trim == false and index != 1 do
+      ["" | split_empty(string, trim, index - 1)]
+    else
+      split_empty(string, trim, index)
+    end
+  end
+
+  def split(string, pattern, []) when is_tuple(pattern) or is_binary(string) do
     :binary.split(string, pattern, [:global])
   end
 
   def split(string, pattern, options) when is_binary(string) do
-    parts   = Keyword.get(options, :parts, :infinity)
-    trim    = Keyword.get(options, :trim, false)
+    parts = Keyword.get(options, :parts, :infinity)
+    trim = Keyword.get(options, :trim, false)
     pattern = maybe_compile_pattern(pattern)
     split_each(string, pattern, trim, parts_to_index(parts))
   end
@@ -359,35 +410,201 @@ defmodule String do
   defp parts_to_index(:infinity), do: 0
   defp parts_to_index(n) when is_integer(n) and n > 0, do: n
 
+  defp split_empty("", true, 1), do: []
+  defp split_empty(string, _, 1), do: [string]
+
+  defp split_empty(string, trim, count) do
+    case next_grapheme(string) do
+      {h, t} -> [h | split_empty(t, trim, count - 1)]
+      nil -> split_empty("", trim, 1)
+    end
+  end
+
   defp split_each("", _pattern, true, 1), do: []
   defp split_each(string, _pattern, _trim, 1) when is_binary(string), do: [string]
+
   defp split_each(string, pattern, trim, count) do
     case do_splitter(string, pattern, trim) do
-      {h, t} -> [h | split_each(t, pattern, trim, count -1)]
-      nil    -> []
+      {h, t} -> [h | split_each(t, pattern, trim, count - 1)]
+      nil -> []
     end
   end
+
+  @doc """
+  Returns an enumerable that splits a string on demand.
+
+  This is in contrast to `split/3` which splits all
+  the string upfront.
+
+  Note splitter does not support regular expressions
+  (as it is often more efficient to have the regular
+  expressions traverse the string at once than in
+  multiple passes).
+
+  ## Options
+
+    * :trim - when `true`, does not emit empty patterns
+
+  ## Examples
+
+      iex> String.splitter("1,2 3,4 5,6 7,8,...,99999", [" ", ","]) |> Enum.take(4)
+      ["1", "2", "3", "4"]
+
+      iex> String.splitter("abcd", "") |> Enum.take(10)
+      ["", "a", "b", "c", "d", ""]
+
+      iex> String.splitter("abcd", "", trim: true) |> Enum.take(10)
+      ["a", "b", "c", "d"]
+
+  """
+  @spec splitter(t, pattern, keyword) :: Enumerable.t()
+  def splitter(string, pattern, options \\ [])
+
+  def splitter(string, "", options) do
+    if Keyword.get(options, :trim, false) do
+      Stream.unfold(string, &next_grapheme/1)
+    else
+      Stream.unfold(:match, &do_empty_splitter(&1, string))
+    end
+  end
+
+  def splitter(string, pattern, options) do
+    pattern = maybe_compile_pattern(pattern)
+    trim = Keyword.get(options, :trim, false)
+    Stream.unfold(string, &do_splitter(&1, pattern, trim))
+  end
+
+  defp do_empty_splitter(:match, string), do: {"", string}
+  defp do_empty_splitter(:nomatch, _string), do: nil
+  defp do_empty_splitter("", _), do: {"", :nomatch}
+  defp do_empty_splitter(string, _), do: next_grapheme(string)
 
   defp do_splitter(:nomatch, _pattern, _), do: nil
-  defp do_splitter("", _pattern, true),    do: nil
-  defp do_splitter("", _pattern, false),   do: {"", :nomatch}
-
-  defp do_splitter(bin, "", _trim) do
-    next_grapheme(bin)
-  end
+  defp do_splitter("", _pattern, false), do: {"", :nomatch}
+  defp do_splitter("", _pattern, true), do: nil
 
   defp do_splitter(bin, pattern, trim) do
-    case :binary.match(bin, pattern) do
-      {0, length} when trim ->
-        do_splitter(:binary.part(bin, length, byte_size(bin) - length), pattern, trim)
-      {pos, length} ->
-        final = pos + length
-        {:binary.part(bin, 0, pos),
-         :binary.part(bin, final, byte_size(bin) - final)}
-      :nomatch ->
-        {bin, :nomatch}
+    case :binary.split(bin, pattern) do
+      ["", second] when trim -> do_splitter(second, pattern, trim)
+      [first, second] -> {first, second}
+      [first] -> {first, :nomatch}
     end
   end
+
+  defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
+  defp maybe_compile_pattern(pattern), do: :binary.compile_pattern(pattern)
+
+  @doc """
+  Splits a string into two at the specified offset. When the offset given is
+  negative, location is counted from the end of the string.
+
+  The offset is capped to the length of the string. Returns a tuple with
+  two elements.
+
+  Note: keep in mind this function splits on graphemes and for such it
+  has to linearly traverse the string. If you want to split a string or
+  a binary based on the number of bytes, use `Kernel.binary_part/3`
+  instead.
+
+  ## Examples
+
+      iex> String.split_at "sweetelixir", 5
+      {"sweet", "elixir"}
+
+      iex> String.split_at "sweetelixir", -6
+      {"sweet", "elixir"}
+
+      iex> String.split_at "abc", 0
+      {"", "abc"}
+
+      iex> String.split_at "abc", 1000
+      {"abc", ""}
+
+      iex> String.split_at "abc", -1000
+      {"", "abc"}
+
+  """
+  @spec split_at(t, integer) :: {t, t}
+  def split_at(string, position)
+
+  def split_at(string, position) when is_integer(position) and position >= 0 do
+    do_split_at(string, position)
+  end
+
+  def split_at(string, position) when is_integer(position) and position < 0 do
+    position = length(string) + position
+
+    case position >= 0 do
+      true -> do_split_at(string, position)
+      false -> {"", string}
+    end
+  end
+
+  defp do_split_at(string, position) do
+    {byte_size, rest} = String.Unicode.split_at(string, position)
+    {binary_part(string, 0, byte_size), rest || ""}
+  end
+
+  @doc ~S"""
+  Returns `true` if `string1` is canonically equivalent to 'string2'.
+
+  It performs Normalization Form Canonical Decomposition (NFD) on the
+  strings before comparing them. This function is equivalent to:
+
+      String.normalize(string1, :nfd) == String.normalize(string2, :nfd)
+
+  Therefore, if you plan to compare multiple strings, multiple times
+  in a row, you may normalize them upfront and compare them directly
+  to avoid multiple normalization passes.
+
+  ## Examples
+
+      iex> String.equivalent?("abc", "abc")
+      true
+
+      iex> String.equivalent?("man\u0303ana", "mañana")
+      true
+
+      iex> String.equivalent?("abc", "ABC")
+      false
+
+      iex> String.equivalent?("nø", "nó")
+      false
+
+  """
+  @spec equivalent?(t, t) :: boolean
+  def equivalent?(string1, string2) do
+    normalize(string1, :nfd) == normalize(string2, :nfd)
+  end
+
+  @doc """
+  Converts all characters in `string` to Unicode normalization
+  form identified by `form`.
+
+  ## Forms
+
+  The supported forms are:
+
+    * `:nfd` - Normalization Form Canonical Decomposition.
+      Characters are decomposed by canonical equivalence, and
+      multiple combining characters are arranged in a specific
+      order.
+
+    * `:nfc` - Normalization Form Canonical Composition.
+      Characters are decomposed and then recomposed by canonical equivalence.
+
+  ## Examples
+
+      iex> String.normalize("yêṩ", :nfd)
+      "yêṩ"
+
+      iex> String.normalize("leña", :nfc)
+      "leña"
+
+  """
+  @spec normalize(t, atom) :: t
+  defdelegate normalize(string, form), to: String.Normalizer
+
 
   defp maybe_compile_pattern(""), do: ""
   defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
