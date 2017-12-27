@@ -605,6 +605,212 @@ defmodule String do
   @spec normalize(t, atom) :: t
   defdelegate normalize(string, form), to: String.Normalizer
 
+  @doc """
+  Converts all characters in the given string to uppercase according to `mode`.
+
+  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  all non-conditional transformations outlined in the Unicode standard. `:ascii`
+  uppercases only the letters a to z. `:greek` includes the context sensitive
+  mappings found in Greek.
+
+  ## Examples
+
+      iex> String.upcase("abcd")
+      "ABCD"
+
+      iex> String.upcase("ab 123 xpto")
+      "AB 123 XPTO"
+
+      iex> String.upcase("olá")
+      "OLÁ"
+
+  The `:ascii` mode ignores Unicode characters and provides a more
+  performant implementation when you know the string contains only
+  ASCII characters:
+
+      iex> String.upcase("olá", :ascii)
+      "OLá"
+
+  """
+  @spec upcase(t, :default | :ascii | :greek) :: t
+  def upcase(string, mode \\ :default)
+
+  def upcase("", _mode) do
+    ""
+  end
+
+  def upcase(string, :default) when is_binary(string) do
+    String.Casing.upcase(string, [], :default)
+  end
+
+  def upcase(string, :ascii) when is_binary(string) do
+    for <<x <- string>>,
+      do: if(x >= ?a and x <= ?z, do: <<x - 32>>, else: <<x>>),
+      into: ""
+  end
+
+  def upcase(string, mode) when mode in @conditional_mappings do
+    String.Casing.upcase(string, [], mode)
+  end
+
+  @doc """
+  Converts all characters in the given string to lowercase according to `mode`.
+
+  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  all non-conditional transformations outlined in the Unicode standard. `:ascii`
+  lowercases only the letters A to Z. `:greek` includes the context sensitive
+  mappings found in Greek.
+
+  ## Examples
+
+      iex> String.downcase("ABCD")
+      "abcd"
+
+      iex> String.downcase("AB 123 XPTO")
+      "ab 123 xpto"
+
+      iex> String.downcase("OLÁ")
+      "olá"
+
+  The `:ascii` mode ignores Unicode characters and provides a more
+  performant implementation when you know the string contains only
+  ASCII characters:
+
+      iex> String.downcase("OLÁ", :ascii)
+      "olÁ"
+
+  And `:greek` properly handles the context sensitive sigma in Greek:
+
+      iex> String.downcase("ΣΣ")
+      "σσ"
+
+      iex> String.downcase("ΣΣ", :greek)
+      "σς"
+
+  """
+  @spec downcase(t, :default | :ascii | :greek) :: t
+  def downcase(string, mode \\ :default)
+
+  def downcase("", _mode) do
+    ""
+  end
+
+  def downcase(string, :default) when is_binary(string) do
+    String.Casing.downcase(string, [], :default)
+  end
+
+  def downcase(string, :ascii) when is_binary(string) do
+    for <<x <- string>>,
+      do: if(x >= ?A and x <= ?Z, do: <<x + 32>>, else: <<x>>),
+      into: ""
+  end
+
+  def downcase(string, mode) when mode in @conditional_mappings do
+    String.Casing.downcase(string, [], mode)
+  end
+
+  @doc """
+  Converts the first character in the given string to
+  uppercase and the remainder to lowercase according to `mode`.
+
+  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  all non-conditional transformations outlined in the Unicode standard. `:ascii`
+  lowercases only the letters A to Z. `:greek` includes the context sensitive
+  mappings found in Greek.
+
+  ## Examples
+
+      iex> String.capitalize("abcd")
+      "Abcd"
+
+      iex> String.capitalize("ﬁn")
+      "Fin"
+
+      iex> String.capitalize("olá")
+      "Olá"
+
+  """
+  @spec capitalize(t, :default | :ascii | :greek) :: t
+  def capitalize(string, mode \\ :default)
+
+  def capitalize(<<char, rest::binary>>, :ascii) do
+    char = if char >= ?a and char <= ?z, do: char - 32, else: char
+    <<char>> <> downcase(rest, :ascii)
+  end
+
+  def capitalize(string, mode) when is_binary(string) do
+    {char, rest} = String.Casing.titlecase_once(string, mode)
+    char <> downcase(rest, mode)
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+  defdelegate rstrip(binary), to: String.Break, as: :trim_trailing
+
+  @doc false
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def rstrip(string, char) when is_integer(char) do
+    replace_trailing(string, <<char::utf8>>, "")
+  end
+
+  @doc """
+  Replaces all leading occurrences of `match` by `replacement` of `match` in `string`.
+
+  Returns the string untouched if there are no occurrences.
+
+  If `match` is `""`, this function raises an `ArgumentError` exception: this
+  happens because this function replaces **all** the occurrences of `match` at
+  the beginning of `string`, and it's impossible to replace "multiple"
+  occurrences of `""`.
+
+  ## Examples
+
+      iex> String.replace_leading("hello world", "hello ", "")
+      "world"
+      iex> String.replace_leading("hello hello world", "hello ", "")
+      "world"
+
+      iex> String.replace_leading("hello world", "hello ", "ola ")
+      "ola world"
+      iex> String.replace_leading("hello hello world", "hello ", "ola ")
+      "ola ola world"
+
+  """
+  @spec replace_leading(t, t, t) :: t | no_return
+  def replace_leading(string, match, replacement)
+      when is_binary(string) and is_binary(match) and is_binary(replacement) do
+    if match == "" do
+      raise ArgumentError, "cannot use an empty string as the match to replace"
+    end
+
+    prefix_size = byte_size(match)
+    suffix_size = byte_size(string) - prefix_size
+    replace_leading(string, match, replacement, prefix_size, suffix_size, 0)
+  end
+
+  defp replace_leading(string, match, replacement, prefix_size, suffix_size, acc)
+       when suffix_size >= 0 do
+    case string do
+      <<prefix::size(prefix_size)-binary, suffix::binary>> when prefix == match ->
+        replace_leading(
+          suffix,
+          match,
+          replacement,
+          prefix_size,
+          suffix_size - prefix_size,
+          acc + 1
+        )
+
+      _ ->
+        prepend_unless_empty(duplicate(replacement, acc), string)
+    end
+  end
+
+  defp replace_leading(string, _match, replacement, _prefix_size, _suffix_size, acc) do
+    prepend_unless_empty(duplicate(replacement, acc), string)
+  end
 
   defp maybe_compile_pattern(""), do: ""
   defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
