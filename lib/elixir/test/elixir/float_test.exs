@@ -40,4 +40,52 @@ defmodule FloatTest do
       Float.parse("1.7976931348623159e308")
     end
   end
+
+  test "floor/1" do
+    assert Float.floor(12.524235) === 12.0
+    assert Float.floor(-12.5) === -13.0
+    assert Float.floor(-12.524235) === -13.0
+    assert Float.floor(7.5e3) === 7500.0
+    assert Float.floor(7.5432e3) === 7543.0
+    assert Float.floor(7.5e-3) === 0.0
+    assert Float.floor(-12.32453e4) === -123_246.0
+    assert Float.floor(-12.32453e-10) === -1.0
+    assert Float.floor(0.32453e-10) === 0.0
+    assert Float.floor(-0.32453e-10) === -1.0
+    assert Float.floor(1.32453e-10) === 0.0
+  end
+
+  test "floor/2 with precision" do
+    assert Float.floor(12.524235, 0) === 12.0
+    assert Float.floor(-12.524235, 0) === -13.0
+
+    assert Float.floor(12.52, 2) === 12.51
+    assert Float.floor(-12.52, 2) === -12.52
+
+    assert Float.floor(12.524235, 2) === 12.52
+    assert Float.floor(-12.524235, 3) === -12.525
+
+    assert Float.floor(12.32453e-20, 2) === 0.0
+    assert Float.floor(-12.32453e-20, 2) === -0.01
+
+    assert_raise ArgumentError, "precision 16 is out of valid range of 0..15", fn ->
+      Float.floor(1.1, 16)
+    end
+  end
+
+  test "ceil/1" do
+    assert Float.ceil(12.524235) === 13.0
+    assert Float.ceil(-12.5) === -12.0
+    assert Float.ceil(-12.524235) === -12.0
+    assert Float.ceil(7.5e3) === 7500.0
+    assert Float.ceil(7.5432e3) === 7544.0
+    assert Float.ceil(7.5e-3) === 1.0
+    assert Float.ceil(-12.32453e4) === -123_245.0
+    assert Float.ceil(-12.32453e-10) === 0.0
+    assert Float.ceil(0.32453e-10) === 1.0
+    assert Float.ceil(-0.32453e-10) === 0.0
+    assert Float.ceil(1.32453e-10) === 1.0
+    assert Float.ceil(0.0) === 0.0
+  end
 end
+
