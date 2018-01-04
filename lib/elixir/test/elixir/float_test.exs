@@ -87,5 +87,37 @@ defmodule FloatTest do
     assert Float.ceil(1.32453e-10) === 1.0
     assert Float.ceil(0.0) === 0.0
   end
-end
 
+  test "ceil/2 with precision" do
+    assert Float.ceil(12.524235, 0) === 13.0
+    assert Float.ceil(-12.524235, 0) === -12.0
+
+    assert Float.ceil(12.52, 2) === 12.52
+    assert Float.ceil(-12.52, 2) === -12.51
+
+    assert Float.ceil(12.524235, 2) === 12.53
+    assert Float.ceil(-12.524235, 3) === -12.524
+
+    assert Float.ceil(12.32453e-20, 2) === 0.01
+    assert Float.ceil(-12.32453e-20, 2) === 0.0
+
+    assert Float.ceil(0.0, 2) === 0.0
+
+    assert_raise ArgumentError, "precision 16 is out of valid range of 0..15", fn ->
+      Float.ceil(1.1, 16)
+    end
+  end
+
+  test "round/2" do
+    assert Float.round(5.5675, 3) === 5.567
+    assert Float.round(-5.5674, 3) === -5.567
+    assert Float.round(5.5, 3) === 5.5
+    assert Float.round(5.5e-10, 10) === 5.0e-10
+    assert Float.round(5.5e-10, 8) === 0.0
+    assert Float.round(5.0, 0) === 5.0
+
+    assert_raise ArgumentError, "precision 16 is out of valid range of 0..15", fn ->
+      Float.round(1.1, 16)
+    end
+  end
+end
