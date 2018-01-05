@@ -305,4 +305,158 @@ defmodule Float do
     <<tmp::float>> = <<sign::1, exp + 1023::11, tmp::52>>
     tmp
   end
+
+  defp rounding(:floor, 1, _num, div), do: div + 1
+  defp rounding(:ceil, 0, _num, div), do: div + 1
+
+  defp rounding(:half_up, _sign, num, div) do
+    case rem(num, 10) do
+      rem when rem < 5 -> div
+      rem when rem >= 5 -> div + 1
+    end
+  end
+
+  defp rounding(_, _, _, div), do: div
+
+  Enum.reduce(0..104, 1, fn x, acc ->
+    defp power_of_10(unquote(x)), do: unquote(acc)
+    acc * 10
+  end)
+
+  Enum.reduce(0..104, 1, fn x, acc ->
+    defp power_of_5(unquote(x)), do: unquote(acc)
+    acc * 5
+  end)
+
+  @doc """
+  Returns a pair of integers whose ratio is exactly equal
+  to the original float and with a positive denominator.
+
+  ## Examples
+
+      iex> Float.ratio(3.14)
+      {7070651414971679, 2251799813685248}
+      iex> Float.ratio(-3.14)
+      {-7070651414971679, 2251799813685248}
+      iex> Float.ratio(1.5)
+      {3, 2}
+      iex> Float.ratio(-1.5)
+      {-3, 2}
+      iex> Float.ratio(16.0)
+      {16, 1}
+      iex> Float.ratio(-16.0)
+      {-16, 1}
+
+  """
+  def ratio(float) when is_float(float) do
+    <<sign::1, exp::11, significant::52-bitstring>> = <<float::float>>
+    {num, _, den} = decompose(significant)
+    num = sign(sign, num)
+
+    case exp - 1023 do
+      exp when exp > 0 ->
+        {den, exp} = shift_right(den, exp)
+        {shift_left(num, exp), den}
+
+      exp when exp < 0 ->
+        {num, shift_left(den, -exp)}
+
+      0 ->
+        {num, den}
+    end
+  end
+
+  defp decompose(significant) do
+    decompose(significant, 1, 0, 2, 1, 1)
+  end
+
+  defp decompose(<<1::1, bits::bitstring>>, count, last_count, power, _last_power, acc) do
+    decompose(bits, count + 1, count, power <<< 1, power, shift_left(acc, count - last_count) + 1)
+  end
+
+  defp decompose(<<0::1, bits::bitstring>>, count, last_count, power, last_power, acc) do
+    decompose(bits, count + 1, last_count, power <<< 1, last_power, acc)
+  end
+
+  defp decompose(<<>>, _count, last_count, _power, last_power, acc) do
+    {acc, last_count, last_power}
+  end
+
+  defp sign(0, num), do: num
+  defp sign(1, num), do: -num
+
+  defp shift_left(num, 0), do: num
+  defp shift_left(num, times), do: shift_left(num <<< 1, times - 1)
+
+  defp shift_right(num, 0), do: {num, 0}
+  defp shift_right(1, times), do: {1, times}
+  defp shift_right(num, times), do: shift_right(num >>> 1, times - 1)
+
+  @doc """
+  Returns a charlist which corresponds to the text representation
+  of the given float.
+
+  It uses the shortest representation according to algorithm described
+  in "Printing Floating-Point Numbers Quickly and Accurately" in
+  Proceedings of the SIGPLAN '96 Conference on Programming Language
+  Design and Implementation.
+
+  ## Examples
+
+      iex> Float.to_charlist(7.0)
+      '7.0'
+
+  """
+  @spec to_charlist(float) :: charlist
+  def to_charlist(float) when is_float(float) do
+    :io_lib_format.fwrite_g(float)
+  end
+
+  @doc """
+  Returns a binary which corresponds to the text representation
+  of the given float.
+
+  It uses the shortest representation according to algorithm described
+  in "Printing Floating-Point Numbers Quickly and Accurately" in
+  Proceedings of the SIGPLAN '96 Conference on Programming Language
+  Design and Implementation.
+
+  ## Examples
+
+      iex> Float.to_string(7.0)
+      "7.0"
+
+  """
+  @spec to_string(float) :: String.t()
+  def to_string(float) when is_float(float) do
+    IO.iodata_to_binary(:io_lib_format.fwrite_g(float))
+  end
+
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+  @doc false
+  def to_char_list(float), do: Float.to_charlist(float)
+
+  @doc false
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def to_char_list(float, options) do
+    :erlang.float_to_list(float, expand_compact(options))
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+  def to_string(float, options) do
+    :erlang.float_to_binary(float, expand_compact(options))
+  end
+
+  defp invalid_precision_message(precision) do
+    "precision #{precision} is out of valid range of #{inspect(@precision_range)}"
+  end
+
+  defp expand_compact([{:compact, false} | t]), do: expand_compact(t)
+  defp expand_compact([{:compact, true} | t]), do: [:compact | expand_compact(t)]
+  defp expand_compact([h | t]), do: [h | expand_compact(t)]
+  defp expand_compact([]), do: []
 end
