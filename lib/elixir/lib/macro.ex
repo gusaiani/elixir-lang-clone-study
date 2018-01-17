@@ -627,19 +627,27 @@ defmodule Macro do
 
   # Splat when
   def to_string({:when, _, args} = ast, fun) do
-    {left, right} = :elixir_utils.split_last(args)
-    fun.(ast, "(" <> Enum.map_join(left, ", ", &to_string(&1, fun)) <> ") when " <> to_string(right, fun))
+    {left, right} = split_last(args)
+
+    result =
+      "(" <> Enum.map_join(left, ", ", &to_string(&1, fun)) <> ") when " <> to_string(right, fun)
+
+    fun.(ast, result)
   end
 
   # Capture
   def to_string({:&, _, [{:/, _, [{name, _, ctx}, arity]}]} = ast, fun)
       when is_atom(name) and is_atom(ctx) and is_integer(arity) do
-    fun.(ast, "&" <> Atom.to_string(name) <> "/" <> to_string(arity, fun))
+    result = "&" <> Atom.to_string(name) <> "/" <> to_string(arity, fun)
+    fun.(ast, result)
   end
 
   def to_string({:&, _, [{:/, _, [{{:., _, [mod, name]}, _, []}, arity]}]} = ast, fun)
       when is_atom(name) and is_integer(arity) do
-    fun.(ast, "&" <> to_string(mod, fun) <> "." <> Atom.to_string(name) <> "/" <> to_string(arity, fun))
+    result =
+      "&" <> to_string(mod, fun) <> "." <> Atom.to_string(name) <> "/" <> to_string(arity, fun)
+
+    fun.(ast, result)
   end
 
   def to_string({:&, _, [arg]} = ast, fun) when not is_integer(arg) do
@@ -647,44 +655,40 @@ defmodule Macro do
   end
 
   # left not in right
-  def to_string({:not, _, [{:in, _, [left, right]}]} = ast, fun)  do
+  def to_string({:not, _, [{:in, _, [left, right]}]} = ast, fun) do
     fun.(ast, to_string(left, fun) <> " not in " <> to_string(right, fun))
   end
 
-  # Unary ops
-  def to_string({unary, _, [{binary, _, [_, _]} = arg]} = ast, fun)
-      when unary in unquote(@unary_ops) and binary in unquote(@binary_ops) do
-    fun.(ast, Atom.to_string(unary) <> "(" <> to_string(arg, fun) <> ")")
-  end
-
-  def to_string({:not, _, [arg]} = ast, fun)  do
-    fun.(ast, "not " <> to_string(arg, fun))
-  end
-
-  def to_string({op, _, [arg]} = ast, fun) when op in unquote(@unary_ops) do
-    fun.(ast, Atom.to_string(op) <> to_string(arg, fun))
-  end
-
   # Access
-  def to_string({{:., _, [Access, :get]}, _, [{op, _, _} = left, right]} = ast, fun)
-      when op in unquote(@binary_ops) do
-    fun.(ast, "(" <> to_string(left, fun) <> ")" <> to_string([right], fun))
+  def to_string({{:., _, [Access, :get]}, _, [left, right]} = ast, fun) do
+    if op_expr?(left) do
+      fun.(ast, "(" <> to_string(left, fun) <> ")" <> to_string([right], fun))
+    else
+      fun.(ast, to_string(left, fun) <> to_string([right], fun))
+    end
   end
 
-  def to_string({{:., _, [Access, :get]}, _, [left, right]} = ast, fun) do
-    fun.(ast, to_string(left, fun) <> to_string([right], fun))
+  # foo.{bar, baz}
+  def to_string({{:., _, [left, :{}]}, _, args} = ast, fun) do
+    fun.(ast, to_string(left, fun) <> ".{" <> args_to_string(args, fun) <> "}")
   end
 
   # All other calls
   def to_string({target, _, args} = ast, fun) when is_list(args) do
-    if sigil = sigil_call(ast, fun) do
-      sigil
+    with :error <- unary_call(ast, fun),
+         :error <- binary_call(ast, fun),
+         :error <- sigil_call(ast, fun) do
+      {list, last} = split_last(args)
+
+      result =
+        case kw_blocks?(last) do
+          true -> call_to_string_with_args(target, list, fun) <> kw_blocks_to_string(last, fun)
+          false -> call_to_string_with_args(target, args, fun)
+        end
+
+      fun.(ast, result)
     else
-      {list, last} = :elixir_utils.split_last(args)
-      fun.(ast, case kw_blocks?(last) do
-        true  -> call_to_string_with_args(target, list, fun) <> kw_blocks_to_string(last, fun)
-        false -> call_to_string_with_args(target, args, fun)
-      end)
+      {:ok, value} -> value
     end
   end
 
@@ -695,16 +699,23 @@ defmodule Macro do
 
   # Lists
   def to_string(list, fun) when is_list(list) do
-    fun.(list, cond do
-      list == [] ->
-        "[]"
-      :io_lib.printable_list(list) ->
-        IO.iodata_to_binary [?', Inspect.BitString.escape(IO.chardata_to_string(list), ?'), ?']
-      Inspect.List.keyword?(list) ->
-        "[" <> kw_list_to_string(list, fun) <> "]"
-      true ->
-        "[" <> Enum.map_join(list, ", ", &to_string(&1, fun)) <> "]"
-    end)
+    result =
+      cond do
+        list == [] ->
+          "[]"
+
+        :io_lib.printable_list(list) ->
+          {escaped, _} = Identifier.escape(IO.chardata_to_string(list), ?')
+          IO.iodata_to_binary([?', escaped, ?'])
+
+        Inspect.List.keyword?(list) ->
+          "[" <> kw_list_to_string(list, fun) <> "]"
+
+        true ->
+          "[" <> Enum.map_join(list, ", ", &to_string(&1, fun)) <> "]"
+      end
+
+    fun.(list, result)
   end
 
   # All other structures
@@ -712,9 +723,8 @@ defmodule Macro do
 
   defp bitpart_to_string({:::, _, [left, right]} = ast, fun) do
     result =
-      op_to_string(left, fun, :::, :left) <>
-      "::" <>
-      bitmods_to_string(right, fun, :::, :right)
+      op_to_string(left, fun, :::, :left) <> "::" <> bitmods_to_string(right, fun, :::, :right)
+
     fun.(ast, result)
   end
 
@@ -725,8 +735,8 @@ defmodule Macro do
   defp bitmods_to_string({op, _, [left, right]} = ast, fun, _, _) when op in [:*, :-] do
     result =
       bitmods_to_string(left, fun, op, :left) <>
-      Atom.to_string(op) <>
-      bitmods_to_string(right, fun, op, :right)
+        Atom.to_string(op) <> bitmods_to_string(right, fun, op, :right)
+
     fun.(ast, result)
   end
 
@@ -735,18 +745,18 @@ defmodule Macro do
   end
 
   # Block keywords
-  @kw_keywords [:do, :catch, :rescue, :after, :else]
+  kw_keywords = [:do, :catch, :rescue, :after, :else]
 
   defp kw_blocks?([{:do, _} | _] = kw) do
-    Enum.all?(kw, &match?({x, _} when x in unquote(@kw_keywords), &1))
+    Enum.all?(kw, &match?({x, _} when x in unquote(kw_keywords), &1))
   end
+
   defp kw_blocks?(_), do: false
 
   # Check if we have an interpolated string.
-  defp interpolated?({:<<>>, _, [_, | _] = parts}) do
+  defp interpolated?({:<<>>, _, [_ | _] = parts}) do
     Enum.all?(parts, fn
-      {:::, _, [{{:., _, [Kernel, :to_string]}, _, [_]},
-                {:binary, _, _}]} -> true
+      {:::, _, [{{:., _, [Kernel, :to_string]}, _, [_]}, {:binary, _, _}]} -> true
       binary when is_binary(binary) -> true
       _ -> false
     end)
@@ -757,19 +767,60 @@ defmodule Macro do
   end
 
   defp interpolate({:<<>>, _, parts}, fun) do
-    parts = Enum.map_join(parts, "", fn
-      {:::, _, [{{:., _, [Kernel, :to_string]}, _, [arg]}, {:binary, _, _}]} ->
-        "\#{" <> to_string(arg, fun) <> "}"
-      binary when is_binary(binary) ->
-        binary = inspect(binary, [])
-        :binary.part(binary, 1, byte_size(binary) - 2)
-    end)
+    parts =
+      Enum.map_join(parts, "", fn
+        {:::, _, [{{:., _, [Kernel, :to_string]}, _, [arg]}, {:binary, _, _}]} ->
+          "\#{" <> to_string(arg, fun) <> "}"
+
+        binary when is_binary(binary) ->
+          binary = inspect(binary, [])
+          :binary.part(binary, 1, byte_size(binary) - 2)
+      end)
 
     <<?", parts::binary, ?">>
   end
 
-  defp module_to_string(atom, _fun) when is_atom(atom), do: inspect(atom, [])
-  defp module_to_string(other, fun), do: call_to_string(other, fun)
+  defp module_to_string(atom, _fun) when is_atom(atom) do
+    inspect(atom, [])
+  end
+
+  defp module_to_string({:&, _, [val]} = expr, fun) when not is_integer(val) do
+    "(" <> to_string(expr, fun) <> ")"
+  end
+
+  defp module_to_string({:fn, _, _} = expr, fun) do
+    "(" <> to_string(expr, fun) <> ")"
+  end
+
+  defp module_to_string({_, _, [_ | _] = args} = expr, fun) do
+    if kw_blocks?(List.last(args)) do
+      "(" <> to_string(expr, fun) <> ")"
+    else
+      to_string(expr, fun)
+    end
+  end
+
+  defp module_to_string(expr, fun) do
+    to_string(expr, fun)
+  end
+
+  defp unary_call({op, _, [arg]} = ast, fun) when is_atom(op) do
+    case Identifier.unary_op(op) do
+      {_, _} ->
+        if op == :not or op_expr?(arg) do
+          {:ok, fun.(ast, Atom.to_string(op) <> "(" <> to_string(arg, fun) <> ")")}
+        else
+          {:ok, fun.(ast, Atom.to_string(op) <> to_string(arg, fun))}
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  defp unary_call(_, _) do
+    :error
+  end
 
   defp sigil_call({func, _, [{:<<>>, _, _} = bin, args]} = ast, fun) when is_atom(func) and is_list(args) do
     sigil =
