@@ -822,38 +822,64 @@ defmodule Macro do
     :error
   end
 
-  defp sigil_call({func, _, [{:<<>>, _, _} = bin, args]} = ast, fun) when is_atom(func) and is_list(args) do
-    sigil =
-      case Atom.to_string(func) do
-        <<"sigil_", name>> ->
-          "~" <> <<name>> <>
-          interpolate(bin, fun) <>
-          sigil_args(args, fun)
-        _ ->
-          nil
-      end
-    fun.(ast, sigil)
+  defp binary_call({op, _, [left, right]} = ast, fun) when is_atom(op) do
+    case Identifier.binary_op(op) do
+      {_, _} ->
+        left = op_to_string(left, fun, op, :left)
+        right = op_to_string(right, fun, op, :right)
+        op = if op in [:..], do: "#{op}", else: " #{op} "
+        {:ok, fun.(ast, left <> op <> right)}
+
+      :error ->
+        :error
+    end
+  end
+
+  defp binary_call(_, _) do
+    :error
+  end
+
+  defp sigil_call({sigil, _, [{:<<>>, _, _} = bin, args]} = ast, fun)
+       when is_atom(sigil) and is_list(args) do
+    case Atom.to_string(sigil) do
+      <<"sigil_", name>> ->
+        {:ok, fun.(ast, "~" <> <<name>> <> interpolate(bin, fun) <> sigil_args(args, fun))}
+
+      _ ->
+        :error
+    end
   end
 
   defp sigil_call(_other, _fun) do
-    nil
+    :error
   end
 
-  defp sigil_args([], _fun),  do: ""
+  defp sigil_args([], _fun), do: ""
   defp sigil_args(args, fun), do: fun.(args, List.to_string(args))
 
-  defp call_to_string(atom, _fun) when is_atom(atom),
-    do: Atom.to_string(atom)
-  defp call_to_string({:., _, [{:&, _, [val]} = arg]}, fun) when not is_integer(val),
-    do: "(" <> module_to_string(arg, fun) <> ")."
-  defp call_to_string({:., _, [{:fn, _, _} = arg]}, fun),
-    do: "(" <> module_to_string(arg, fun) <> ")."
-  defp call_to_string({:., _, [arg]}, fun),
-    do: module_to_string(arg, fun) <> "."
+  defp op_expr?(expr) do
+    case expr do
+      {op, _, [_, _]} ->
+        Identifier.binary_op(op) != :error
+
+      {op, _, [_]} ->
+        Identifier.unary_op(op) != :error
+
+      _ ->
+        false
+    end
+  end
+
+  defp call_to_string(atom, _fun) when is_atom(atom), do: Atom.to_string(atom)
+  defp call_to_string({:., _, [arg]}, fun), do: module_to_string(arg, fun) <> "."
+
+  defp call_to_string({:., _, [left, right]}, fun) when is_atom(right),
+    do: module_to_string(left, fun) <> "." <> call_to_string_for_atom(right)
+
   defp call_to_string({:., _, [left, right]}, fun),
     do: module_to_string(left, fun) <> "." <> call_to_string(right, fun)
-  defp call_to_string(other, fun),
-    do: to_string(other, fun)
+
+  defp call_to_string(other, fun), do: to_string(other, fun)
 
   defp call_to_string_with_args(target, args, fun) do
     target = call_to_string(target, fun)
@@ -861,15 +887,20 @@ defmodule Macro do
     target <> "(" <> args <> ")"
   end
 
+  defp call_to_string_for_atom(atom) do
+    Identifier.inspect_as_function(atom)
+  end
+
   defp args_to_string(args, fun) do
-    {list, last} = :elixir_utils.split_last(args)
+    {list, last} = split_last(args)
 
     if last != [] and Inspect.List.keyword?(last) do
       prefix =
         case list do
           [] -> ""
-          _  -> Enum.map_join(list, ", ", &to_string(&1, fun)) <> ", "
+          _ -> Enum.map_join(list, ", ", &to_string(&1, fun)) <> ", "
         end
+
       prefix <> kw_list_to_string(last, fun)
     else
       Enum.map_join(args, ", ", &to_string(&1, fun))
@@ -877,23 +908,23 @@ defmodule Macro do
   end
 
   defp kw_blocks_to_string(kw, fun) do
-    Enum.reduce(@kw_keywords, " ", fn(x, acc) ->
+    Enum.reduce(unquote(kw_keywords), " ", fn x, acc ->
       case Keyword.has_key?(kw, x) do
-        true  -> acc <> kw_block_to_string(x, Keyword.get(kw, x), fun)
+        true -> acc <> kw_block_to_string(x, Keyword.get(kw, x), fun)
         false -> acc
       end
     end) <> "end"
   end
 
   defp kw_block_to_string(key, value, fun) do
-    block = adjust_new_lines block_to_string(value, fun), "\n  "
+    block = adjust_new_lines(block_to_string(value, fun), "\n  ")
     Atom.to_string(key) <> "\n  " <> block <> "\n"
   end
 
   defp block_to_string([{:->, _, _} | _] = block, fun) do
-    Enum.map_join(block, "\n", fn({:->, _, [left, right]}) ->
+    Enum.map_join(block, "\n", fn {:->, _, [left, right]} ->
       left = comma_join_or_empty_paren(left, fun, false)
-      left <> "->\n  " <> adjust_new_lines block_to_string(right, fun), "\n  "
+      left <> "->\n  " <> adjust_new_lines(block_to_string(right, fun), "\n  ")
     end)
   end
 
@@ -916,11 +947,7 @@ defmodule Macro do
 
   defp kw_list_to_string(list, fun) do
     Enum.map_join(list, ", ", fn {key, value} ->
-      atom_name = case Inspect.Atom.inspect(key) do
-        ":" <> rest -> rest
-        other       -> other
-      end
-      atom_name <> ": " <> to_string(value, fun)
+      Identifier.inspect_as_key(key) <> " " <> to_string(value, fun)
     end)
   end
 end
