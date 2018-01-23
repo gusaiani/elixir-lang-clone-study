@@ -28,5 +28,93 @@ defmodule MacroTest do
       assert Macro.escape({:a, :b, :c}) == {:{}, [], [:a, :b, :c]}
       assert Macro.escape({:a, {1, 2, 3}, :c}) == {:{}, [], [:a, {:{}, [], [1, 2, 3]}, :c]}
     end
+
+    test "simply returns tuples with size equal to two" do
+      assert Macro.escape({:a, :b}) == {:a, :b}
+    end
+
+    test "simply returns any other structure" do
+      assert Macro.escape([1, 2, 3]) == [1, 2, 3]
+    end
+
+    test "handles maps" do
+      assert Macro.escape(%{a: 1}) == {:%{}, [], [a: 1]}
+    end
+
+    test "handles bitstring" do
+      assert {:<<>>, [], args} = Macro.escape(<<300::12>>)
+      assert [{:::, [], [1, {:size, [], [4]}]}, {:::, [], [",", {:binary, [], []}]}] = args
+    end
+
+    test "works recursively" do
+      assert Macro.escape([1, {:a, :b, :c}, 3]) == [1, {:{}, [], [:a, :b, :c]}, 3]
+    end
+
+    test "with improper lists" do
+      assert Macro.escape([1 | 2]) == [{:|, [], [1, 2]}]
+      assert Macro.escape([1, 2 | 3]) == [1, {:|, [], [2, 3]}]
+    end
+
+    test "with unquote" do
+      contents = quote(unquote: false, do: unquote(1))
+      assert Macro.escape(contents, unquote: true) == 1
+
+      contents = quote(unquote: false, do: unquote(x))
+      assert Macro.escape(contents, unquote: true) == {:x, [], MacroTest}
+    end
+
+    defp eval_escaped(contents) do
+      {eval, []} = Code.eval_quoted(Macro.escape(contents, unquote: true))
+      eval
+    end
+
+    test "with remote unquote" do
+      contents = quote(unquote: false, do: Kernel.unquote(:is_atom)(:ok))
+      assert eval_escaped(contents) == quote(do: Kernel.is_atom(:ok))
+    end
+
+    test "with nested unquote" do
+      contents =
+        quote do
+          quote(do: unquote(x))
+        end
+
+      assert eval_escaped(contents) == quote(do: quote(do: unquote(x)))
+    end
+
+    test "with alias or no arguments remote unquote" do
+      contents = quote(unquote: false, do: Kernel.unquote(:self))
+      assert eval_escaped(contents) == quote(do: Kernel.self())
+
+      contents = quote(unquote: false, do: x.unquote(Foo))
+      assert eval_escaped(contents) == quote(do: x.unquote(Foo))
+    end
+
+    test "with splicing" do
+      contents = quote(unquote: false, do: [1, 2, 3, 4, 5])
+      assert Macro.escape(contents, unquote: true) == [1, 2, 3, 4, 5]
+
+      contents = quote(unquote: false, do: [1, 2, unquote_splicing([3, 4, 5])])
+      assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+
+      contents = quote(unquote: false, do: [unquote_splicing([1, 2, 3]), 4, 5])
+      assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+
+      contents =
+        quote(unquote: false, do: [unquote_splicing([1, 2, 3]), unquote_splicing([4, 5])])
+
+      assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+
+      contents =
+        quote(unquote: false, do: [1, unquote_splicing([2]), 3, unquote_splicing([4]), 5])
+
+      assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+
+      contents =
+        quote(unquote: false, do: [1, unquote_splicing([2]), 3, unquote_splicing([4]) | [5]])
+
+      assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+    end
   end
+
 end
