@@ -117,4 +117,63 @@ defmodule MacroTest do
     end
   end
 
+  describe "expand_once/2" do
+    test "with external macro" do
+      assert {:||, _, [1, false]} = Macro.expand_once(quote(do: oror(1, false)), __ENV__)
+    end
+
+    test "with raw atom" do
+      assert Macro.expand_once(quote(do: :foo), __ENV__) == :foo
+    end
+
+    test "with current module" do
+      assert Macro.expand_once(quote(do: __MODULE__), __ENV__) == __MODULE__
+    end
+
+    test "with main" do
+      assert Macro.expand_once(quote(do: Elixir), __ENV__) == Elixir
+    end
+
+    test "with simple alias" do
+      assert Macro.expand_once(quote(do: Foo), __ENV__) == Foo
+    end
+
+    test "with current module plus alias" do
+      assert Macro.expand_once(quote(do: __MODULE__.Foo), __ENV__) == __MODULE__.Foo
+    end
+
+    test "with main plus alias" do
+      assert Macro.expand_once(quote(do: Elixir.Foo), __ENV__) == Foo
+    end
+
+    test "with custom alias" do
+      alias Foo, as: Bar
+      assert Macro.expand_once(quote(do: Bar.Baz), __ENV__) == Foo.Baz
+    end
+
+    test "with main plus custom alias" do
+      alias Foo, as: Bar, warn: false
+      assert Macro.expand_once(quote(do: Elixir.Bar.Baz), __ENV__) == Elixir.Bar.Baz
+    end
+
+    test "with call in alias" do
+      assert Macro.expand_once(quote(do: Foo.bar().Baz), __ENV__) == quote(do: Foo.bar().Baz)
+    end
+
+    test "env" do
+      env = %{__ENV__ | line: 0}
+      assert Macro.expand_once(quote(do: __ENV__), env) == {:%{}, [], Map.to_list(env)}
+      assert Macro.expand_once(quote(do: __ENV__.file), env) == env.file
+      assert Macro.expand_once(quote(do: __ENV__.unknown), env) == quote(do: __ENV__.unknown)
+    end
+
+    defmacro local_macro() do
+      :local_macro
+    end
+
+    test "local macro" do
+      assert Macro.expand_once(quote(do: local_macro), __ENV__) == :local_macro
+    end
+  end
+
 end
