@@ -174,6 +174,114 @@ defmodule MacroTest do
     test "local macro" do
       assert Macro.expand_once(quote(do: local_macro), __ENV__) == :local_macro
     end
+
+    test "checks vars" do
+      local_macro = 1
+      assert local_macro == 1
+      expr = {:local_macro, [], nil}
+      assert Macro.expand_once(expr, __ENV__) == expr
+    end
+
+    defp expand_once_and_clean(quoted, env) do
+      cleaner = &Keyword.drop(&1, [:counter])
+
+      quoted
+      |> Macro.expand_once(env)
+      |> Macro.prewalk(&Macro.update_meta(&1, cleaner))
+    end
+
+    test "with imported macro" do
+      temp_var = {:x, [], Kernel}
+
+      quoted =
+        quote context: Kernel do
+          case 1 do
+            unquote(temp_var) when :"Elixir.Kernel".in(unquote(temp_var), [false, nil]) -> false
+            unquote(temp_var) -> unquote(temp_var)
+          end
+        end
+
+      assert expand_once_and_clean(quote(do: 1 || false), __ENV__) == quoted
+    end
+
+    test "with require macro" do
+      temp_var = {:x, [], Kernel}
+
+      quoted =
+        quote context: Kernel do
+          case 1 do
+            unquote(temp_var) when :"Elixir.Kernel".in(unquote(temp_var), [false, nil]) -> false
+            unquote(temp_var) -> unquote(temp_var)
+          end
+        end
+
+      assert expand_once_and_clean(quote(do: Kernel.||(1, false)), __ENV__) == quoted
+    end
+
+    test "with not expandable expression" do
+      expr = quote(do: other(1, 2, 3))
+      assert Macro.expand_once(expr, __ENV__) == expr
+    end
+
+    test "does not expand module attributes" do
+      message =
+        "could not call get_attribute with argument #{inspect(__MODULE__)} " <>
+          "because the module is already compiled"
+
+      assert_raise ArgumentError, message, fn ->
+        Macro.expand_once(quote(do: @foo), __ENV__)
+      end
+    end
   end
 
+  defp expand_and_clean(quoted, env) do
+    cleaner = &Keyword.drop(&1, [:counter])
+
+    quoted
+    |> Macro.expand(env)
+    |> Macro.prewalk(&Macro.update_meta(&1, cleaner))
+  end
+
+  test "expand/2" do
+    temp_var = {:x, [], Kernel}
+
+    quoted =
+      quote context: Kernel do
+        case 1 do
+          unquote(temp_var) when :"Elixir.Kernel".in(unquote(temp_var), [false, nil]) -> false
+          unquote(temp_var) -> unquote(temp_var)
+        end
+      end
+
+    assert expand_and_clean(quote(do: oror(1, false)), __ENV__) == quoted
+  end
+
+  test "var/2" do
+    assert Macro.var(:foo, nil) == {:foo, [], nil}
+    assert Macro.var(:foo, Other) == {:foo, [], Other}
+  end
+
+  describe "to_string/1" do
+    test "variable" do
+      assert Macro.to_string(quote(do: foo)) == "foo"
+    end
+
+    test "local call" do
+      assert Macro.to_string(quote(do: foo(1, 2, 3))) == "foo(1, 2, 3)"
+      assert Macro.to_string(quote(do: foo([1, 2, 3]))) == "foo([1, 2, 3])"
+    end
+
+    test "remote call" do
+      assert Macro.to_string(quote(do: foo.bar(1, 2, 3))) == "foo.bar(1, 2, 3)"
+      assert Macro.to_string(quote(do: foo.bar([1, 2, 3]))) == "foo.bar([1, 2, 3])"
+
+      quoted =
+        quote do
+          (foo do
+             :ok
+           end).bar([1, 2, 3])
+        end
+
+      assert Macro.to_string(quoted) == "(foo() do\n  :ok\nend).bar([1, 2, 3])"
+    end
 end
