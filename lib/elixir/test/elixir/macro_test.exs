@@ -284,4 +284,131 @@ defmodule MacroTest do
 
       assert Macro.to_string(quoted) == "(foo() do\n  :ok\nend).bar([1, 2, 3])"
     end
+
+    test "atom remote call" do
+      assert Macro.to_string(quote(do: :foo.bar(1, 2, 3))) == ":foo.bar(1, 2, 3)"
+    end
+
+    test "remote and fun call" do
+      assert Macro.to_string(quote(do: foo.bar.(1, 2, 3))) == "foo.bar().(1, 2, 3)"
+      assert Macro.to_string(quote(do: foo.bar.([1, 2, 3]))) == "foo.bar().([1, 2, 3])"
+    end
+
+    test "unusual remote atom fun call" do
+      assert Macro.to_string(quote(do: Foo."42"())) == ~s/Foo."42"()/
+      assert Macro.to_string(quote(do: Foo."Bar"())) == ~s/Foo."Bar"()/
+      assert Macro.to_string(quote(do: Foo."bar baz"()."")) == ~s/Foo."bar baz"().""()/
+      assert Macro.to_string(quote(do: Foo."%{}"())) == ~s/Foo."%{}"()/
+      assert Macro.to_string(quote(do: Foo."..."())) == ~s/Foo."..."()/
+    end
+
+    test "atom fun call" do
+      assert Macro.to_string(quote(do: :foo.(1, 2, 3))) == ":foo.(1, 2, 3)"
+    end
+
+    test "aliases call" do
+      assert Macro.to_string(quote(do: Foo.Bar.baz(1, 2, 3))) == "Foo.Bar.baz(1, 2, 3)"
+      assert Macro.to_string(quote(do: Foo.Bar.baz([1, 2, 3]))) == "Foo.Bar.baz([1, 2, 3])"
+      assert Macro.to_string(quote(do: Foo.bar(<<>>, []))) == "Foo.bar(<<>>, [])"
+    end
+
+    test "keyword call" do
+      assert Macro.to_string(quote(do: Foo.bar(foo: :bar))) == "Foo.bar(foo: :bar)"
+      assert Macro.to_string(quote(do: Foo.bar("Elixir.Foo": :bar))) == "Foo.bar([{Foo, :bar}])"
+    end
+
+    test "sigil call" do
+      assert Macro.to_string(quote(do: ~r"123")) == ~s/~r"123"/
+      assert Macro.to_string(quote(do: ~r"123"u)) == ~s/~r"123"u/
+      assert Macro.to_string(quote(do: ~r"\n123")) == ~s/~r"\\\\n123"/
+
+      assert Macro.to_string(quote(do: ~r"1#{two}3")) == ~S/~r"1#{two}3"/
+      assert Macro.to_string(quote(do: ~r"1#{two}3"u)) == ~S/~r"1#{two}3"u/
+
+      assert Macro.to_string(quote(do: ~R"123")) == ~s/~R"123"/
+      assert Macro.to_string(quote(do: ~R"123"u)) == ~s/~R"123"u/
+      assert Macro.to_string(quote(do: ~R"\n123")) == ~s/~R"\\\\n123"/
+    end
+
+    test "tuple call" do
+      assert Macro.to_string(quote(do: alias(Foo.{Bar, Baz, Bong}))) ==
+               "alias(Foo.{Bar, Baz, Bong})"
+
+      assert Macro.to_string(quote(do: foo(Foo.{}))) == "foo(Foo.{})"
+    end
+
+    test "arrow" do
+      assert Macro.to_string(quote(do: foo(1, (2 -> 3)))) == "foo(1, (2 -> 3))"
+    end
+
+    test "block" do
+      quoted =
+        quote do
+          1
+          2
+
+          (
+            :foo
+            :bar
+          )
+
+          3
+        end
+
+      expected = """
+      (
+        1
+        2
+        (
+          :foo
+          :bar
+        )
+        3
+      )
+      """
+
+      assert Macro.to_string(quoted) <> "\n" == expected
+    end
+
+    test "not in" do
+      assert Macro.to_string(quote(do: false not in [])) == "false not in []"
+    end
+
+    test "if else" do
+      expected = """
+      if(foo) do
+        bar
+      else
+        baz
+      end
+      """
+
+      assert Macro.to_string(quote(do: if(foo, do: bar, else: baz))) <> "\n" == expected
+    end
+
+    test "case" do
+      quoted =
+        quote do
+          case foo do
+            true ->
+              0
+
+            false ->
+              1
+              2
+          end
+        end
+
+      expected = """
+      case(foo) do
+        true ->
+          0
+        false ->
+          1
+          2
+      end
+      """
+
+      assert Macro.to_string(quoted) <> "\n" == expected
+    end
 end
