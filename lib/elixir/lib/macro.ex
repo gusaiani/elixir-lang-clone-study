@@ -197,6 +197,7 @@ defmodule Macro do
       [{:var1, [], __MODULE__}, {:var2, [], __MODULE__}]
 
   """
+  @since "1.5.0"
   def generate_arguments(0, _), do: []
 
   def generate_arguments(amount, context)
@@ -745,7 +746,7 @@ defmodule Macro do
   end
 
   # Block keywords
-  kw_keywords = [:do, :catch, :rescue, :after, :else]
+  kw_keywords = [:do, :rescue, :catch, :else, :after]
 
   defp kw_blocks?([{:do, _} | _] = kw) do
     Enum.all?(kw, &match?({x, _} when x in unquote(kw_keywords), &1))
