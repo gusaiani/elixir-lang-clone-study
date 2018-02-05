@@ -621,4 +621,102 @@ defmodule MacroTest do
     test "interpolation" do
       assert Macro.to_string(quote(do: "foo#{bar}baz")) == ~S["foo#{bar}baz"]
     end
+
+    test "bit syntax" do
+      ast = quote(do: <<1::8*4>>)
+      assert Macro.to_string(ast) == "<<1::8*4>>"
+
+      ast = quote(do: @type(foo :: <<_::8, _::_*4>>))
+      assert Macro.to_string(ast) == "@type(foo :: <<_::8, _::_*4>>)"
+
+      ast = quote(do: <<69 - 4::bits-size(8 - 4)-unit(1), 65>>)
+      assert Macro.to_string(ast) == "<<69 - 4::bits-size(8 - 4)-unit(1), 65>>"
+
+      ast = quote(do: <<(<<65>>), 65>>)
+      assert Macro.to_string(ast) == "<<(<<65>>), 65>>"
+
+      ast = quote(do: <<65, (<<65>>)>>)
+      assert Macro.to_string(ast) == "<<65, (<<65>>)>>"
+
+      ast = quote(do: for(<<(a::4 <- <<1, 2>>)>>, do: a))
+      assert Macro.to_string(ast) == "for(<<(a :: 4 <- <<1, 2>>)>>) do\n  a\nend"
+    end
+
+    test "charlist" do
+      assert Macro.to_string(quote(do: [])) == "[]"
+      assert Macro.to_string(quote(do: 'abc')) == "'abc'"
+    end
+
+    test "last arg keyword list" do
+      assert Macro.to_string(quote(do: foo([]))) == "foo([])"
+      assert Macro.to_string(quote(do: foo(x: y))) == "foo(x: y)"
+      assert Macro.to_string(quote(do: foo(x: 1 + 2))) == "foo(x: 1 + 2)"
+      assert Macro.to_string(quote(do: foo(x: y, p: q))) == "foo(x: y, p: q)"
+      assert Macro.to_string(quote(do: foo(a, x: y, p: q))) == "foo(a, x: y, p: q)"
+
+      assert Macro.to_string(quote(do: {[]})) == "{[]}"
+      assert Macro.to_string(quote(do: {[a: b]})) == "{[a: b]}"
+      assert Macro.to_string(quote(do: {x, a: b})) == "{x, [a: b]}"
+      assert Macro.to_string(quote(do: foo(else: a))) == "foo(else: a)"
+      assert Macro.to_string(quote(do: foo(catch: a))) == "foo(catch: a)"
+    end
+
+    test "with fun" do
+      assert Macro.to_string(quote(do: foo(1, 2, 3)), fn _, string -> ":#{string}:" end) ==
+               ":foo(:1:, :2:, :3:):"
+
+      assert Macro.to_string(quote(do: Bar.foo(1, 2, 3)), fn _, string -> ":#{string}:" end) ==
+               "::Bar:.foo(:1:, :2:, :3:):"
+    end
+  end
+
+  test "validate/1" do
+    ref = make_ref()
+
+    assert Macro.validate(1) == :ok
+    assert Macro.validate(1.0) == :ok
+    assert Macro.validate(:foo) == :ok
+    assert Macro.validate("bar") == :ok
+    assert Macro.validate(<<0::8>>) == :ok
+    assert Macro.validate(self()) == :ok
+    assert Macro.validate({1, 2}) == :ok
+    assert Macro.validate({:foo, [], :baz}) == :ok
+    assert Macro.validate({:foo, [], []}) == :ok
+    assert Macro.validate([1, 2, 3]) == :ok
+
+    assert Macro.validate(<<0::4>>) == {:error, <<0::4>>}
+    assert Macro.validate(ref) == {:error, ref}
+    assert Macro.validate({1, ref}) == {:error, ref}
+    assert Macro.validate({ref, 2}) == {:error, ref}
+    assert Macro.validate([1, ref, 3]) == {:error, ref}
+    assert Macro.validate({:foo, [], 0}) == {:error, {:foo, [], 0}}
+    assert Macro.validate({:foo, 0, []}) == {:error, {:foo, 0, []}}
+  end
+
+  test "decompose_call/1" do
+    assert Macro.decompose_call(quote(do: foo)) == {:foo, []}
+    assert Macro.decompose_call(quote(do: foo())) == {:foo, []}
+    assert Macro.decompose_call(quote(do: foo(1, 2, 3))) == {:foo, [1, 2, 3]}
+
+    assert Macro.decompose_call(quote(do: M.N.foo(1, 2, 3))) ==
+             {{:__aliases__, [alias: false], [:M, :N]}, :foo, [1, 2, 3]}
+
+    assert Macro.decompose_call(quote(do: :foo.foo(1, 2, 3))) == {:foo, :foo, [1, 2, 3]}
+    assert Macro.decompose_call(quote(do: 1.(1, 2, 3))) == :error
+    assert Macro.decompose_call(quote(do: "some string")) == :error
+  end
+
+  describe "env" do
+    test "stacktrace" do
+      env = %{__ENV__ | file: "foo", line: 12}
+
+      assert Macro.Env.stacktrace(env) ==
+               [{__MODULE__, :"test env stacktrace", 1, [file: 'foo', line: 12]}]
+
+      env = %{env | function: nil}
+      assert Macro.Env.stacktrace(env) == [{__MODULE__, :__MODULE__, 0, [file: 'foo', line: 12]}]
+
+      env = %{env | module: nil}
+    end
+  end
 end
