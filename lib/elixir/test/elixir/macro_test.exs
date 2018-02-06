@@ -717,6 +717,60 @@ defmodule MacroTest do
       assert Macro.Env.stacktrace(env) == [{__MODULE__, :__MODULE__, 0, [file: 'foo', line: 12]}]
 
       env = %{env | module: nil}
+
+      assert Macro.Env.stacktrace(env) ==
+               [{:elixir_compiler, :__FILE__, 1, [file: 'foo', line: 12]}]
+    end
+
+    test "context modules" do
+      defmodule Foo.Bar do
+        assert __MODULE__ in __ENV__.context_modules
+      end
+    end
+
+    test "to_match/1" do
+      quote = quote(do: x in [])
+
+      assert {{:., _, [{:__aliases__, _, [Elixir, :Enum]}, :member?]}, _, _} =
+               Macro.expand_once(quote, __ENV__)
+
+      assert Macro.expand_once(quote, Macro.Env.to_match(__ENV__)) == false
+    end
+  end
+
+  ## pipe/unpipe
+
+  test "pipe/3" do
+    assert Macro.pipe(1, quote(do: foo), 0) == quote(do: foo(1))
+    assert Macro.pipe(1, quote(do: foo(2)), 0) == quote(do: foo(1, 2))
+    assert Macro.pipe(1, quote(do: foo), -1) == quote(do: foo(1))
+    assert Macro.pipe(2, quote(do: foo(1)), -1) == quote(do: foo(1, 2))
+
+    assert_raise ArgumentError, ~r"cannot pipe 1 into 2", fn ->
+      Macro.pipe(1, 2, 0)
+    end
+
+    assert_raise ArgumentError, ~r"cannot pipe 1 into {:ok}", fn ->
+      Macro.pipe(1, {:ok}, 0)
+    end
+
+    assert_raise ArgumentError, ~r"cannot pipe 1 into 1 \+ 1", fn ->
+      Macro.pipe(1, quote(do: 1 + 1), 0) == quote(do: foo(1))
+    end
+
+    # TODO: restore this test when we drop unary operator support in pipes
+    # assert_raise ArgumentError, ~r"cannot pipe 1 into \+1", fn ->
+    #   Macro.pipe(1, quote(do: + 1), 0)
+    # end
+
+    assert_raise ArgumentError, ~r"cannot pipe Macro into Env", fn ->
+      Macro.pipe(Macro, quote(do: Env), 0)
+    end
+
+    message = ~r"cannot pipe :foo into an anonymous function withoult calling"
+
+    assert_raise ArgumentError, message, fn ->
+      Macro.pipe(:foo, quote(do: fn x -> x end), 0)
     end
   end
 end
