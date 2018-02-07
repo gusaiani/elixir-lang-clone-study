@@ -767,10 +767,142 @@ defmodule MacroTest do
       Macro.pipe(Macro, quote(do: Env), 0)
     end
 
-    message = ~r"cannot pipe :foo into an anonymous function withoult calling"
+    message = ~r"cannot pipe :foo into an anonymous function without calling"
 
     assert_raise ArgumentError, message, fn ->
       Macro.pipe(:foo, quote(do: fn x -> x end), 0)
     end
+  end
+
+  test "unpipe/1" do
+    assert Macro.unpipe(quote(do: foo)) == quote(do: [{foo, 0}])
+    assert Macro.unpipe(quote(do: foo |> bar)) == quote(do: [{foo, 0}, {bar, 0}])
+    assert Macro.unpipe(quote(do: foo |> bar |> baz)) == quote(do: [{foo, 0}, {bar, 0}, {baz, 0}])
+  end
+
+  ## traverse/pre/postwalk
+
+  test "traverse/4" do
+    assert traverse({:foo, [], nil}) == [{:foo, [], nil}, {:foo, [], nil}]
+
+    assert traverse({:foo, [], [1, 2, 3]}) ==
+             [{:foo, [], [1, 2, 3]}, 1, 1, 2, 2, 3, 3, {:foo, [], [1, 2, 3]}]
+
+    assert traverse({{:., [], [:foo, :bar]}, [], [1, 2, 3]}) ==
+             [
+               {{:., [], [:foo, :bar]}, [], [1, 2, 3]},
+               {:., [], [:foo, :bar]},
+               :foo,
+               :foo,
+               :bar,
+               :bar,
+               {:., [], [:foo, :bar]},
+               1,
+               1,
+               2,
+               2,
+               3,
+               3,
+               {{:., [], [:foo, :bar]}, [], [1, 2, 3]}
+             ]
+
+    assert traverse({[1, 2, 3], [4, 5, 6]}) ==
+             [
+               {[1, 2, 3], [4, 5, 6]},
+               [1, 2, 3],
+               1,
+               1,
+               2,
+               2,
+               3,
+               3,
+               [1, 2, 3],
+               [4, 5, 6],
+               4,
+               4,
+               5,
+               5,
+               6,
+               6,
+               [4, 5, 6],
+               {[1, 2, 3], [4, 5, 6]}
+             ]
+  end
+
+  defp traverse(ast) do
+    Macro.traverse(ast, [], &{&1, [&1 | &2]}, &{&1, [&1 | &2]}) |> elem(1) |> Enum.reverse()
+  end
+
+  test "prewalk/3" do
+    assert prewalk({:foo, [], nil}) == [{:foo, [], nil}]
+
+    assert prewalk({:foo, [], [1, 2, 3]}) == [{:foo, [], [1, 2, 3]}, 1, 2, 3]
+
+    assert prewalk({{:., [], [:foo, :bar]}, [], [1, 2, 3]}) ==
+             [
+               {{:., [], [:foo, :bar]}, [], [1, 2, 3]},
+               {:., [], [:foo, :bar]},
+               :foo,
+               :bar,
+               1,
+               2,
+               3
+             ]
+
+    assert prewalk({[1, 2, 3], [4, 5, 6]}) ==
+             [{[1, 2, 3], [4, 5, 6]}, [1, 2, 3], 1, 2, 3, [4, 5, 6], 4, 5, 6]
+  end
+
+  defp prewalk(ast) do
+    Macro.prewalk(ast, [], &{&1, [&1 | &2]}) |> elem(1) |> Enum.reverse()
+  end
+
+  test "postwalk/3" do
+    assert postwalk({:foo, [], nil}) == [{:foo, [], nil}]
+
+    assert postwalk({:foo, [], [1, 2, 3]}) == [1, 2, 3, {:foo, [], [1, 2, 3]}]
+
+    assert postwalk({{:., [], [:foo, :bar]}, [], [1, 2, 3]}) ==
+             [
+               :foo,
+               :bar,
+               {:., [], [:foo, :bar]},
+               1,
+               2,
+               3,
+               {{:., [], [:foo, :bar]}, [], [1, 2, 3]}
+             ]
+
+    assert postwalk({[1, 2, 3], [4, 5, 6]}) ==
+             [1, 2, 3, [1, 2, 3], 4, 5, 6, [4, 5, 6], {[1, 2, 3], [4, 5, 6]}]
+  end
+
+  test "generate_arguments/2" do
+    assert Macro.generate_arguments(0, __MODULE__) == []
+    assert Macro.generate_arguments(1, __MODULE__) == [{:var1, [], __MODULE__}]
+    assert Macro.generate_arguments(4, __MODULE__) |> length == 4
+  end
+
+  defp postwalk(ast) do
+    Macro.postwalk(ast, [], &{&1, [&1 | &2]}) |> elem(1) |> Enum.reverse()
+  end
+
+  test "underscore/1" do
+    assert Macro.underscore("foo") == "foo"
+    assert Macro.underscore("foo_bar") == "foo_bar"
+    assert Macro.underscore("Foo") == "foo"
+    assert Macro.underscore("FooBar") == "foo_bar"
+    assert Macro.underscore("FOOBar") == "foo_bar"
+    assert Macro.underscore("FooBAR") == "foo_bar"
+    assert Macro.underscore("FOO_BAR") == "foo_bar"
+    assert Macro.underscore("FoBaZa") == "fo_ba_za"
+    assert Macro.underscore("Foo10") == "foo10"
+    assert Macro.underscore("10Foo") == "10_foo"
+    assert Macro.underscore("FooBar10") == "foo_bar10"
+    assert Macro.underscore("Foo10Bar") == "foo10_bar"
+    assert Macro.underscore("Foo.Bar") == "foo/bar"
+    assert Macro.underscore(Foo.Bar) == "foo/bar"
+    assert Macro.underscore("API.V1.User") == "api/v1/user"
+    assert Macro.underscore("") == ""
   end
 end
