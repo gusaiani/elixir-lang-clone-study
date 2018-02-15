@@ -905,4 +905,23 @@ defmodule MacroTest do
     assert Macro.underscore("API.V1.User") == "api/v1/user"
     assert Macro.underscore("") == ""
   end
+
+  test "camelize/1" do
+    assert Macro.camelize("Foo") == "Foo"
+    assert Macro.camelize("FooBar") == "FooBar"
+    assert Macro.camelize("foo") == "Foo"
+    assert Macro.camelize("foo_bar") == "FooBar"
+    assert Macro.camelize("foo_") == "Foo"
+    assert Macro.camelize("_foo") == "Foo"
+    assert Macro.camelize("foo10") == "Foo10"
+    assert Macro.camelize("_10foo") == "10foo"
+    assert Macro.camelize("foo_10") == "Foo10"
+    assert Macro.camelize("foo__10") == "Foo10"
+    assert Macro.camelize("foo__bar") == "FooBar"
+    assert Macro.camelize("foo/bar") == "Foo.Bar"
+    assert Macro.camelize("Foo.Bar") == "Foo.Bar"
+    assert Macro.camelize("FOO_BAR") == "FOO_BAR"
+    assert Macro.camelize("FOO.BAR") == "FOO.BAR"
+    assert Macro.camelize("") == ""
+  end
 end
