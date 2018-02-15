@@ -951,4 +951,33 @@ defmodule Macro do
       Identifier.inspect_as_key(key) <> " " <> to_string(value, fun)
     end)
   end
+
+  defp map_list_to_string(list, fun) do
+    Enum.map_join(list, ", ", fn {key, value} ->
+      to_string(key, fun) <> " => " <> to_string(value, fun)
+    end)
+  end
+
+  defp wrap_in_parenthesis(expr, fun) do
+    "(" <> to_string(expr, fun) <> ")"
+  end
+
+  defp op_to_string({op, _, [_, _]} = expr, fun, parent_op, side) when is_atom(op) do
+    case Identifier.binary_op(op) do
+      {_, prec} ->
+        {parent_assoc, parent_prec} = Identifier.binary_op(parent_op)
+
+        cond do
+          parent_prec < prec -> to_string(expr, fun)
+          parent_prec > prec -> wrap_in_parenthesis(expr, fun)
+          parent_assoc == side -> to_string(expr, fun)
+          true -> wrap_in_parenthesis(expr, fun)
+        end
+
+      :error ->
+        to_string(expr, fun)
+    end
+  end
+
+  defp op_to_string(expr, fun, _, _), do: to_string(expr, fun)
 end
