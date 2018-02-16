@@ -980,4 +980,112 @@ defmodule Macro do
   end
 
   defp op_to_string(expr, fun, _, _), do: to_string(expr, fun)
+
+  defp arrow_to_string(pairs, fun, paren \\ false) do
+    Enum.map_join(pairs, "; ", fn {:->, _, [left, right]} ->
+      left = comma_join_or_empty_paren(left, fun, paren)
+      left <> "-> " <> to_string(right, fun)
+    end)
+  end
+
+  defp comma_join_or_empty_paren([], _fun, true), do: "() "
+  defp comma_join_or_empty_paren([], _fun, false), do: ""
+
+  defp comma_join_or_empty_paren(left, fun, _) do
+    Enum.map_join(left, ", ", &to_string(&1, fun)) <> " "
+  end
+
+  defp split_last([]) do
+    {[], []}
+  end
+
+  defp split_last(args) do
+    {left, [right]} = Enum.split(args, -1)
+    {left, right}
+  end
+
+  defp adjust_new_lines(block, replacement) do
+    for <<x <- block>>, into: "" do
+      case x == ?\n do
+        true -> replacement
+        false -> <<x>>
+      end
+    end
+  end
+
+  @doc """
+  Receives an AST node and expands it once.
+
+  The following contents are expanded:
+
+    * Macros (local or remote)
+    * Aliases are expanded (if possible) and return atoms
+    * Compilation environment macros (`__ENV__/0`, `__MODULE__/0` and `__DIR__/0`)
+    * Module attributes reader (`@foo`)
+
+  If the expression cannot be expanded, it returns the expression
+  itself. Notice that `expand_once/2` performs the expansion just
+  once and it is not recursive. Check `expand/2` for expansion
+  until the node can no longer be expanded.
+
+  ## Examples
+
+  In the example below, we have a macro that generates a module
+  with a function named `name_length` that returns the length
+  of the module name. The value of this function will be calculated
+  at compilation time and not at runtime.
+
+  Consider the implementation below:
+
+      defmacro defmodule_with_length(name, do: block) do
+        length = length(Atom.to_charlist(name))
+
+        quote do
+          defmodule unquote(name) do
+            def name_length, do: unquote(length)
+            unquote(block)
+          end
+        end
+      end
+
+  When invoked like this:
+
+      defmodule_with_length My.Module do
+        def other_function, do: ...
+      end
+
+  The compilation will fail because `My.Module` when quoted
+  is not an atom, but a syntax tree as follows:
+
+      {:__aliases__, [], [:My, :Module]}
+
+  That said, we need to expand the aliases node above to an
+  atom, so we can retrieve its length. Expanding the node is
+  not straightforward because we also need to expand the
+  caller aliases. For example:
+
+      alias MyHelpers, as: My
+
+      defmodule_with_length My.Module do
+        def other_function, do: ...
+      end
+
+  The final module name will be `MyHelpers.Module` and not
+  `My.Module`. With `Macro.expand/2`, such aliases are taken
+  into consideration. Local and remote macros are also
+  expanded. We could rewrite our macro above to use this
+  function as:
+
+      defmacro defmodule_with_length(name, do: block) do
+        expanded = Macro.expand(name, __CALLER__)
+        length   = length(Atom.to_charlist(expanded))
+
+        quote do
+          defmodule unquote(name) do
+            def name_length, do: unquote(length)
+            unquote(block)
+          end
+        end
+      end
+  """
 end
