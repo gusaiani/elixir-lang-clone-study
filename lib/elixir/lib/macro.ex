@@ -1087,5 +1087,208 @@ defmodule Macro do
           end
         end
       end
+
   """
+  def expand_once(ast, env) do
+    elem(do_expand_once(ast, env), 0)
+  end
+
+  defp do_expand_once({:__aliases__, _, _} = original, env) do
+    case :elixir_aliases.expand(original, env.aliases, env.macro_aliases, env.lexical_tracker) do
+      receiver when is_atom(receiver) ->
+        :elixir_lexical.record_remote(receiver, env.function, env.lexical_tracker)
+        {receiver, true}
+
+      aliases ->
+        aliases = :lists.map(&elem(do_expand_once(&1, env), 0), aliases)
+
+        case :lists.all(&is_atom/1, aliases) do
+          true ->
+            receiver = :elixir_aliases.concat(aliases)
+            :elixir_lexical.record_remote(receiver, env.function, env.lexical_tracker)
+            {receiver, true}
+
+          false ->
+            {original, false}
+        end
+    end
+  end
+
+  # Expand compilation environment macros
+  defp do_expand_once({:__MODULE__, _, atom}, env) when is_atom(atom), do: {env.module, true}
+
+  defp do_expand_once({:__DIR__, _, atom}, env) when is_atom(atom),
+    do: {:filename.dirname(env.file), true}
+
+  defp do_expand_once({:__ENV__, _, atom}, env) when is_atom(atom),
+    do: {{:%{}, [], Map.to_list(env)}, true}
+
+  defp do_expand_once({{:., _, [{:__ENV__, _, atom}, field]}, _, []} = original, env)
+       when is_atom(atom) and is_atom(field) do
+    if Map.has_key?(env, field) do
+      {Map.get(env, field), true}
+    else
+      {original, false}
+    end
+  end
+
+  # Expand possible macro import invocation
+  defp do_expand_once({atom, meta, context} = original, env)
+       when is_atom(atom) and is_list(meta) and is_atom(context) do
+    if Macro.Env.has_var?(env, {atom, Keyword.get(meta, :counter, context)}) do
+      {original, false}
+    else
+      case do_expand_once({atom, meta, []}, env) do
+        {_, true} = exp -> exp
+        {_, false} -> {original, false}
+      end
+    end
+  end
+
+  defp do_expand_once({atom, meta, args} = original, env)
+       when is_atom(atom) and is_list(args) and is_list(meta) do
+    arity = length(args)
+
+    if special_form?(atom, arity) do
+      {original, false}
+    else
+      module = env.module
+
+      extra =
+        if function_exported?(module, :__info__, 1) do
+          [{module, module.__info__(:macros)}]
+        else
+          []
+        end
+
+      expand = :elixir_dispatch.expand_import(meta, {atom, length(args)}, args, env, extra, true)
+
+      case expand do
+        {:ok, receiver, quoted} ->
+          next = :erlang.unique_integer()
+          {:elixir_quote.linify_with_context_counter(0, {receiver, next}, quoted), true}
+
+        {:ok, _receiver, _name, _args} ->
+          {original, false}
+
+        :error ->
+          {original, false}
+      end
+    end
+  end
+
+  # Expand possible macro require invocation
+  defp do_expand_once({{:., _, [left, right]}, meta, args} = original, env) when is_atom(right) do
+    {receiver, _} = do_expand_once(left, env)
+
+    case is_atom(receiver) do
+      false ->
+        {original, false}
+
+      true ->
+        expand = :elixir_dispatch.expand_require(meta, receiver, {right, length(args)}, args, env)
+
+        case expand do
+          {:ok, receiver, quoted} ->
+            next = :erlang.unique_integer()
+            {:elixir_quote.linify_with_context_counter(0, {receiver, next}, quoted), true}
+
+          :error ->
+            {original, false}
+        end
+    end
+  end
+
+  # Anything else is just returned
+  defp do_expand_once(other, _env), do: {other, false}
+
+  @doc """
+  Returns true if the given name and arity is a special form.
+  """
+  @since "1.7.0"
+  @spec special_form?(name :: atom(), arity()) :: boolean()
+  def special_form?(name, arity) when is_atom(name) and is_integer(arity) do
+    :elixir_import.special_form(name, arity)
+  end
+
+  @doc """
+  Returns true if the given name and arity is an operator.
+  """
+  @since "1.7.0"
+  @spec operator?(name :: atom(), arity()) :: boolean()
+  def operator?(name, 2) when is_atom(name), do: Identifier.binary_op(name) != :error
+  def operator?(name, 1) when is_atom(name), do: Identifier.unary_op(name) != :error
+  def operator?(name, arity) when is_atom(name) and is_integer(arity), do: false
+
+  @doc """
+  Receives an AST node and expands it until it can no longer
+  be expanded.
+
+  This function uses `expand_once/2` under the hood. Check
+  it out for more information and examples.
+  """
+  def expand(tree, env) do
+    expand_until({tree, true}, env)
+  end
+
+  defp expand_until({tree, true}, env) do
+    expand_until(do_expand_once(tree, env), env)
+  end
+
+  defp expand_until({tree, false}, _env) do
+    tree
+  end
+
+  @doc """
+  Converts the given atom or binary to underscore format.
+
+  If an atom is given, it is assumed to be an Elixir module,
+  so it is converted to a binary and then processed.
+
+  This function was designed to underscore language identifiers/tokens,
+  that's why it belongs to the `Macro` module. Do not use it as a general
+  mechanism for underscoring strings as it does not support Unicode or
+  characters that are not valid in Elixir identifiers.
+
+  ## Examples
+
+      iex> Macro.underscore("FooBar")
+      "foo_bar"
+
+      iex> Macro.underscore("Foo.Bar")
+      "foo/bar"
+
+      iex> Macro.underscore(Foo.Bar)
+      "foo/bar"
+
+  In general, `underscore` can be thought of as the reverse of
+  `camelize`, however, in some cases formatting may be lost:
+
+      iex> Macro.underscore("SAPExample")
+      "sap_example"
+
+      iex> Macro.camelize("sap_example")
+      "SapExample"
+
+      iex> Macro.camelize("hello_10")
+      "Hello10"
+
+  """
+  def underscore(atom) when is_atom(atom) do
+    "Elixir." <> rest = Atom.to_string(atom)
+    underscore(rest)
+  end
+
+  def underscore(<<h, t::binary>>) do
+    <<to_lower_char(h)>> <> do_underscore(t, h)
+  end
+
+  def underscore("") do
+    ""
+  end
+
+  defp do_underscore(<<h, t, rest::binary>>, _)
+       when h >= ?A and h <= ?Z and not (t >= ?A and t <= ?Z) and t != ?. and t != ?_ do
+    <<?_, to_lower_char(h), t>> <> do_underscore(rest, t)
+  end
 end
