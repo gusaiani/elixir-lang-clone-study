@@ -1291,4 +1291,67 @@ defmodule Macro do
        when h >= ?A and h <= ?Z and not (t >= ?A and t <= ?Z) and t != ?. and t != ?_ do
     <<?_, to_lower_char(h), t>> <> do_underscore(rest, t)
   end
+
+  defp do_underscore(<<h, t::binary>>, prev)
+       when h >= ?A and h <= ?Z and not (prev >= ?A and prev <= ?Z) and prev != ?_ do
+    <<?_, to_lower_char(h)>> <> do_underscore(t, h)
+  end
+
+  defp do_underscore(<<?., t::binary>>, _) do
+    <<?/>> <> underscore(t)
+  end
+
+  defp do_underscore(<<h, t::binary>>, _) do
+    <<to_lower_char(h)>> <> do_underscore(t, h)
+  end
+
+  defp do_underscore(<<>>, _) do
+    <<>>
+  end
+
+  @doc """
+  Converts the given string to CamelCase format.
+
+  This function was designed to camelize language identifiers/tokens,
+  that's why it belongs to the `Macro` module. Do not use it as a general
+  mechanism for camelizing strings as it does not support Unicode or
+  characters that are not valid in Elixir identifiers.
+
+  ## Examples
+
+      iex> Macro.camelize("foo_bar")
+      "FooBar"
+
+  If uppercase characters are present, they are not modified in any way
+  as a mechanism to preserve acronyms:
+
+      iex> Macro.camelize("API.V1")
+      "API.V1"
+      iex> Macro.camelize("API_SPEC")
+      "API_SPEC"
+
+  """
+  @spec camelize(String.t()) :: String.t()
+  def camelize(string)
+
+  def camelize(""), do: ""
+  def camelize(<<?_, t::binary>>), do: camelize(t)
+  def camelize(<<h, t::binary>>), do: <<to_upper_char(h)>> <> do_camelize(t)
+
+  defp do_camelize(<<?_, ?_, t::binary>>), do: do_camelize(<<?_, t::binary>>)
+
+  defp do_camelize(<<?_, h, t::binary>>) when h >= ?a and h <= ?z,
+    do: <<to_upper_char(h)>> <> do_camelize(t)
+
+  defp do_camelize(<<?_, h, t::binary>>) when h >= ?0 and h <= ?9, do: <<h>> <> do_camelize(t)
+  defp do_camelize(<<?_>>), do: <<>>
+  defp do_camelize(<<?/, t::binary>>), do: <<?.>> <> camelize(t)
+  defp do_camelize(<<h, t::binary>>), do: <<h>> <> do_camelize(t)
+  defp do_camelize(<<>>), do: <<>>
+
+  defp to_upper_char(char) when char >= ?a and char <= ?z, do: char - 32
+  defp to_upper_char(char), do: char
+
+  defp to_lower_char(char) when char >= ?A and char <= ?Z, do: char + 32
+  defp to_lower_char(char), do: char
 end
