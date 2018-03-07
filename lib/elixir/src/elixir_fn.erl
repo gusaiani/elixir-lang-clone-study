@@ -66,10 +66,48 @@ capture(Meta, {'__block__', _, _} = Expr, E) ->
 capture(Meta, {Atom, _, Args} = Expr, E) when is_atom(Atom), is_list(Args) ->
   capture_import(Meta, Expr, E, is_sequential_and_not_empty(Args));
 
+capture(Meta, {Left, Right}, E) ->
+  capture(Meta, {'{}', Meta, [Left, Right]}, E);
+
+capture(Meta, List, E) when is_list(List) ->
+  capture_expr(Meta, List, E, is_sequential_and_not_empty(List));
+
+capture(Meta, Integer, E) when is_integer(Integer) ->
+  form_error(Meta, ?key(E, file), ?MODULE, {capture_arg_outside_of_capture, Integer});
+
+capture(Meta, Arg, E) ->
+  invalid_capture(Meta, Arg, E).
+
 capture_import(Meta, {Atom, ImportMeta, Args} = Expr, E, Sequential) ->
   Res = Sequential andalso
         elixir_dispatch:import_function(ImportMeta, Atom, length(Args), E),
   handle_capture(Res, Meta, Expr, E, Sequential).
+
+capture_require(Meta, {{'.', DotMeta, [Left, Right]}, RequireMeta, Args}, E, Sequential) ->
+  case escape(Left, E, []) of
+    {EscLeft, []} ->
+      {ELeft, EE} = elixir_expand:expand(EscLeft, E),
+      Res
+
+escape({'&' _, [Pos]}, _E, Dict) when is_integer(Pos), Pos > 0 ->
+  Var = {list_to_atom([$x | integer_to_list(Pos)]), [], ?var_context},
+  {Var, orddict:store(Pos, Var, Dict)};
+escape({'&', Meta, [Pos]}, E, _Dict) when is_integer(Pos) ->
+  form_error(Meta, &key(E, file), ?MODULE, {unallowed_capture_arg, Pos});
+escape({'&', Meta, _} = Arg, E, _Dict) ->
+  form_error(Meta, ?key(E, file), ?MODULE, {nested_capture, Arg});
+escape({Left, Meta, Right}, E, Dict0) ->
+  {TLeft, Dict1}  = escape(Left, E, Dict0),
+  {TRight, Dict2} = escape(Right, E, Dict1),
+  {{TLeft, Meta, TRight}, Dict2};
+escape({Left, Right}, E, Dict0) ->
+  {TLeft, Dict1}  = escape(Left, E, Dict0),
+  {TRight, Dict2} = escape(Right, E, Dict1),
+  {{TLeft, Tright}, Dict2};
+escape(List, E, Dict) when is_list(List) ->
+  lists:mapfoldl(fun(X, Acc) -> escape(X, E, Acc) end, Dict, List);
+escape(Other, _E, Dict) ->
+  {Other, Dict}.
 
 args_from_arity(_Meta, A, _E) when is_integer(A), A >= 0, A =< 255 ->
   [{'&', [], [X]} || X <- lists:seq(1, A)];
