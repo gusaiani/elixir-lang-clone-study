@@ -87,7 +87,11 @@ capture_require(Meta, {{'.', DotMeta, [Left, Right]}, RequireMeta, Args}, E, Seq
   case escape(Left, E, []) of
     {EscLeft, []} ->
       {ELeft, EE} = elixir_expand:expand(EscLeft, E),
-      Res
+      Res = Sequential andalso case ELeft of
+        {Name, _, Context} when is_atom(Name), is_atom(Context) ->
+          {remote, ELeft, Right, length(Args)};
+        _ when is_atom(ELeft) ->
+          elixir_dispatch:require_function
 
 escape({'&' _, [Pos]}, _E, Dict) when is_integer(Pos), Pos > 0 ->
   Var = {list_to_atom([$x | integer_to_list(Pos)]), [], ?var_context},
