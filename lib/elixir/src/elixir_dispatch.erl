@@ -27,7 +27,10 @@ require_function(Meta, Receiver, Name, Arity, E) ->
 remote_function(Meta, Receiver, Name, Arity, E) ->
   check_deprecation(Meta, Receiver, Name, Arity, E),
 
-  case elixir_rewrite:inline
+  case elixir_rewrite:inline(Receiver, Name, Arity) of
+    {AR, AN} -> {remote, AR, AN, Arity};
+    false    -> {remote, Receiver, Name, Arity}
+  end.
 
 %% Helpers
 

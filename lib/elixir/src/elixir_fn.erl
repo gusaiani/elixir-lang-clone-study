@@ -91,7 +91,33 @@ capture_require(Meta, {{'.', DotMeta, [Left, Right]}, RequireMeta, Args}, E, Seq
         {Name, _, Context} when is_atom(Name), is_atom(Context) ->
           {remote, ELeft, Right, length(Args)};
         _ when is_atom(ELeft) ->
-          elixir_dispatch:require_function
+          elixir_dispatch:require_function(RequireMeta, ELeft, Right, length(Args), EE);
+        _ ->
+          false
+      end,
+      handle_capture()
+
+handle_capture(false, Meta, Expr, E, Sequential) ->
+  capture_expr
+
+capture_expr(Meta, Expr, E, Sequential) ->
+  capture_expr(Meta, Expr, E, [], Sequential).
+capture_expr(Meta, Expr, E, Escaped, Sequential) ->
+  case escape(Expr, E, Escaped) of
+    {_, []} when not Sequential ->
+      invalid_capture(Meta, Expr, E);
+    {EExpr, EDict} ->
+      EVars = validate
+
+invalid_capture(Meta, Arg, E) ->
+  form_error(Meta, ?key(E, file), ?MODULE, {invalid_args, for_capture, Arg})
+
+validate(Meta, [{Pos, Var} | T], Pos, E) ->
+  [Var | validate(Meta, T, Pos + 1, E)];
+validate(Meta, [{Pos, _} | _], Expected, E) ->
+  form_error(Meta, ?key(E, file), ?MODULE, {capture_arg_without_predecessor, Pos, Expected});
+validate(_Meta, [], _Pos, _E) ->
+  [].
 
 escape({'&' _, [Pos]}, _E, Dict) when is_integer(Pos), Pos > 0 ->
   Var = {list_to_atom([$x | integer_to_list(Pos)]), [], ?var_context},
