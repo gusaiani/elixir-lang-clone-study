@@ -95,10 +95,17 @@ capture_require(Meta, {{'.', DotMeta, [Left, Right]}, RequireMeta, Args}, E, Seq
         _ ->
           false
       end,
-      handle_capture()
+      handle_capture(Res, Meta, {{'.', DotMeta, [ELeft, Right]}, RequireMeta, Args},
+                     EE, Sequential);
+    {EscLeft, Escaped} ->
+      capture_expr(Meta, {{'.', DotMeta, [EscLeft, Right]}, RequireMeta, Args},
+                   E, Escaped, Sequential)
+  end.
 
 handle_capture(false, Meta, Expr, E, Sequential) ->
-  capture_expr
+  capture_expr(Meta, Expr, E, Sequential);
+handle_capture(LocalOrRemote, _Meta, _Expr, E, _Sequential) ->
+  {LocalOrRemote, E}.
 
 capture_expr(Meta, Expr, E, Sequential) ->
   capture_expr(Meta, Expr, E, [], Sequential).
@@ -107,10 +114,13 @@ capture_expr(Meta, Expr, E, Escaped, Sequential) ->
     {_, []} when not Sequential ->
       invalid_capture(Meta, Expr, E);
     {EExpr, EDict} ->
-      EVars = validate
+      EVars = validate(Meta, EDict, 1, E),
+      Fn = {fn, Meta, [{'->', Meta, [EVars, EExpr]}]},
+      {expand, Fn, E}
+  end.
 
 invalid_capture(Meta, Arg, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_args, for_capture, Arg})
+  form_error(Meta, ?key(E, file), ?MODULE, {invalid_args_for_capture, Arg}).
 
 validate(Meta, [{Pos, Var} | T], Pos, E) ->
   [Var | validate(Meta, T, Pos + 1, E)];
@@ -119,11 +129,11 @@ validate(Meta, [{Pos, _} | _], Expected, E) ->
 validate(_Meta, [], _Pos, _E) ->
   [].
 
-escape({'&' _, [Pos]}, _E, Dict) when is_integer(Pos), Pos > 0 ->
+escape({'&', _, [Pos]}, _E, Dict) when is_integer(Pos), Pos > 0 ->
   Var = {list_to_atom([$x | integer_to_list(Pos)]), [], ?var_context},
   {Var, orddict:store(Pos, Var, Dict)};
 escape({'&', Meta, [Pos]}, E, _Dict) when is_integer(Pos) ->
-  form_error(Meta, &key(E, file), ?MODULE, {unallowed_capture_arg, Pos});
+  form_error(Meta, ?key(E, file), ?MODULE, {unallowed_capture_arg, Pos});
 escape({'&', Meta, _} = Arg, E, _Dict) ->
   form_error(Meta, ?key(E, file), ?MODULE, {nested_capture, Arg});
 escape({Left, Meta, Right}, E, Dict0) ->
@@ -133,7 +143,7 @@ escape({Left, Meta, Right}, E, Dict0) ->
 escape({Left, Right}, E, Dict0) ->
   {TLeft, Dict1}  = escape(Left, E, Dict0),
   {TRight, Dict2} = escape(Right, E, Dict1),
-  {{TLeft, Tright}, Dict2};
+  {{TLeft, TRight}, Dict2};
 escape(List, E, Dict) when is_list(List) ->
   lists:mapfoldl(fun(X, Acc) -> escape(X, E, Acc) end, Dict, List);
 escape(Other, _E, Dict) ->
@@ -146,3 +156,30 @@ args_from_arity(Meta, A, E) ->
 
 is_sequential_and_not_empty([])   -> false;
 is_sequential_and_not_empty(List) -> is_sequential(List, 1).
+
+is_sequential([{'&', _, [Int]} | T], Int) -> is_sequential(T, Int + 1);
+is_sequential([], _Int) -> true;
+is_sequential(_, _Int) -> false.
+
+format_error(clauses_with_different_arities) ->
+  "cannot mix clauses with different arities in anonymous functions";
+format_error(defaults_in_args) ->
+  "anonymous functions cannot have optional arguments";
+format_error({block_expr_in_capture, Expr}) ->
+  io_lib:format("invalid args for &, block expressions are not allowed, got: ~ts",
+                ['Elixir.Macro':to_string(Expr)]);
+format_error({nested_capture, Arg}) ->
+  io_lib:format("nested captures via & are not allowed: ~ts", ['Elixir.Macro':to_string(Arg)]);
+format_error({invalid_arity_for_capture, Arity}) ->
+  io_lib:format("invalid arity for &, expected a number between 0 and 255, got: ~b", [Arity]);
+format_error({capture_arg_outside_of_capture, Integer}) ->
+  io_lib:format("unhandled &~B outside of a capture", [Integer]);
+format_error({capture_arg_without_predecessor, Pos, Expected}) ->
+  io_lib:format("capture &~B cannot be defined without &~B", [Pos, Expected]);
+format_error({unallowed_capture_arg, Integer}) ->
+  io_lib:format("capture &~B is not allowed", [Integer]);
+format_error({invalid_args_for_capture, Arg}) ->
+  Message =
+    "invalid args for &, expected an expression in the format of &Mod.fun/arity, "
+    "&local/arity or a capture containing at least one argument as &1, got: ~ts",
+  io_lib:format(Message, ['Elixir.Macro':to_string(Arg)]).
