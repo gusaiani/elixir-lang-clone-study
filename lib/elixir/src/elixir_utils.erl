@@ -13,3 +13,8 @@ relative_to_cwd(Path) ->
   catch
     _:_ -> Path
   end.
+
+split_last([])           -> {[], []};
+split_last(List)         -> split_last(List, []).
+split_last([H], Acc)     -> {lists:reverse(Acc), H};
+split_last([H | T], Acc) -> split_last(T, [H | Acc]).
