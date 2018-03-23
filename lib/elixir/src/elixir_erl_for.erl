@@ -58,7 +58,37 @@ build_inline(Ann, Clauses, Expr, Into, Uniq, S) ->
 
 build_inline_each(Ann, Clauses, Expr, false, Uniq, S) ->
   InnerFun = fun(InnerExpr, _InnerAcc) -> InnerExpr end,
-  {build_reduce}
+  {build_reduce(Ann, Clauses, InnerFun, Expr, {nil, Ann}, Uniq, S), S};
+build_inline_each(Ann, Clauses, Expr, {nil, _} = Into, Uniq, S) ->
+  InnerFun = fun(InnerExpr, InnerAcc) -> {cons, Ann, InnerExpr, InnerAcc} end,
+  ReduceExpr = build_reduce(Ann, Clauses, InnerFun, Expr, Into, Uniq, S),
+  {elixir_erl:remote(Ann, lists, reverse, [ReduceExpr]), S};
+build_inline_each(Ann, Clauses, Expr, {bin, _, []}, Uniq, S) ->
+  {InnerValue, SV} = build_var(Ann, S),
+
+  InnerFun = fun(InnerExpr, InnerAcc) ->
+    {'case', Ann, InnerExpr, [
+      {clause, Ann,
+       [InnerValue],
+       [[elixir_erl:remote(Ann, erlang, is_binary, [InnerValue]),
+         elixir_erl:remote(Ann, erlang, is_list, [InnerAcc])]],
+       [{cons, Ann, InnerAcc, InnerValue}]},
+      {clause, Ann,
+       [InnerValue],
+       [[elixir_erl:remote(Ann, erlang, is_bitstring, [InnerValue]),
+         elixir_erl:remote(Ann, erlang, is_bitstring, [InnerAcc])]],
+       [{bin, Ann, [
+          {bin_element, Ann, InnerACc, default, [bitstring]},
+          {bin_element, Ann, InnerValue, default, [bitstring]}
+       ]}]},
+      {clause, Ann,
+       [InnerValue],
+       [[elixir_erl:remote(Ann, erlang, is_bitstring, [InnerValue])]],
+       [{build_var, Ann, [
+           {bin_element, Ann, InnerAcc, default, [bitstring]},
+           {bin_element, Ann, InnerValue, default, [bitstring]}
+       ]}]},
+    ]}
 comprehension_expr({bin, _, []}, {bin, _, _} = Expr) ->
   {inline, Expr};
 comprehension_expr({bin, Ann, []}, Expr) ->
@@ -75,7 +105,30 @@ comprehension_expr(_, Expr) ->
 
 build_reduce(Ann, Clauses, InnerFun, Expr, Into, false, S) ->
   {Acc, SA} = build_var(Ann, S),
-  build_reduce_each()
+  build_reduce_each(Clauses, InnerFun(Expr, Acc), Into, Acc, SA);
+build_reduce(Ann, Clauses, InnerFun, Expr, Into, true, S) ->
+  %% Those variables are used only inside the anonymous function
+  %% so we don't need to worry about returning the scope.
+  {Acc, SA} = build_var(Ann, S),
+  {Value, SV} = build_var(Ann, SA),
+  {IntoAcc, SI} = build_var(Ann, SV),
+  {UniqAcc, SU} = build_var(Ann, SI),
+
+  NewInto = {tuple, Ann, [Into, {map, Ann, []}]},
+  AccTuple = {tuple, Ann, [IntoAcc, UniqAcc]},
+  PutUniqExpr = elixir_erl:remote(Ann, maps, put, [Value, {atom, Ann, true}, UniqAcc]),
+
+  InnerExpr = {block, Ann, [
+    {match, Ann, AccTuple, Acc},
+    {match, Ann, Value, Expr},
+    {'case', Ann, UniqAcc, [
+      {clause, Ann, [{map, Ann, [{map_field_exact, Ann, Value, {atom, Ann, true}}]}], [], [AccTuple]},
+      {clause, Ann, [{map, Ann, []}], [], [{tuple, Ann, [InnerFun(Value, IntoAcc), PutUniqExpr]}]}
+    ]}
+  ]},
+
+  EnumReduceCall = build_reduce_each(Clauses, InnerExpr, NewInto, Acc, SU),
+  elixir_erl:remote(Ann, erlang, element, [{integer, Ann, 1}, EnumReduceCall]).
 
 build_reduce_each([{enum, Meta, Left, Right, Filters} | T], Expr, Arg, Acc, S) ->
   Ann = ?ann(Meta),
