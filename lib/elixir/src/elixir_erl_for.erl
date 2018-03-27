@@ -65,6 +65,30 @@ translate_guards([[Guards]]) ->
 translate_guards([[Left], [Right] | Rest]) ->
   translate_guards([[{op, element(2, Left), 'orelse', Left, Right}] | Rest]).
 
+translate_filters(T, S) ->
+  {Filters, Rest} = collect_filters(T, []),
+  {Rest, lists:mapfoldr(fun translate_filter/2, S, Filters)}.
+
+translate_filter(Filter, S) ->
+  {TFilter, TS} = elixir_erl_pass:translate(Filter, S),
+  case elixir_utils:returns_boolean(Filter) of
+    true ->
+      {{nil, TFilter}, TS};
+    false ->
+      {Name, _, VS} = elixir_erl_var:build('_', TS),
+      {{{var, 0, Name}, TFilter}, VS}
+  end.
+
+collect_filters([{'<-', _, [_, _]} | _] = T, Acc) ->
+  {Acc, T};
+collect_filters([{'<<>>', _, [{'<-', _, [_, _]}]} | _] = T, Acc) ->
+  {Acc, T};
+collect_filters([H | T], Acc) ->
+  collect_filters(T, [H | Acc]);
+collect_filters([], Acc) ->
+  {Acc, []}.
+
+
 build_inline(Ann, Clauses, Expr, Into, Uniq, S) ->
   case not Uniq and lists:all(fun(Clause) -> element(1, Clause) == bin end, Clauses) of
     true  -> {build_comprehension(Ann, Clauses, Expr, Into), S};
@@ -250,6 +274,9 @@ build_reduce_each([{bin, Meta, Left, Right, Filters} | T], Expr, Arg, Acc, S) ->
 
 build_reduce_each([], Expr, _Arg, _Acc, _S) ->
   Expr.
+
+is_var({var, _, _}) -> true;
+is_var(_) -> false.
 
 pair(Ann, Atom, Arg) ->
   {tuple, Ann, [{atom, Ann, Atom}, Arg]}.
