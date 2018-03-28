@@ -291,6 +291,25 @@ no_var(Elements) ->
 no_var_expr({var, Ann, _}) ->
   {var, Ann, '_'}.
 
+build_comprehension(Ann, Clauses, Expr, false) ->
+  {lc, Ann, Expr, comprehension_clause(Clauses)};
+build_comprehension(Ann, Clauses, Expr, Into) ->
+  {comprehension_kind(Into), Ann, Expr, comprehension_clause(Clauses)}.
+
+comprehension_clause([{Kind, Meta, Left, Right, Filters} | T]) ->
+  Ann = ?ann(Meta),
+  [{comprehension_generator(Kind), Ann, Left, Right}] ++
+    comprehension_filter(Ann, Filters) ++
+    comprehension_clause(T);
+comprehension_clause([]) ->
+  [].
+
+comprehension_kind({nil, _}) -> lc;
+comprehension_kind({bin, _, []}) -> bc.
+
+comprehension_generator(enum) -> generate;
+comprehension_generator(bin) -> b_generate.
+
 comprehension_expr({bin, _, []}, {bin, _, _} = Expr) ->
   {inline, Expr};
 comprehension_expr({bin, Ann, []}, Expr) ->
@@ -302,6 +321,10 @@ comprehension_expr(false, Expr) ->
   {inline, Expr};
 comprehension_expr(_, Expr) ->
   {into, Expr}.
+
+comprehension_filter(Ann, Filters) ->
+  [join_filter(Ann, Filter, {atom, Ann, true}, {atom, Ann, false}) ||
+   Filter <- lists:reverse(Filters)].
 
 join_filters(_Ann, [], True, _False) ->
   True;
