@@ -124,3 +124,11 @@ defimpl Enumerable, for: Range do
   defp slice_desc(current, 1), do: [current]
   defp slice_desc(current, remaining), do: [current | slice_desc(current - 1, remaining - 1)]
 end
+
+defimpl Inspect, for: Range do
+  import Inspect.Algebra
+
+  def inspect(first..last, opts) do
+    concat([to_doc(first, opts), "..", to_doc(last, opts)])
+  end
+end
