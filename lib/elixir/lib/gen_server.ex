@@ -23,10 +23,17 @@ defmodule GenServer do
 
         # Callbacks
 
+        @impl true
+        def init(stack) do
+          {:ok, stack}
+        end
+
+        @impl true
         def handle_call(:pop, _from, [h | t]) do
           {:reply, h, t}
         end
 
+        @impl true
         def handle_cast({:push, item}, state) do
           {:noreply, [item | state]}
         end
@@ -87,7 +94,7 @@ defmodule GenServer do
     * an atom - the GenServer is registered locally with the given name
       using `Process.register/2`.
 
-    * `{:global, term}`- the GenServer is registered globally with the given
+    * `{:global, term}` - the GenServer is registered globally with the given
       term using the functions in the [`:global` module](http://www.erlang.org/doc/man/global.html).
 
     * `{:via, module, term}` - the GenServer is registered with the given
@@ -151,21 +158,14 @@ defmodule GenServer do
 
         # Server (callbacks)
 
+        @impl true
         def handle_call(:pop, _from, [h | t]) do
           {:reply, h, t}
         end
 
-        def handle_call(request, from, state) do
-          # Call the default implementation from GenServer
-          super(request, from, state)
-        end
-
+        @impl true
         def handle_cast({:push, item}, state) do
           {:noreply, [item | state]}
-        end
-
-        def handle_cast(request, state) do
-          super(request, state)
         end
       end
 
@@ -186,7 +186,7 @@ defmodule GenServer do
   callback.
 
   `c:handle_info/2` can be used in many situations, such as handling monitor
-  DOWN messaegs sent by `Process.monitor/1`. Another use case for `c:handle_info/2`
+  DOWN messages sent by `Process.monitor/1`. Another use case for `c:handle_info/2`
   is to perform periodic work, with the help of `Process.send_after/4`:
 
       defmodule MyApp.Periodically do
@@ -196,6 +196,44 @@ defmodule GenServer do
           GenServer.start_link(__MODULE__, %{})
         end
 
+        @impl true
+        def init(state) do
+          schedule_work() # Schedule work to be performed on start
+          {:ok, state}
+        end
 
+        @impl true
+        def handle_info(:work, state) do
+          # Do the desired work here
+          schedule_work() # Reschedule once more
+          {:noreply, state}
+        end
+
+        defp schedule_work() do
+          Process.send_after(self(), :work, 2 * 60 * 60 * 1000) # In 2 hours
+        end
+      end
+
+  ## Debugging with the :sys module
+
+  GenServers, as [special processes](htp://erlang.org/doc/design_principles/spec_proc.html),
+  can be debugged using the [`:sys` module](http://www.erlang.org/doc/man/sys.html). Through various hooks, this module
+  allows developers to introspect the state of the process and trace
+  system events that happen during its execution, such as received messages,
+  sent replies and state changes.
+
+  Let's explore the basic functions from the
+  [`:sys` module](http://www.erlang.org/doc/man/sys.html) used for debugging:
+
+    * `:sys.get_state/2` - allows retrieval of the state of the process.
+      In the case of a GenServer process, it will be the callback module state,
+      as passed into the callback functions as last argument.
+    * `:sys.get_status/2` - allows retrieval of the status of the process.
+      This status includes the process dictionary, if the process is running
+      or is suspended, the parent PID, the debugger state, and the state of
+      the behaviour module, which includes the callback module state
+      (as returned by `:sys.get_state/2`). It's possible to change how this
+      status is represented by defining the optional `c:GenServer.format_status/2`
+      callback.
   """
 end
