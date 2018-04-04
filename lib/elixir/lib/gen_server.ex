@@ -216,7 +216,7 @@ defmodule GenServer do
 
   ## Debugging with the :sys module
 
-  GenServers, as [special processes](htp://erlang.org/doc/design_principles/spec_proc.html),
+  GenServers, as [special processes](http://erlang.org/doc/design_principles/spec_proc.html),
   can be debugged using the [`:sys` module](http://www.erlang.org/doc/man/sys.html). Through various hooks, this module
   allows developers to introspect the state of the process and trace
   system events that happen during its execution, such as received messages,
@@ -235,5 +235,102 @@ defmodule GenServer do
       (as returned by `:sys.get_state/2`). It's possible to change how this
       status is represented by defining the optional `c:GenServer.format_status/2`
       callback.
+    * `:sys.trace/3` - prints all the system events to `:stdio`.
+    * `:sys.statistics/3` - manages collection of process statistics.
+    * `:sys.no_debug/2` - turns off all debug handlers for the given process.
+      It is very important to switch off debugging once we're done. Excessive
+      debug handlers or those that should be turned off, but weren't, can
+      seriously damage the performance of the system.
+    * `:sys.suspend/2` - allows to suspend a process so that it only
+      replies to system messages but no other messages. A suspended process
+      can be reactivated via `:sys.resume/2`.
+
+  Let's see how we could use those functions for debugging the stack server
+  we defined earlier.
+
+      iex> {:ok, pid} = Stack.start_link([])
+      iex> :sys.statistics(pid, true) # turn on collecting process statistics
+      iex> :sys.trace(pid, true) # turn on event printing
+      iex> Stack.push(pid, 1)
+      *DBG* <0.122.0> got cast {push,1}
+      *DBG* <0.122.0> new state [1]
+      :ok
+      iex> :sys.get_state(pid)
+      [1]
+      iex> Stack.pop(pid)
+      *DBG* <0.122.0> got call pop from <0.80.0>
+      *DBG* <0.122.0> sent 1 to <0.80.0>, new state []
+      1
+      iex> :sys.statistics(pid, :get)
+      {:ok,
+       [start_time: {{2016, 7, 16}, {12, 29, 41}},
+        current_time: {{2016, 7, 16}, {12, 29, 50}},
+        reductions: 117, messages_in: 2, messages_out: 0]}
+      iex> :sys.no_debug(pid) # turn off all debug handlers
+      :ok
+      iex> :sys.get_status(pid)
+      {:status, #PID<0.122.0>, {:module, :gen_server},
+       [["$initial_call": {Stack, :init, 1},            # pdict
+         "$ancestors": [#PID<0.80.0>, #PID<0.51.0>]],
+        :running,                                       # :running | :suspended
+        #PID<0.80.0>,                                   # parent
+        [],                                             # debugger state
+        [header: 'Status for generic server <0.122.0>', # module status
+         data: [{'Status', :running}, {'Parent', #PID<0.80.0>},
+           {'Logged events', []}], data: [{'State', [1]}]]]}
+
+  ## Learn more
+
+  If you wish to find out more about GenServers, the Elixir Getting Started
+  guide provides a tutorial-like introduction. The documentation and links
+  in Erlang can also provide extra insight.
+
+    * [GenServer – Elixir's Getting Started Guide](http://elixir-lang.org/getting-started/mix-otp/genserver.html)
+    * [`:gen_server` module documentation](http://www.erlang.org/doc/man/gen_server.html)
+    * [gen_server Behaviour – OTP Design Principles](http://www.erlang.org/doc/design_principles/gen_server_concepts.html)
+    * [Clients and Servers – Learn You Some Erlang for Great Good!](http://learnyousomeerlang.com/clients-and-servers)
   """
+
+  @doc """
+  Invoked when the server is started. `start_link/3` or `start/3` will
+  block until it returns.
+
+  `args` is the argument term (second argument) passed to `start_link/3`.
+
+  Returning `{:ok, state}` will cause `start_link/3` to return
+  `{:ok, pid}` and the process to enter its loop.
+
+  Returning `{:ok, state, timeout}` is similar to `{:ok, state}`
+  except `handle_info(:timeout, state)` will be called after `timeout`
+  milliseconds if no messages are received within the timeout.
+
+  Returning `{:ok, state, :hibernate}` is similar to
+  `{:ok, state}` except the process is hibernated before entering the loop. See
+  `c:handle_call/3` for more information on hibernation.
+
+  Returning `:ignore` will cause `start_link/3` to return `:ignore` and the
+  process will exit normally without entering the loop or calling `c:terminate/2`.
+  If used when part of a supervision tree the parent supervisor will not fail
+  to start nor immediately try to restart the `GenServer`. The remainder of the
+  supervision tree will be (re)started and so the `GenServer` should not be
+  required by other processes. It can be started later with
+  `Supervisor.restart_child/2` as the child specification is saved in the parent
+  supervisor. The main use cases for this are:
+
+    * The `GenServer` is disabled by configuration but might be enabled later.
+    * An error occurred and it will be handled by a different mechanism than the
+      `Supervisor`. Likely this approach involves calling `Supervisor.restart_child/2`
+      after a delay to attempt a restart.
+
+  Returning `{:stop, reason}` will cause `start_link/3` to return
+  `{:error, reason}` and the process to exit with reason `reason` without
+  entering the loop or calling `c:terminate/2`.
+  """
+  @callback init(args :: term) ::
+              {:ok, state}
+              | {:ok, state, timeout | :hibernate}
+              | :ignore
+              | {:stop, reason :: any}
+            when state: any
+
 end
