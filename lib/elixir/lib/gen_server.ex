@@ -319,7 +319,7 @@ defmodule GenServer do
 
     * The `GenServer` is disabled by configuration but might be enabled later.
     * An error occurred and it will be handled by a different mechanism than the
-      `Supervisor`. Likely this approach involves calling `Supervisor.restart_child/2`
+     `Supervisor`. Likely this approach involves calling `Supervisor.restart_child/2`
       after a delay to attempt a restart.
 
   Returning `{:stop, reason}` will cause `start_link/3` to return
@@ -333,4 +333,112 @@ defmodule GenServer do
               | {:stop, reason :: any}
             when state: any
 
+  @doc """
+  Invoked to handle synchronous `call/3` messages. `call/3` will block until a
+  reply is received (unless the call times out or nodes are disconnected).
+
+  `request` is the request message sent by a `call/3`, `from` is a 2-tuple
+  containing the caller's PID and a term that uniquely identifies the call, and
+  `state` is the current state of the `GenServer`.
+
+  Returning `{:reply, reply, new_state}` sends the response `reply` to the
+  caller and continues the loop with new state `new_state`.
+
+  Returning `{:reply, reply, new_state, timeout}` is similar to
+  `{:reply, reply, new_state}` except `handle_info(:timeout, new_state)` will be
+  called after `timeout` milliseconds if no messages are received.
+
+  Returning `{:reply, reply, new_state, :hibernate}` is similar to
+  `{:reply, reply, new_state}` except the process is hibernated and will
+  continue the loop once a message is in its message queue. If a message is
+  already in the message queue this will be immediately. Hibernating a
+  `GenServer` causes garbage collection and leaves a continuous heap that
+  minimises the memory used by the process.
+
+  Hibernating should not be used aggressively as too much time could be spent
+  garbage collecting. Normally it should only be used when a message is not
+  expected soon and minimising the memory of the process is shown to be
+  beneficial.
+
+  Returning `{:noreply, new_state}` does not send a response to the caller and
+  continues the loop with new state `new_state`. The response must be sent with
+  `reply/2`.
+
+  There are three main use cases for not replying using the return value:
+
+    * To reply before returning from the callback because the response is known
+      before calling a slow function.
+    * To reply after returning from the callback because the response is not yet
+      available.
+    * To reply from another process, such as a task.
+
+  When replying from another process the `GenServer` should exit if the other
+  process exits without replying as the caller will be blocking awaiting a
+  reply.
+
+  Returning `{:noreply, new_state, timeout | :hibernate}` is similar to
+  `{:noreply, new_state}` except a timeout or hibernation occurs as with a
+  `:reply` tuple.
+
+  Returning `{:stop, reason, reply, new_state}` stops the loop and `c:terminate/2`
+  is called with reason `reason` and state `new_state`. Then the `reply` is sent
+  as the response to call and the process exits with reason `reason`.
+
+  Returning `{:stop, reason, new_state}` is similar to
+  `{:stop, reason, reply, new_state}` except a reply is not sent.
+
+  If this callback is not implemented, the default implementation by
+  `use GenServer` will fail with a `RuntimeError` exception with a message:
+  attempted to call `GenServer` but no `handle_call/3` clause was provided.
+  """
+  @callback handle_call(request :: term, from, state :: term) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+
+  @doc """
+  Invoked to handle asynchronous `cast/2` messages.
+
+  `request` is the request message sent by a `cast/2` and `state` is the current
+  state of the `GenServer`.
+
+  Returning `{:noreply, new_state}` continues the loop with new state `new_state`.
+
+  Returning `{:noreply, new_state, timeout}` is similar to
+  `{:noreply, new_state}` except `handle_info(:timeout, new_state)` will be
+  called after `timeout` milliseconds if no messages are received.
+
+  Returning `{:noreply, new_state, :hibernate}` is similar to
+  `{:noreply, new_state}` except the process is hibernated before continuing the
+  loop. See `c:handle_call/3` for more information.
+
+  Returning `{:stop, reason, new_state}` stops the loop and `c:terminate/2` is
+  called with the reason `reason` and state `new_state`. The process exits with
+  reason `reason`.
+
+  If this callback is not implemented, the default implementation by
+  `use GenServer` will fail with a `RuntimeError` exception with a message:
+  attempted to call `GenServer` but no `handle_cast/2` clause was provided.
+  """
+  @callback handle_cast(request :: term, state :: term) ::
+              {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason :: term, new_state}
+            when new_state: term
+
+  @doc """
+  Invoked to handle all other messages.
+
+  `msg` is the message and `state` is the current state of the `GenServer`. When
+  a timeout occurs the message is `:timeout`.
+
+  Return values are the same as `c:handle_cast/2`.
+
+  If this callback is not implemented, the default implementation by
+  `use GenServer` will return `{:noreply, state}`.
+  """
 end
