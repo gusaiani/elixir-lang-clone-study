@@ -441,4 +441,105 @@ defmodule GenServer do
   If this callback is not implemented, the default implementation by
   `use GenServer` will return `{:noreply, state}`.
   """
+  @callback handle_info(msg :: :timeout | term, state :: term) ::
+              {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason :: term, new_state}
+            when new_state: term
+
+  @doc """
+  Invoked when the server is about to exit. It should do any cleanup required.
+
+  `reason` is exit reason and `state` is the current state of the `GenServer`.
+  The return value is ignored.
+
+  `c:terminate/2` is called if a callback (except `c:init/1`) does one of the
+  following:
+
+    * returns a `:stop` tuple
+    * raises
+    * calls `Kernel.exit/1`
+    * returns an invalid value
+    * the `GenServer` traps exits (using `Process.flag/2`) *and* the parent
+      process sends an exit signal
+
+  If part of a supervision tree, a `GenServer`'s `Supervisor` will send an exit
+  signal when shutting it down. The exit signal is based on the shutdown
+  strategy in the child's specification. If it is `:brutal_kill` the `GenServer`
+  is killed and so `c:terminate/2` is not called. However if it is a timeout the
+  `Supervisor` will send the exit signal `:shutdown` and the `GenServer` will
+  have the duration of the timeout to call `c:terminate/2` - if the process is
+  still alive after the timeout it is killed.
+
+  If the `GenServer` receives an exit signal (that is not `:normal`) from any
+  process when it is not trapping exits it will exit abruptly with the same
+  reason and so not call `c:terminate/2`. Note that a process does *NOT* trap
+  exits by default and an exit signal is sent when a linked process exits or its
+  node is disconnected.
+
+  Therefore it is not guaranteed that `c:terminate/2` is called when a `GenServer`
+  exits. For such reasons, we usually recommend important clean-up rules to
+  happen in separated processes either by use of monitoring or by links
+  themselves. For example if the `GenServer` controls a `port` (e.g.
+  `:gen_tcp.socket`) or `t:File.io_device/0`, they will be closed on receiving a
+  `GenServer`'s exit signal and do not need to be closed in `c:terminate/2`.
+
+  If `reason` is not `:normal`, `:shutdown`, nor `{:shutdown, term}` an error is
+  logged.
+  """
+  @callback terminate(reason, state :: term) :: term
+            when reason: :normal | :shutdown | {:shutdown, term}
+
+  @doc """
+  Invoked to change the state of the `GenServer` when a different version of a
+  module is loaded (hot code swapping) and the state's term structure should be
+  changed.
+
+  `old_vsn` is the previous version of the module (defined by the `@vsn`
+  attribute) when upgrading. When downgrading the previous version is wrapped in
+  a 2-tuple with first element `:down`. `state` is the current state of the
+  `GenServer` and `extra` is any extra data required to change the state.
+
+  Returning `{:ok, new_state}` changes the state to `new_state` and the code
+  change is successful.
+
+  Returning `{:error, reason}` fails the code change with reason `reason` and
+  the state remains as the previous state.
+
+  If `c:code_change/3` raises the code change fails and the loop will continue
+  with its previous state. Therefore this callback does not usually contain side effects.
+  """
+  @callback code_change(old_vsn, state :: term, extra :: term) ::
+              {:ok, new_state :: term}
+              | {:error, reason :: term}
+              | {:down, term}
+            when old_vsn: term
+
+  @doc """
+  Invoked in some cases to retrieve a formatted version of the `GenServer` status.
+
+  This callback can be useful to control the *appearance* of the status of the
+  `GenServer`. For example, it can be used to return a compact representation of
+  the `GenServer`'s state to avoid having large state terms printed.
+
+    * one of `:sys.get_status/1` or `:sys.get_status/2` is invoked to get the
+      status of the `GenServer`; in such cases, `reason` is `:normal`
+
+    * the `GenServer` terminates abnormally and logs an error; in such cases,
+      `reason` is `:terminate`
+
+  `pdict_and_state` is a two-elements list `[pdict, state]` where `pdict` is a
+  list of `{key, value}` tuples representing the current process dictionary of
+  the `GenServer` and `state` is the current state of the `GenServer`.
+  """
+  @callback format_status(reason, pdict_and_state :: list) :: term
+            when reason: :normal | :terminate
+
+  @optional_callbacks format_status: 2
+
+  @typedoc "Return values of `start*` functions"
+  @type on_start :: {:ok, pid} | :ignore | {:error, {:already_started, pid} | term}
+
+  @typedoc "The GenServer name"
+  @type name :: atom | {:global, term} | {:via, module, term}
 end
