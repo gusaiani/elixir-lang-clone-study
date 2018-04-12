@@ -542,4 +542,438 @@ defmodule GenServer do
 
   @typedoc "The GenServer name"
   @type name :: atom | {:global, term} | {:via, module, term}
+
+  @typedoc "Options used by the `start*` functions"
+  @type options :: [option]
+
+  @typedoc "Option values used by the `start*` functions"
+  @type option ::
+          {:debug, debug}
+          | {:name, name}
+          | {:timeout, timeout}
+          | {:spawn_opt, Process.spawn_opt()}
+
+  @typedoc "Debug options supported by the `start*` functions"
+  @type debug :: [:trace | :log | :statistics | {:log_to_file, Path.t()}]
+
+  @typedoc "The server reference"
+  @type server :: pid | name | {atom, node}
+
+  @typedoc """
+  Tuple describing the client of a call request.
+
+  `pid` is the PID of the caller and `tag` is a unique term used to identify the
+  call.
+  """
+  @type from :: {pid, tag :: term}
+
+  @doc false
+  defmacro __using__(opts) do
+    quote location: :keep, bind_quoted: [opts: opts] do
+      @behaviour GenServer
+
+      @doc """
+      Returns a specification to start this module under a supervisor.
+
+      See `Supervisor`.
+      """
+      def child_spec(arg) do
+        default = %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [arg]}
+        }
+
+        Supervisor.child_spec(default, unquote(Macro.escape(opts)))
+      end
+
+      defoverridable child_spec: 1
+
+      # TODO: Remove this on Elixir v2.0
+      @before_compile GenServer
+
+      @doc false
+      def handle_call(msg, _from, state) do
+        proc =
+          case Process.info(self(), :registered_name) do
+            {_, []} -> self()
+            {_, name} -> name
+          end
+
+        # We do this to trick Dialyzer to not complain about non-local returns.
+        case :erlang.phash2(1, 1) do
+          0 ->
+            raise "attempted to call GenServer #{inspect(proc)} but no handle_call/3 clause was provided"
+
+          1 ->
+            {:stop, {:bad_call, msg}, state}
+        end
+      end
+
+      @doc false
+      def handle_info(msg, state) do
+        proc =
+          case Process.info(self(), :registered_name) do
+            {_, []} -> self()
+            {_, name} -> name
+          end
+
+        pattern = '~p ~p received unexpected message in handle_info/2: ~p~n'
+        :error_logger.error_msg(pattern, [__MODULE__, proc, msg])
+        {:noreply, state}
+      end
+
+      @doc false
+      def handle_cast(msg, state) do
+        proc =
+          case Process.info(self(), :registered_name) do
+            {_, []} -> self()
+            {_, name} -> name
+          end
+
+        # We do this to trick Dialyzer to not complain about non-local returns.
+        case :erlang.phash2(1, 1) do
+          0 ->
+            raise "attempted to cast GenServer #{inspect(proc)} but no handle_cast/2 clause was provided"
+
+          1 ->
+            {:stop, {:bad_cast, msg}, state}
+        end
+      end
+
+      @doc false
+      def terminate(_reason, _state) do
+        :ok
+      end
+
+      @doc false
+      def code_change(_old, state, _extra) do
+        {:ok, state}
+      end
+
+      defoverridable GenServer
+    end
+  end
+
+  defmacro __before_compile__(env) do
+    unless Module.defines?(env.module, {:init, 1}) do
+      message = """
+      function init/1 required by behaviour GenServer is not implemented \
+      (in module #{inspect(env.module)}).
+
+      We will inject a default implementation for now:
+
+          def init(args) do
+            {:ok, args}
+          end
+
+      You can copy the implementation above or define your own that converts \
+      the arguments given to GenServer.start_link/3 to the server state.
+      """
+
+      :elixir_errors.warn(env.line, env.file, message)
+
+      quote do
+        @doc false
+        def init(args) do
+          {:ok, args}
+        end
+
+        defoverridable init: 1
+      end
+    end
+  end
+
+  @doc """
+  Starts a `GenServer` process linked to the current process.
+
+  This is often used to start the `GenServer` as part of a supervision tree.
+
+  Once the server is started, the `c:init/1` function of the given `module` is
+  called with `args` as its arguments to initialize the server. To ensure a
+  synchronized start-up procedure, this function does not return until `c:init/1`
+  has returned.
+
+  Note that a `GenServer` started with `start_link/3` is linked to the
+  parent process and will exit in case of crashes from the parent. The GenServer
+  will also exit due to the `:normal` reasons in case it is configured to trap
+  exits in the `c:init/1` callback.
+
+  ## Options
+
+    * `:name` - used for name registration as described in the "Name
+      registration" section of the module documentation
+
+    * `:timeout` - if present, the server is allowed to spend the given number of
+      milliseconds initializing or it will be terminated and the start function
+      will return `{:error, :timeout}`
+
+    * `:debug` - if present, the corresponding function in the [`:sys` module](http://www.erlang.org/doc/man/sys.html) is invoked
+
+    * `:spawn_opt` - if present, its value is passed as options to the
+      underlying process as in `Process.spawn/4`
+
+  ## Return values
+
+  If the server is successfully created and initialized, this function returns
+  `{:ok, pid}`, where `pid` is the PID of the server. If a process with the
+  specified server name already exists, this function returns
+  `{:error, {:already_started, pid}}` with the PID of that process.
+
+  If the `c:init/1` callback fails with `reason`, this function returns
+  `{:error, reason}`. Otherwise, if it returns `{:stop, reason}`
+  or `:ignore`, the process is terminated and this function returns
+  `{:error, reason}` or `:ignore`, respectively.
+  """
+  @spec start_link(module, any, options) :: on_start
+  def start_link(module, args, options \\ []) when is_atom(module) and is_list(options) do
+    do_start(:link, module, args, options)
+  end
+
+  @doc """
+  Starts a `GenServer` process without links (outside of a supervision tree).
+
+  See `start_link/3` for more information.
+  """
+  @spec start(module, any, options) :: on_start
+  def start(module, args, options \\ []) when is_atom(module) and is_list(options) do
+    do_start(:nolink, module, args, options)
+  end
+
+  defp do_start(link, module, args, options) do
+    case Keyword.pop(options, :name) do
+      {nil, opts} ->
+        :gen.start(:gen_server, link, module, args, opts)
+
+      {atom, opts} when is_atom(atom) ->
+        :gen.start(:gen_server, link, {:local, atom}, module, args, opts)
+
+      {{:global, _term} = tuple, opts} ->
+        :gen.start(:gen_server, link, tuple, module, args, opts)
+
+      {{:via, via_module, _term} = tuple, opts} when is_atom(via_module) ->
+        :gen.start(:gen_server, link, tuple, module, args, opts)
+
+      {other, _} ->
+        raise ArgumentError, """
+        expected :name option to be one of:
+
+          * nil
+          * atom
+          * {:global, term}
+          * {:via, module, term}
+
+        Got: #{inspect(other)}
+        """
+    end
+  end
+
+  @doc """
+  Synchronously stops the server with the given `reason`.
+
+  The `c:terminate/2` callback of the given `server` will be invoked before
+  exiting. This function returns `:ok` if the server terminates with the
+  given reason; if it terminates with another reason, the call exits.
+
+  This function keeps OTP semantics regarding error reporting.
+  If the reason is any other than `:normal`, `:shutdown` or
+  `{:shutdown, _}`, an error report is logged.
+  """
+  @spec stop(server, reason :: term, timeout) :: :ok
+  def stop(server, reason \\ :normal, timeout \\ :infinity) do
+    case whereis(server) do
+      nil ->
+        exit({:noproc, {__MODULE__, :stop, [server, reason, timeout]}})
+
+      pid when pid == self() ->
+        exit({:calling_self, {__MODULE__, :stop, [server, reason, timeout]}})
+
+      pid ->
+        try do
+          :proc_lib.stop(pid, reason, timeout)
+        catch
+          :exit, err ->
+            exit({err, {__MODULE__, :stop, [server, reason, timeout]}})
+        end
+    end
+  end
+
+  @doc """
+  Makes a synchronous call to the `server` and waits for its reply.
+
+  The client sends the given `request` to the server and waits until a reply
+  arrives or a timeout occurs. `c:handle_call/3` will be called on the server
+  to handle the request.
+
+  `server` can be any of the values described in the "Name registration"
+  section of the documentation for this module.
+
+  ## Timeouts
+
+  `timeout` is an integer greater than zero which specifies how many
+  milliseconds to wait for a reply, or the atom `:infinity` to wait
+  indefinitely. The default value is `5000`. If no reply is received within
+  the specified time, the function call fails and the caller exits. If the
+  caller catches the failure and continues running, and the server is just late
+  with the reply, it may arrive at any time later into the caller's message
+  queue. The caller must in this case be prepared for this and discard any such
+  garbage messages that are two-element tuples with a reference as the first
+  element.
+  """
+  @spec call(server, term, timeout) :: term
+  def call(server, request, timeout \\ 5000) do
+    case whereis(server) do
+      nil ->
+        exit({:noproc, {__MODULE__, :call, [server, request, timeout]}})
+
+      pid when pid == self() ->
+        exit({:calling_self, {__MODULE__, :call, [server, request, timeout]}})
+
+      pid ->
+        try do
+          :gen.call(pid, :"$gen_call", request, timeout)
+        catch
+          :exit, reason ->
+            exit({reason, {__MODULE__, :call, [server, request, timeout]}})
+        else
+          {:ok, res} -> res
+        end
+    end
+  end
+
+  @doc """
+  Sends an asynchronous request to the `server`.
+
+  This function always returns `:ok` regardless of whether
+  the destination `server` (or node) exists. Therefore it
+  is unknown whether the destination `server` successfully
+  handled the message.
+
+  `c:handle_cast/2` will be called on the server to handle
+  the request. In case the `server` is on a node which is
+  not yet connected to the caller one, the call is going to
+  block until a connection happens. This is different than
+  the behaviour in OTP's `:gen_server` where the message
+  is sent by another process in this case, which could cause
+  messages to other nodes to arrive out of order.
+  """
+  @spec cast(server, term) :: :ok
+  def cast(server, request)
+
+  def cast({:global, name}, request) do
+    try do
+      :global.send(name, cast_msg(request))
+      :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def cast({:via, mod, name}, request) do
+    try do
+      mod.send(name, cast_msg(request))
+      :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def cast({name, node}, request) when is_atom(name) and is_atom(node),
+    do: do_send({name, node}, cast_msg(request))
+
+  def cast(dest, request) when is_atom(dest) or is_pid(dest), do: do_send(dest, cast_msg(request))
+
+  @doc """
+  Casts all servers locally registered as `name` at the specified nodes.
+
+  This function returns immediately and ignores nodes that do not exist, or where the
+  server name does not exist.
+
+  See `multi_call/4` for more information.
+  """
+  @spec abcast([node], name :: atom, term) :: :abcast
+  def abcast(nodes \\ [node() | Node.list()], name, request)
+      when is_list(nodes) and is_atom(name) do
+    msg = cast_msg(request)
+    _ = for node <- nodes, do: do_send({name, node}, msg)
+    :abcast
+  end
+
+  defp cast_msg(req) do
+    {:"$gen_cast", req}
+  end
+
+  defp do_send(dest, msg) do
+    try do
+      send(dest, msg)
+      :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  @doc """
+  Calls all servers locally registered as `name` at the specified `nodes`.
+
+  First, the `request` is sent to every node in `nodes`; then, the caller waits
+  for the replies. This function returns a two-element tuple `{replies,
+  bad_nodes}` where:
+
+    * `replies` - is a list of `{node, reply}` tuples where `node` is the node
+      that replied and `reply` is its reply
+    * `bad_nodes` - is a list of nodes that either did not exist or where a
+      server with the given `name` did not exist or did not reply
+
+  `nodes` is a list of node names to which the request is sent. The default
+  value is the list of all known nodes (including this node).
+
+  To avoid that late answers (after the timeout) pollute the caller's message
+  queue, a middleman process is used to do the actual calls. Late answers will
+  then be discarded when they arrive to a terminated process.
+
+  ## Examples
+
+  Assuming the `Stack` GenServer mentioned in the docs for the `GenServer`
+  module is registered as `Stack` in the `:"foo@my-machine"` and
+  `:"bar@my-machine"` nodes:
+
+      GenServer.multi_call(Stack, :pop)
+      #=> {[{:"foo@my-machine", :hello}, {:"bar@my-machine", :world}], []}
+
+  """
+  @spec multi_call([node], name :: atom, term, timeout) ::
+          {replies :: [{node, term}], bad_nodes :: [node]}
+  def multi_call(nodes \\ [node() | Node.list()], name, request, timeout \\ :infinity) do
+    :gen_server.multi_call(nodes, name, request, timeout)
+  end
+
+  @doc """
+  Replies to a client.
+
+  This function can be used to explicitly send a reply to a client that called
+  `call/3` or `multi_call/4` when the reply cannot be specified in the return
+  value of `c:handle_call/3`.
+
+  `client` must be the `from` argument (the second argument) accepted by
+  `c:handle_call/3` callbacks. `reply` is an arbitrary term which will be given
+  back to the client as the return value of the call.
+
+  Note that `reply/2` can be called from any process, not just the GenServer
+  that originally received the call (as long as that GenServer communicated the
+  `from` argument somehow).
+
+  This function always returns `:ok`.
+
+  ## Examples
+
+      def handle_call(:reply_in_one_second, from, state) do
+        Process.send_after(self(), {:reply, from}, 1_000)
+        {:noreply, state}
+      end
+
+      def handle_info({:reply, from}, state) do
+        GenServer.reply(from, :one_second_has_passed)
+        {:noreply, state}
+      end
+
+  """
 end
