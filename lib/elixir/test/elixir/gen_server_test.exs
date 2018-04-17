@@ -176,3 +176,53 @@ defmodule GenServerTest do
 
     GenServer.stop(:stack)
   end
+
+  test "multi_call/4" do
+    {:ok, _} = GenServer.start_link(Stack, [:hello, :world], name: :stack)
+
+    assert GenServer.multi_call(:stack, :pop) == {[{node(), :hello}], []}
+
+    assert GenServer.multi_call([node(), :foo@bar], :stack, :pop) ==
+             {[{node(), :world}], [:foo@bar]}
+
+    GenServer.stop(:stack)
+  end
+
+  test "whereis/1" do
+    name = :whereis_server
+
+    {:ok, pid} = GenServer.start_link(Stack, [], name: name)
+    assert GenServer.whereis(name) == pid
+    assert GenServer.whereis({name, node()}) == pid
+    assert GenServer.whereis({name, :another_node}) == {name, :another_node}
+    assert GenServer.whereis(pid) == pid
+    assert GenServer.whereis(:whereis_bad_server) == nil
+
+    {:ok, pid} = GenServer.start_link(Stack, [], name: {:global, name})
+    assert GenServer.whereis({:global, name}) == pid
+    assert GenServer.whereis({:global, :whereis_bad_server}) == nil
+    assert GenServer.whereis({:via, :global, name}) == pid
+    assert GenServer.whereis({:via, :global, :whereis_bad_server}) == nil
+  end
+
+  test "stop/3" do
+    {:ok, pid} = GenServer.start(Stack, [])
+    assert GenServer.stop(pid, :normal) == :ok
+
+    stopped_pid = pid
+
+    assert catch_exit(GenServer.stop(stopped_pid)) ==
+             {:noproc, {GenServer, :stop, [stopped_pid, :normal, :infinity]}}
+
+    assert catch_exit(GenServer.stop(nil)) ==
+             {:noproc, {GenServer, :stop, [nil, :normal, :infinity]}}
+
+    {:ok, pid} = GenServer.start(Stack, [])
+
+    assert GenServer.call(pid, :stop_self) ==
+             {:calling_self, {GenServer, :stop, [pid, :normal, :infinity]}}
+
+    {:ok, _} = GenServer.start(Stack, [], name: :stack_for_stop)
+    assert GenServer.stop(:stack_for_stop, :normal) == :ok
+  end
+end
