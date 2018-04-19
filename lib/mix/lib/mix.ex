@@ -229,3 +229,66 @@ defmodule Mix do
   def env(env) when is_atom(env) do
     Mix.State.put(:env, env)
   end
+
+  @doc """
+  Returns the default compilers used by Mix.
+
+  It can be used in your `mix.exs` to prepend or
+  append new compilers to Mix:
+
+      def project do
+        [compilers: Mix.compilers ++ [:foo, :bar]]
+      end
+
+  """
+  def compilers do
+    [:yecc, :leex, :erlang, :elixir, :xref, :app]
+  end
+
+  @doc """
+  Returns the current shell.
+
+  `shell/0` can be used as a wrapper for the current shell. It contains
+  conveniences for requesting information from the user, printing to the shell and so
+  forth. The Mix shell is swappable (see `shell/1`), allowing developers to use
+  a test shell that simply sends messages to the current process instead of
+  performing IO (see `Mix.Shell.Process`).
+
+  By default, this returns `Mix.Shell.IO`.
+  """
+  def shell do
+    Mix.State.get(:shell, Mix.Shell.IO)
+  end
+
+  @doc """
+  Sets the current shell.
+
+  After calling this function, `shell` becomes the shell that is returned by
+  `shell/0`.
+  """
+  def shell(shell) do
+    Mix.State.put(:shell, shell)
+  end
+
+  @doc """
+  Returns true if Mix is in debug mode.
+  """
+  def debug? do
+    Mix.State.get(:debug, false)
+  end
+
+  @doc """
+  Sets Mix debug mode.
+  """
+  def debug(debug) when is_boolean(debug) do
+    Mix.State.put(:debug, debug)
+  end
+
+  @doc """
+  Raises a Mix error that is nicely formatted.
+  """
+  @spec raise(binary) :: no_return
+  def raise(message) when is_binary(message) do
+    Kernel.raise(Mix.Error, mix: true, message: message)
+  end
+end
