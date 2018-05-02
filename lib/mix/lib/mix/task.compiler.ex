@@ -113,4 +113,23 @@ defmodule Mix.Task.Compiler do
   end
 
   # Normalize the compiler result to a diagnostic tuple.
-  @doc false  q
+  @doc false
+  def normalize(result, name) do
+    case result do
+      {status, diagnostics} when status in [:ok, :noop, :error] and is_list(diagnostics) ->
+        {status, diagnostics}
+
+      _ when result in [:ok, :noop] ->
+        {result, []}
+
+      _ ->
+        Mix.shell().error(
+          "[warning] Mix compiler #{inspect(name)} was supposed to return " <>
+            ":ok | :noop | {:ok | :noop | :error, [diagnostic]} but it " <>
+            "returned #{inspect(result)}"
+        )
+
+        {:noop, []}
+    end
+  end
+end
