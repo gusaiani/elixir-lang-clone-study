@@ -34,7 +34,7 @@ defmodule Mix.Config do
     defexception [:file, :error]
 
     def message(%LoadError{file: file, error: error}) do
-      "could not load config #{Path.relative_to_cwd(file)}\n" <>
+      "could not load config #{Path.relative_to_cwd(file)}\n    " <>
         "#{Exception.format_banner(:error, error)}"
     end
   end
@@ -49,7 +49,7 @@ defmodule Mix.Config do
   end
 
   @doc """
-  Configure the given application.
+  Configures the given application.
 
   Keyword lists are always deep merged.
 
@@ -102,7 +102,7 @@ defmodule Mix.Config do
         log_level: :info,
         pool_size: 10
 
-  the final value fo the configuration for the `Repo` key in the `:ecto`
+  the final value of the configuration for the `Repo` key in the `:ecto`
   application will be:
 
       [log_level: :info, pool_size: 10, adapter: Ecto.Adapters.Postgres]
@@ -130,7 +130,7 @@ defmodule Mix.Config do
   imported; in case the file doesn't exist, an error is raised.
   This behaviour is analogous to the one for `read_wildcard!/1`.
 
-  If path/wildcard is a relative path/wildcard, it will be expaded relatively
+  If path/wildcard is a relative path/wildcard, it will be expanded relatively
   to the directory the current configuration file is in.
 
   ## Examples
@@ -156,7 +156,7 @@ defmodule Mix.Config do
       unquote(loaded_paths_quote)
 
       Mix.Config.Agent.merge(
-        var!(config_agent, Mix.Config)
+        var!(config_agent, Mix.Config),
         Mix.Config.read_wildcard!(
           Path.expand(unquote(path_or_wildcard), __DIR__),
           var!(loaded_paths, Mix.Config)
@@ -224,13 +224,40 @@ defmodule Mix.Config do
   """
   def read_wildcard!(path, loaded_paths \\ []) do
     paths =
-      if String.contains?(path, ~w(* ? [ {])) do
+      if String.contains?(path, ~w(* ? [ {)) do
         Path.wildcard(path)
       else
         [path]
       end
 
     Enum.reduce(paths, [], &merge(&2, read!(&1, loaded_paths)))
+  end
+
+  @doc """
+  Persists the given configuration by modifying
+  the configured applications environment.
+
+  `config` should be a list of `{app, app_config}` tuples or a
+  `%{app => app_config}` map where `app` are the applications to
+  be configured and `app_config` are the configuration (as key-value
+  pairs) for each of those applications.
+
+  Returns the configured applications.
+
+  ## Examples
+
+      Mix.Config.persist(logger: [level: :error], my_app: [my_config: 1])
+      #=> [:logger, :my_app]
+
+  """
+  def persist(config) do
+    for {app, kw} <- config do
+      for {k, v} <- kw do
+        Application.put_env(app, k, v, persistent: true)
+      end
+
+      app
+    end
   end
 
   @doc """
@@ -255,3 +282,34 @@ defmodule Mix.Config do
       raise ArgumentError, "expected config file to return keyword list, got: #{inspect(config)}"
     end
   end
+
+  @doc """
+  Merges two configurations.
+
+  The configuration of each application is merged together
+  with the values in the second one having higher preference
+  than the first in case of conflicts.
+
+  ## Examples
+
+      iex> Mix.Config.merge([app: [k: :v1]], [app: [k: :v2]])
+      [app: [k: :v2]]
+
+      iex> Mix.Config.merge([app1: []], [app2: []])
+      [app1: [], app2: []]
+
+  """
+  def merge(config1, config2) do
+    Keyword.merge(config1, config2, fn _, app1, app2 ->
+      Keyword.merge(app1, app2, &deep_merge/3)
+    end)
+  end
+
+  defp deep_merge(_key, value1, value2) do
+    if Keyword.keyword?(value1) and Keyword.keyword?(value2) do
+      Keyword.merge(value1, value2, &deep_merge/3)
+    else
+      value2
+    end
+  end
+end
