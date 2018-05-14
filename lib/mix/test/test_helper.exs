@@ -73,3 +73,189 @@ defmodule MixTest.Case do
   def tmp_path(extension) do
     Path.join(tmp_path(), extension |> to_string() |> String.replace(":", ""))
   end
+
+  def purge(modules) do
+    Enum.each(modules, fn m ->
+      :code.purge(m)
+      :code.delete(m)
+    end)
+  end
+
+  def in_tmp(which, function) do
+    path = tmp_path(which)
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    File.cd!(path, function)
+  end
+
+  defmacro in_fixture(which, block) do
+    module = inspect(__CALLER__.module)
+    function = Atom.to_string(elem(__CALLER__.function, 0))
+    tmp = Path.join(module, function)
+
+    quote do
+      unquote(__MODULE__).in_fixture(unquote(which), unquote(tmp), unquote(block))
+    end
+  end
+
+  def in_fixture(which, tmp, function) do
+    src = fixture_path(which)
+    dest = tmp_path(String.replace(tmp, ":", "_"))
+    flag = String.to_charlist(tmp_path())
+
+    File.rm_rf!(dest)
+    File.mkdir_p!(dest)
+    File.cp_r!(src, dest)
+
+    get_path = :code.get_path()
+    previous = :code.all_loaded()
+
+    try do
+      File.cd!(dest, function)
+    after
+      :code.set_path(get_path)
+
+      for {mod, file} <- :code.all_loaded() -- previous,
+          file == [] or (is_list(file) and :lists.prefix(flag, file)) do
+        purge([mod])
+      end
+    end
+  end
+
+  def ensure_touched(file) do
+    ensure_touched(file, File.stat!(file).mtime)
+  end
+
+  def ensure_touched(file, current) do
+    File.touch!(file)
+
+    unless File.stat!(file).mtime > current do
+      ensure_touched(file, current)
+    end
+  end
+
+  def os_newline do
+    case :os.type() do
+      {:win32, _} -> "\r\n"
+      _ -> "\n"
+    end
+  end
+
+  def mix(args, envs \\ []) when is_list(args) do
+    args = ["-r", mix_executable(), "--" | args]
+    System.cmd(elixir_executable(), args, stderr_to_stdout: true, env: envs) |> elem(0)
+  end
+
+  def mix_port(args, envs \\ []) when is_list(args) do
+    Port.open({:spawn_executable, elixir_executable()}, [
+      {:args, ["-r", mix_executable(), "--" | args]},
+      {:env, envs},
+      :binary,
+      :use_stdio,
+      :stderr_to_stdout
+    ])
+  end
+
+  defp mix_executable do
+    Path.expand("../../../bin/mix", __DIR__)
+  end
+
+  defp elixir_executable do
+    Path.expand("../../../bin/elixir", __DIR__)
+  end
+
+  defp delete_tmp_paths do
+    tmp = tmp_path() |> String.to_charlist()
+    for path <- :code.get_path(), :string.str(path, tmp) != 0, do: :code.del_path(path)
+  end
+end
+
+## Set up Mix home with Rebar
+
+home = MixTest.Case.tmp_path(".mix")
+File.mkdir_p!(home)
+System.put_env("MIX_HOME", home)
+
+rebar = System.get_env("REBAR") || Path.expand("../../../rebar", __DIR__)
+File.cp!(rebar, Path.join(home, "rebar"))
+rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
+File.cp!(rebar, Path.join(home, "rebar3"))
+
+## Copy fixtures to tmp
+
+fixtures = ~w(rebar_dep rebar_override)
+
+Enum.each(fixtures, fn fixture ->
+  source = MixTest.Case.fixture_path(fixture)
+  dest = MixTest.Case.tmp_path(fixture)
+  File.mkdir_p!(dest)
+  File.cp_r!(source, dest)
+end)
+
+## Generate Git repo fixtures
+
+# Git repo
+target = Path.expand("fixtures/git_repo", __DIR__)
+
+unless File.dir?(target) do
+  File.mkdir_p!(Path.join(target, "lib"))
+
+  File.write!(Path.join(target, "mix.exs"), """
+  ## Auto-generated fixture
+  raise "I was not supposed to be loaded"
+  """)
+
+  File.cd!(target, fn ->
+    System.cmd("git", ~w[init])
+    System.cmd("git", ~w[config user.email "mix@example.com"])
+    System.cmd("git", ~w[config user.name "mix-repo"])
+    System.cmd("git", ~w[add .])
+    System.cmd("git", ~w[commit -m "bad"])
+  end)
+
+  File.write!(Path.join(target, "mix.exs"), """
+  ## Auto-generated fixture
+  defmodule GitRepo.MixProject do
+    use Mix.Project
+
+    def project do
+      [
+        app: :git_repo,
+        version: "0.1.0"
+      ]
+    end
+  end
+  """)
+
+  File.cd!(target, fn ->
+    System.cmd("git", ~w[add .])
+    System.cmd("git", ~w[commit -m "ok"])
+    System.cmd("git", ~w[tag without_module])
+  end)
+
+  File.write!(Path.join(target, "lib/git_repo.ex"), """
+  ## Auto-generated fixture
+  defmodule GitRepo do
+    def hello do
+      "World"
+    end
+  end
+  """)
+
+  ## Sparse
+  subdir = Path.join(target, "sparse_dir")
+  File.mkdir_p!(Path.join(subdir, "lib"))
+
+  File.write!(Path.join(subdir, "mix.exs"), """
+  ## Auto-generated fixture
+  defmodule GitSparseRepo.MixProject do
+    use Mix.Project
+
+    def project do
+      [
+        app: :git_sparse_repo,
+        version: "0.1.0"
+      ]
+    end
+  end
+  """)
