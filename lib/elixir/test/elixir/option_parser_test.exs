@@ -349,4 +349,93 @@ defmodule OptionParserTest do
     assert OptionParser.split(~S[]) == []
     assert OptionParser.split(~S[foo]) == ["foo"]
     assert OptionParser.split(~S[foo bar]) == ["foo", "bar"]
-    assert OptionParser.split(~S[  foo  bar   ]) == ["foo", "bar"]
+    assert OptionParser.split(~S[  foo  bar  ]) == ["foo", "bar"]
+    assert OptionParser.split(~S[foo\ bar]) == ["foo bar"]
+    assert OptionParser.split(~S[foo" bar"]) == ["foo bar"]
+    assert OptionParser.split(~S[foo\" bar\"]) == ["foo\"", "bar\""]
+    assert OptionParser.split(~S[foo "\ bar\""]) == ["foo", "\\ bar\""]
+    assert OptionParser.split(~S[foo '\"bar"\'\ ']) == ["foo", "\\\"bar\"'\\ "]
+  end
+
+  describe "to_argv" do
+    test "converts options back to switches" do
+      assert OptionParser.to_argv(foo_bar: "baz") == ["--foo-bar", "baz"]
+
+      assert OptionParser.to_argv(bool: true, bool: false, discarded: nil) ==
+               ["--bool", "--no-bool"]
+    end
+
+    test "handles :count switch type" do
+      original = ["--counter", "--counter"]
+      {opts, [], []} = OptionParser.parse(original, switches: [counter: :count])
+      assert original == OptionParser.to_argv(opts, switches: [counter: :count])
+    end
+  end
+end
+
+defmodule OptionsParserDeprecationsTest do
+  use ExUnit.Case, async: false
+
+  @warning ~r[Not passing the :switches or :strict option to OptionParser is deprecated]
+
+  def assert_deprecated(fun) do
+    assert ExUnit.CaptureIO.capture_io(:stderr, fun) =~ @warning
+  end
+
+  test "parses boolean option" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--docs"]) == {[docs: true], [], []}
+    end)
+  end
+
+  test "parses more than one boolean option" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--docs", "--compile"]) == {[docs: true, compile: true], [], []}
+    end)
+  end
+
+  test "parses more than one boolean options as the alias" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["-d", "--compile"], aliases: [d: :docs]) ==
+               {[docs: true, compile: true], [], []}
+    end)
+  end
+
+  test "parses --key value option" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--source", "form_docs/"]) == {[source: "form_docs/"], [], []}
+    end)
+  end
+
+  test "does not interpret undefined options with value as boolean" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--no-bool"]) == {[no_bool: true], [], []}
+    end)
+
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--no-bool=...", "other"]) == {[no_bool: "..."], ["other"], []}
+    end)
+  end
+
+  test "parses -ab as -a -b" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["-ab"], aliases: [a: :first, b: :second]) ==
+               {[first: true, second: true], [], []}
+    end)
+  end
+
+  test "parses mixed options" do
+    argv = ["--source", "from_docs/", "--compile", "-x"]
+
+    assert_deprecated(fn ->
+      assert OptionParser.parse(argv, aliases: [x: :x]) ==
+               {[source: "from_docs/", compile: true, x: true], [], []}
+    end)
+  end
+
+  test "parses more than one key/value options" do
+    assert_deprecated(fn ->
+      assert OptionParser.parse(["--source", "from_docs/", "--docs", "show"]) ==
+               {[source: "from_docs/", docs: "show"], [], []}
+    end)
+  end
