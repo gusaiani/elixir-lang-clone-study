@@ -439,3 +439,23 @@ defmodule OptionsParserDeprecationsTest do
                {[source: "from_docs/", docs: "show"], [], []}
     end)
   end
+
+  test "multi-word option" do
+    assert_deprecated(fn ->
+      assert OptionParser.next(["--hello-world"], []) == {:ok, :hello_world, true, []}
+    end)
+
+    assert_deprecated(fn ->
+      assert OptionParser.next(["--no-hello-world"], []) == {:ok, :no_hello_world, true, []}
+    end)
+
+    assert_deprecated(fn ->
+      assert OptionParser.next(["--hello_world"], []) == {:undefined, "--hello_world", nil, []}
+    end)
+
+    assert_deprecated(fn ->
+      assert OptionParser.next(["--no-hello_world"], []) ==
+               {:undefined, "--no-hello_world", nil, []}
+    end)
+  end
+end
