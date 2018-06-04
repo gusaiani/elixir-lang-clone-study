@@ -262,7 +262,7 @@ defmodule OptionParser do
 
   If there are no errors, returns a `{parsed, rest}` tuple where:
 
-    * `parsed` is the list of parsed switches (same as in `parsed_head/2`)
+    * `parsed` is the list of parsed switches (same as in `parse_head/2`)
     * `rest` is the list of arguments (same as in `parse_head/2`)
 
   ## Examples
@@ -276,8 +276,8 @@ defmodule OptionParser do
       ** (OptionParser.ParseError) 1 error found!
       --number : Expected type integer, got "lib"
 
-      iex> OptionParser.parse_head(["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
-      ...>                         strict: [verbose: :integer, source: :integer])
+      iex> OptionParser.parse_head!(["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
+      ...>                          strict: [verbose: :integer, source: :integer])
       ** (OptionParser.ParseError) 2 errors found!
       --verbose : Missing argument of type integer
       --source : Expected type integer, got "lib"
@@ -301,7 +301,7 @@ defmodule OptionParser do
         # the option exists and it was successfully parsed
         kinds = List.wrap(Keyword.get(switches, option))
         new_opts = store_option(opts, option, value, kinds)
-        do_parse(rest, condnfig, new_opts, args, invalid, all?)
+        do_parse(rest, config, new_opts, args, invalid, all?)
 
       {:invalid, option, value, rest} ->
         # the option exist but it has wrong value
@@ -314,13 +314,187 @@ defmodule OptionParser do
       {:error, ["--" | rest]} ->
         {Enum.reverse(opts), Enum.reverse(args, rest), Enum.reverse(invalid)}
 
-      {:error, [arg | rest] = remaining_args} -> 
+      {:error, [arg | rest] = remaining_args} ->
         # there is no option
         if all? do
           do_parse(rest, config, opts, [arg | args], invalid, all?)
         else
           {Enum.reverse(opts), Enum.reverse(args, remaining_args), Enum.reverse(invalid)}
         end
+    end
+  end
+
+  @doc """
+  Low-level function that parses one option.
+
+  It accepts the same options as `parse/2` and `parse_head/2`
+  as both functions are built on top of this function. This function
+  may return:
+
+    * `{:ok, key, value, rest}` - the option `key` with `value` was
+      successfully parsed
+
+    * `{:invalid, key, value, rest}` - the option `key` is invalid with `value`
+      (returned when the value cannot be parsed according to the switch type)
+
+    * `{:undefined, key, value, rest}` - the option `key` is undefined
+      (returned in strict mode when the switch is unknown or on nonexistent atoms)
+
+    * `{:error, rest}` - there are no switches at the head of the given `argv`
+
+  """
+  @spec next(argv, options) ::
+          {:ok, key :: atom, value :: term, argv}
+          | {:invalid, String.t(), String.t() | nil, argv}
+          | {:undefined, String.t(), String.t() | nil, argv}
+          | {:error, argv}
+
+  def next(argv, opts \\ []) when is_list(argv) and is_list(opts) do
+    next_with_config(argv, build_config(opts))
+  end
+
+  defp next_with_config([], _config) do
+    {:error, []}
+  end
+
+  defp next_with_config(["--" | _] = argv, _config) do
+    {:error, argv}
+  end
+
+  defp next_with_config(["-" | _] = argv, _config) do
+    {:error, argv}
+  end
+
+  defp next_with_config(["- " <> _ | _] = argv, _config) do
+    {:error, argv}
+  end
+
+  # Handles --foo or --foo=bar
+  defp next_with_config(["--" <> option | rest], config) do
+    {option, value} = split_option(option)
+
+    if String.contains?(option, ["_"]) do
+      {:undefined, "--" <> option, value, rest}
+    else
+      tagged = tag_option(option, config)
+      next_tagged(tagged, value, "--" <> option, rest, config)
+    end
+  end
+
+  # Handles -a, -abc, -abc=something
+  defp next_with_config(["-" <> option | rest] = argv, config) do
+    %{allow_nonexistent_atoms?: allow_nonexistent_atoms?} = config
+    {option, value} = split_option(option)
+    original = "-" <> option
+    letters = String.graphemes(option)
+
+    cond do
+      is_nil(value) and negative_number?(original) ->
+        {:error, argv}
+
+      String.contains?(option, ["-", "_"]) ->
+        {:undefined, original, value, rest}
+
+      tl(letters) == [] ->
+        # We have a regular one-letter alias here
+        tagged = tag_oneletter_alias(option, config)
+        next_tagged(tagged, value, original, rest, config)
+
+      true ->
+        key = get_option_key(option, allow_nonexistent_atoms?)
+        option_key = config.aliases[key]
+
+        if key && option_key do
+          # TODO: Remove this in Elixir v2.0
+          IO.warn("multi-letter aliases are deprecated, got: #{inspect(key)}")
+          next_tagged({:default, option_key}, value, original, rest, config)
+        else
+          next_with_config(expand_multiletter_alias(letters, value) ++ rest, config)
+        end
+    end
+  end
+
+  defp next_with_config(argv, _config) do
+    {:error, argv}
+  end
+
+  defp next_tagged(:unknown, value, original, rest, _) do
+    {value, _kinds, rest} = normalize_value(value, [], rest)
+    {:undefined, original, value, rest}
+  end
+
+  defp next_tagged({tag, option}, value, original, rest, %{switches: switches, strict?: strict?}) do
+    if strict? and not Keyword.has_key?(switches, option) do
+      {:undefined, original, value, rest}
+    else
+      {kinds, value} = normalize_tag(tag, option, value, switches)
+      {value, kinds, rest} = normalize_value(value, kinds, rest)
+
+      case validate_option(value, kinds) do
+        {:ok, new_value} -> {:ok, option, new_value, rest}
+        :invalid -> {:invalid, original, value, rest}
+      end
+    end
+  end
+
+  ## Helpers
+
+  defp build_config(opts) do
+    {switches, strict?} =
+      cond do
+        opts[:switches] && opts[:strict] ->
+          raise ArgumentError, ":switches and :strict cannot be given together"
+
+        switches = opts[:switches] ->
+          {switches, false}
+
+        strict = opts[:strict] ->
+          {strict, true}
+
+        true ->
+          #TODO: Remove this in Elixir v2.0
+          IO.warn("Not passing the :switches or :strict option to OptionParser is deprecated")
+          {[], false}
+      end
+
+    %{
+      aliases: opts[:aliases] || [],
+      allow_nonexistent_atoms? : opts[:allow_nonexistent_atoms] || false,
+      strict?: strict?,
+      switches: switches
+    }
+  end
+
+  defp tag_option("no-" <> option = original, config) do
+    %{switches: switches, allow_nonexistent_atoms?: allow_nonexistent_atoms?} = config
+
+    cond do
+      (negated = get_option_key(option, allow_nonexistent_atoms?)) &&
+          :boolean in List.wrap(switches[negated]) ->
+        {:negated, negated}
+
+      option_key = get_option_key(original, allow_nonexistent_atoms?) ->
+        {:default, option_key}
+
+      true ->
+        :unknown
+    end
+  end
+
+  defp tag_oneletter_alias(alias, config) when is_binary(alias) do
+    %{aliases: aliases, allow_nonexistent_atoms?: allow_nonexistent_atoms?} = config
+
+    if option_key = aliases[to_existing_key(alias, allow_nonexistent_atoms?)] do
+      {:default, option_key}
+    else
+      :unknown
+    end
+  end
+
+  defp split_option(option) do
+    case :binary.split(option, "=") do
+      [h] -> {h, nil}
+      [h, t] -> {h, t}
     end
   end
 
