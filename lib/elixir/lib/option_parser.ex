@@ -437,6 +437,97 @@ defmodule OptionParser do
     end
   end
 
+  @doc """
+  Receives a key-value enumerable and converts it to `t:argv/0`.
+
+  Keys must be atoms. Keys with `nil` value are discarded,
+  boolean values are converted to `--key` or `--no-key`
+  (if the value is `true` or `false`, respectively),
+  and all other values are converted using `Kernel.to_string/1`.
+
+  It is advised to pass to `to_argv/2` the same set of `options`
+  given to `parse/2`. Some switches can only be reconstructed
+  correctly with the `switches` information in hand.
+
+  ## Examples
+
+      iex> OptionParser.to_argv(foo_bar: "baz")
+      ["--foo-bar", "baz"]
+      iex> OptionParser.to_argv(bool: true, bool: false, discarded: nil)
+      ["--bool", "--no-bool"]
+
+  Some switches will output different values based on the switches
+  flag:
+
+      iex> OptionParser.to_argv([number: 2], switches: [])
+      ["--number", "2"]
+      iex> OptionParser.to_argv([number: 2], switches: [number: :count])
+      ["--number", "--number"]
+
+  """
+  @spec to_argv(Enumerable.t(), options) :: argv
+  def to_argv(enum, opts \\ []) do
+    switches = Keyword.get(opts, :switches, [])
+
+    Enum.flat_map(enum, fn
+      {_key, nil} -> []
+      {key, true} -> [to_switch(key)]
+      {key, false} -> [to_switch(key, "--no-")]
+      {key, value} -> to_argv(key, value, switches)
+    end)
+  end
+
+  defp to_argv(key, value, switches) do
+    if switches[key] == :count do
+      List.duplicate(to_switch(key), value)
+    else
+      [to_switch(key), to_string(value)]
+    end
+  end
+
+  defp to_switch(key, prefix \\ "--") when is_atom(key) do
+    prefix <> String.replace(Atom.to_string(key), "_", "-")
+  end
+
+  @doc ~S"""
+  Splits a string into `t:argv/0` chunks.
+
+  This function splits the given `string` into a list of strings in a similar
+  way to many shells.
+
+  ## Examples
+
+      iex> OptionParser.split("foo bar")
+      ["foo", "bar"]
+
+      iex> OptionParser.split("foo \"bar baz\"")
+      ["foo", "bar baz"]
+
+  """
+  @spec split(String.t()) :: argv
+  def split(string) when is_binary(string) do
+    do_split(String.trim_leading(string, " "), "", [], nil)
+  end
+
+  # If we have an escaped quote, simply remove the escape
+  defp do_split(<<?\\, quote, t::binary>>, buffer, acc, quote),
+    do: do_split(t, <<buffer::binary, quote>>, acc, quote)
+
+  # If we have a quote and we were not in a quote, start one
+  defp do_split(<<quote, t::binary>>, buffer, acc, nil) when quote in [?", ?'],
+    do: do_split(t, buffer, acc, quote)
+
+  # If we have a quote and we were inside it, close it
+  defp do_split(<<quote, t::binary>>, buffer, acc, quote), do: do_split(t, buffer, acc, nil)
+
+  # If we have an escaped quote/space, simply remove the escape as long as we are not inside a quote
+  defp do_split(<<?\\, h, t::binary>>, buffer, acc, nil) when h in [?\s, ?', ?"],
+    do: do_split(t, <<buffer::binary, h>>, acc, nil)
+
+  # If we have space and we are outside of a quote, start new segment
+  defp do_split(<<?\s, t::binary>>, buffer, acc, nil),
+    do: do_split(String.trim_leading(t, " "), "", [buffer | acc], nil)
+
   ## Helpers
 
   defp build_config(opts) do
