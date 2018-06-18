@@ -528,6 +528,21 @@ defmodule OptionParser do
   defp do_split(<<?\s, t::binary>>, buffer, acc, nil),
     do: do_split(String.trim_leading(t, " "), "", [buffer | acc], nil)
 
+  # All other characters are moved to buffer
+  defp do_split(<<h, t::binary>>, buffer, acc, quote) do
+    do_split(t, <<buffer::binary, h>>, acc, quote)
+  end
+
+  # Finish the string expecting a nil marker
+  defp do_split(<<>>, "", acc, nil), do: Enum.reverse(acc)
+
+  defp do_split(<<>>, buffer, acc, nil), do: Enum.reverse([buffer | acc])
+
+  # Otherwise raise
+  defp do_split(<<>>, _, _acc, marker) do
+    raise "argv string did not terminate properly, a #{<<marker>>} was opened but never closed"
+  end
+
   ## Helpers
 
   defp build_config(opts) do
@@ -543,17 +558,72 @@ defmodule OptionParser do
           {strict, true}
 
         true ->
-          #TODO: Remove this in Elixir v2.0
+          # TODO: Remove this in Elixir v2.0
           IO.warn("Not passing the :switches or :strict option to OptionParser is deprecated")
           {[], false}
       end
 
     %{
       aliases: opts[:aliases] || [],
-      allow_nonexistent_atoms? : opts[:allow_nonexistent_atoms] || false,
+      allow_nonexistent_atoms?: opts[:allow_nonexistent_atoms] || false,
       strict?: strict?,
       switches: switches
     }
+  end
+
+  defp validate_option(value, kinds) do
+    {invalid?, value} =
+      cond do
+        :invalid in kinds ->
+          {true, value}
+
+        :boolean in kinds ->
+          case value do
+            t when t in [true, "true"] -> {false, true}
+            f when f in [false, "false"] -> {false, false}
+            _ -> {true, value}
+          end
+
+        :count in kinds ->
+          case value do
+            nil -> {false, 1}
+            _ -> {true, value}
+          end
+
+        :integer in kinds ->
+          case Integer.parse(value) do
+            {value, ""} -> {false, value}
+            _ -> {true, value}
+          end
+
+        :float in kinds ->
+          case Float.parse(value) do
+            {value, ""} -> {false, value}
+            _ -> {true, value}
+          end
+
+        true ->
+          {false, value}
+      end
+
+    if invalid? do
+      :invalid
+    else
+      {:ok, value}
+    end
+  end
+
+  defp store_option(dict, option, value, kinds) do
+    cond do
+      :count in kinds ->
+        Keyword.update(dict, option, value, &(&1 + 1))
+
+      :keep in kinds ->
+        [{option, value} | dict]
+
+      true ->
+        [{option, value} | Keyword.delete(dict, option)]
+    end
   end
 
   defp tag_option("no-" <> option = original, config) do
@@ -572,6 +642,16 @@ defmodule OptionParser do
     end
   end
 
+  defp tag_option(option, config) do
+    %{allow_nonexistent_atoms?: allow_nonexistent_atoms?} = config
+
+    if option_key = get_option_key(option, allow_nonexistent_atoms?) do
+      {:default, option_key}
+    else
+      :unknown
+    end
+  end
+
   defp tag_oneletter_alias(alias, config) when is_binary(alias) do
     %{aliases: aliases, allow_nonexistent_atoms?: allow_nonexistent_atoms?} = config
 
@@ -582,11 +662,87 @@ defmodule OptionParser do
     end
   end
 
+  defp expand_multiletter_alias(letters, value) do
+    {last, expanded} =
+      letters
+      |> Enum.map(&("-" <> &1))
+      |> List.pop_at(-1)
+
+    expanded ++ [last <> if(value, do: "=" <> value, else: "")]
+  end
+
+  defp normalize_tag(:negated, option, value, switches) do
+    if value do
+      {[:invalid], value}
+    else
+      {List.wrap(switches[option]), false}
+    end
+  end
+
+  defp normalize_tag(:default, option, value, switches) do
+    {List.wrap(switches[option]), value}
+  end
+
+  defp normalize_value(nil, kinds, t) do
+    cond do
+      :boolean in kinds ->
+        {true, kinds, t}
+
+      :count in kinds ->
+        {nil, kinds, t}
+
+      value_in_tail?(t) ->
+        [h | t] = t
+        {h, kinds, t}
+
+      kinds == [] ->
+        {true, kinds, t}
+
+      true ->
+        {nil, [:invalid], t}
+    end
+  end
+
+  defp normalize_value(value, kinds, t) do
+    {value, kinds, t}
+  end
+
+  defp value_in_tail?(["-" | _]), do: true
+  defp value_in_tail?(["- " <> _ | _]), do: true
+  defp value_in_tail?(["-" <> arg | _]), do: negative_number?("-" <> arg)
+  defp value_in_tail?([]), do: false
+  defp value_in_tail?(_), do: true
+
   defp split_option(option) do
     case :binary.split(option, "=") do
       [h] -> {h, nil}
       [h, t] -> {h, t}
     end
+  end
+
+  defp to_underscore(option), do: to_underscore(option, <<>>)
+  defp to_underscore("-" <> rest, acc), do: to_underscore(rest, acc <> "_")
+  defp to_underscore(<<c>> <> rest, acc), do: to_underscore(rest, <<acc::binary, c>>)
+  defp to_underscore(<<>>, acc), do: acc
+
+  defp get_option_key(option, allow_nonexistent_atoms?) do
+    option
+    |> to_underscore()
+    |> to_existing_key(allow_nonexistent_atoms?)
+  end
+
+  defp to_existing_key(option, true), do: String.to_atom(option)
+
+  defp to_existing_key(option, false) do
+    try do
+      String.to_existing_atom(option)
+    rescue
+      ArgumentError -> nil
+    end
+  end
+
+  defp negative_number?(arg) do
+    match?({_, ""}, Float.parse(arg))
   end
 
   defp format_errors([_ | _] = errors, opts) do
@@ -611,3 +767,14 @@ defmodule OptionParser do
     "#{option} : Expected type #{type}, got #{inspect(value)}"
   end
 
+  defp get_type(option, opts, types) do
+    allow_nonexistent_atoms? = opts[:allow_nonexistent_atoms] || false
+    key = option |> String.trim_leading("-") |> get_option_key(allow_nonexistent_atoms?)
+
+    if option_key = opts[:aliases][key] do
+      types[option_key]
+    else
+      types[key]
+    end
+  end
+end
