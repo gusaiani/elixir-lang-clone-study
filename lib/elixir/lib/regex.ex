@@ -148,6 +148,178 @@ defmodule Regex do
     end
   end
 
+  defp compile(source, options, version) when is_list(options) do
+    compile(source, options, "", version)
+  end
+
+  defp compile(source, opts, doc_opts, version) when is_binary(source) do
+    case :re.compile(source, opts) do
+      {:ok, re_pattern} ->
+        {:ok, %Regex{re_pattern: re_pattern, re_version: version, source: source, opts: doc_opts}}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Compiles the regular expression and raises `Regex.CompileError` in case of errors.
+  """
+  @spec compile!(binary, binary | [term]) :: t
+  def compile!(source, options \\ "") do
+    case compile(source, options) do
+      {:ok, regex} -> regex
+      {:error, {reason, at}} -> raise Regex.CompileError, "#{reason} at position #{at}"
+    end
+  end
+
+  @doc """
+  Recompiles the existing regular expression if necessary.
+
+  This checks the version stored in the regular expression
+  and recompiles the regex in case of version mismatch.
+  """
+  @since "1.4.0"
+  @spec recompile(t) :: t
+  def recompile(%Regex{} = regex) do
+    version = version()
+
+    case regex do
+      %{re_version: ^version} ->
+        {:ok, regex}
+
+      _ ->
+        %{source: source, opts: opts} = regex
+        compile(source, opts, version)
+    end
+  end
+
+  @doc """
+  Recompiles the existing regular expression and raises `Regex.CompileError` in case of errors.
+  """
+  @since "1.4.0"
+  @spec recompile!(t) :: t
+  def recompile!(regex) do
+    case recompile(regex) do
+      {:ok, regex} -> regex
+      {:error, {reason, at}} -> raise Regex.CompileError, "#{reason} at position #{at}"
+    end
+  end
+
+  @doc """
+  Returns the version of the underlying Regex engine.
+  """
+  @since "1.4.0"
+  @spec version :: term()
+  # TODO: No longer check for function_exported? on OTP 20+.
+  def version do
+    if function_exported?(:re, :version, 0) do
+      {:re.version(), :erlang.system_info(:endian)}
+    else
+      {"8.33 2013-05-29", :erlang.system_info(:endian)}
+    end
+  end
+
+  @doc """
+  Returns a boolean indicating whether there was a match or not.
+
+  ## Examples
+
+      iex> Regex.match?(~r/foo/, "foo")
+      true
+
+      iex> Regex.match?(~r/foo/, "bar")
+      false
+
+  """
+  @spec match?(t, String.t()) :: boolean
+  def match?(%Regex{re_pattern: compiled}, string) when is_binary(string) do
+    :re.run(string, compiled, [{:capture, :none}]) == :match
+  end
+
+  @doc """
+  Returns `true` if the given `term` is a regex.
+  Otherwise returns `false`.
+
+  ## Examples
+
+      iex> Regex.regex?(~r/foo/)
+      true
+
+      iex> Regex.regex?(0)
+      false
+
+  """
+  @spec regex?(any) :: boolean
+  def regex?(term)
+  def regex?(%Regex{}), do: true
+  def regex?(_), do: false
+
+  @doc """
+  Runs the regular expression against the given string until the first match.
+  It returns a list with all captures or `nil` if no match occurred.
+
+  ## Options
+
+    * `:return` - set to `:index` to return byte index and match length.
+      Defaults to `:binary`.
+    * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
+      to see the possible capture values.
+
+  ## Examples
+
+      iex> Regex.run(~r/c(d)/, "abcd")
+      ["cd", "d"]
+
+      iex> Regex.run(~r/e/, "abcd")
+      nil
+
+      iex> Regex.run(~r/c(d)/, "abcd", return: :index)
+      [{2, 2}, {3, 1}]
+
+  """
+  @spec run(t, binary, [term]) :: nil | [binary] | [{integer, integer}]
+  def run(regex, string, options \\ [])
+
+  def run(%Regex{re_pattern: compiled}, string, options) when is_binary(string) do
+    return = Keyword.get(options, :return, :binary)
+    captures = Keyword.get(options, :capture, :all)
+
+    case :re.run(string, compiled, [{:capture, captures, return}]) do
+      :nomatch -> nil
+      :match -> []
+      {:match, results} -> results
+    end
+  end
+
+  @doc """
+  Returns the given captures as a map or `nil` if no captures are found.
+
+  ## Options
+
+    * `:return` - set to `:index` to return byte index and match length.
+      Defaults to `:binary`.
+
+  ## Examples
+
+      iex> Regex.named_captures(~r/c(?<foo>d)/, "abcd")
+      %{"foo" => "d"}
+
+      iex> Regex.named_captures(~r/a(?<foo>b)c(?<bar>d)/, "abcd")
+      %{"bar" => "d", "foo" => "b"}
+
+      iex> Regex.named_captures(~r/a(?<foo>b)c(?<bar>d)/, "efgh")
+      nil
+
+  """
+  @spec named_captures(t, String.t(), [term]) :: map | nil
+  def named_captures(regex, string, options \\ []) when is_binary(string) do
+    names = names(regex)
+    options = Keyword.put(options, :capture, names)
+    results = run(regex, string, options)
+    if results, do: Enum.zip(names, results) |> Enum.into(%{})
+  end
+
   @doc """
   Returns the version of the underlying Regex engine.
   """
