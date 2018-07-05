@@ -321,6 +321,196 @@ defmodule Regex do
   end
 
   @doc """
+  Returns the underlying `re_pattern` in the regular expression.
+  """
+  @spec re_pattern(t) :: term
+  def re_pattern(%Regex{re_pattern: compiled}) do
+    compiled
+  end
+
+  @doc """
+  Returns the regex source as a binary.
+
+  ## Examples
+
+      iex> Regex.source(~r(foo))
+      "foo"
+
+  """
+  @spec source(t) :: String.t()
+  def source(%Regex{source: source}) do
+    source
+  end
+
+  @doc """
+  Returns the regex options as a string.
+
+  ## Examples
+
+      iex> Regex.opts(~r(foo)m)
+      "m"
+
+  """
+  @spec opts(t) :: String.t()
+  def opts(%Regex{opts: opts}) do
+    opts
+  end
+
+  @doc """
+  Returns a list of names in the regex.
+
+  ## Examples
+
+      iex> Regex.names(~r/(?<foo>bar)/)
+      ["foo"]
+
+  """
+  @spec names(t) :: [String.t()]
+  def names(%Regex{re_pattern: re_pattern}) do
+    {:namelist, names} = :re.inspect(re_pattern, :namelist)
+    names
+  end
+
+  @doc ~S"""
+  Same as `run/3`, but scans the target several times collecting all
+  matches of the regular expression.
+
+  A list of lists is returned, where each entry in the primary list represents a
+  match and each entry in the secondary list represents the captured contents.
+
+  ## Options
+
+    * `:return` - set to `:index` to return byte index and match length.
+      Defaults to `:binary`.
+    * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
+      to see the possible capture values.
+
+  ## Examples
+
+      iex> Regex.scan(~r/c(d|e)/, "abcd abce")
+      [["cd", "d"], ["ce", "e"]]
+
+      iex> Regex.scan(~r/c(?:d|e)/, "abcd abce")
+      [["cd"], ["ce"]]
+
+      iex> Regex.scan(~r/e/, "abcd")
+      []
+
+      iex> Regex.scan(~r/\p{Sc}/u, "$, £, and €")
+      [["$"], ["£"], ["€"]]
+
+      iex> Regex.scan(~r/=+/, "=ü†ƒ8===", return: :index)
+      [[{0, 1}], [{9, 3}]]
+
+  """
+  @spec scan(t, String.t(), [term]) :: [[String.t()]]
+  def scan(regex, string, options \\ [])
+
+  def scan(%Regex{re_pattern: compiled}, string, options) when is_binary(string) do
+    return = Keyword.get(options, :return, :binary)
+    captures = Keyword.get(options, :capture, :all)
+    options = [{:capture, captures, return}, :global]
+
+    case :re.run(string, compiled, options) do
+      :match -> []
+      :nomatch -> []
+      {:match, results} -> results
+    end
+  end
+
+  @doc """
+  Splits the given target based on the given pattern and in the given number of
+  parts.
+
+  ## Options
+
+    * `:parts` - when specified, splits the string into the given number of
+      parts. If not specified, `:parts` defaults to `:infinity`, which will
+      split the string into the maximum number of parts possible based on the
+      given pattern.
+
+    * `:trim` - when `true`, removes empty strings (`""`) from the result.
+      Defaults to `false`.
+
+    * `:on` - specifies which captures to split the string on, and in what
+      order. Defaults to `:first` which means captures inside the regex do not
+      affect the splitting process.
+
+    * `:include_captures` - when `true`, includes in the result the matches of
+      the regular expression. Defaults to `false`.
+
+  ## Examples
+
+      iex> Regex.split(~r{-}, "a-b-c")
+      ["a", "b", "c"]
+
+      iex> Regex.split(~r{-}, "a-b-c", parts: 2)
+      ["a", "b-c"]
+
+      iex> Regex.split(~r{-}, "abc")
+      ["abc"]
+
+      iex> Regex.split(~r{}, "abc")
+      ["", "a", "b", "c", ""]
+
+      iex> Regex.split(~r{a(?<second>b)c}, "abc")
+      ["", ""]
+
+      iex> Regex.split(~r{a(?<second>b)c}, "abc", on: [:second])
+      ["a", "c"]
+
+      iex> Regex.split(~r{(x)}, "Elixir", include_captures: true)
+      ["Eli", "x", "ir"]
+
+      iex> Regex.split(~r{a(?<second>b)c}, "abc", on: [:second], include_captures: true)
+      ["a", "b", "c"]
+
+  """
+  @spec split(t, String.t(), [term]) :: [String.t()]
+  def split(regex, string, options \\ [])
+
+  def split(%Regex{}, "", opts) do
+    if Keyword.get(opts, :trim, false) do
+      []
+    else
+      [""]
+    end
+  end
+
+  def split(%Regex{re_pattern: compiled}, string, opts)
+      when is_binary(string) and is_list(opts) do
+    on = Keyword.get(opts, :on, :first)
+
+    case :re.run(string, compiled, [:global, capture: on]) do
+      {:match, matches} ->
+        index = parts_to_index(Keyword.get(opts, :parts, :infinity))
+        trim = Keyword.get(opts, :trim, false)
+        include_captures = Keyword.get(opts, :include_captures, false)
+        do_split(matches, string, 0, index, trim, include_captures)
+
+      :match ->
+        [string]
+
+      :nomatch ->
+        [string]
+    end
+  end
+
+  defp parts_to_index(:infinity), do: 0
+  defp parts_to_index(n) when is_integer(n) and n > 0, do: n
+
+  defp do_split(_, string, offset, _counter, true, _with_captures)
+       when byte_size(string) <= offset do
+    []
+  end
+
+  defp do_split(_, string, offset, 1, _trim, _with_captures),
+    do: [binary_part(string, offset, byte_size(string) - offset)]
+
+  defp do_split([], string, offset, _counter, _trim, _with_captures),
+    do: [binary_part(string, offset, byte_size(string) - offset)]
+
+  @doc """
   Returns the version of the underlying Regex engine.
   """
   @since "1.4.0"
