@@ -510,6 +510,86 @@ defmodule Regex do
   defp do_split([], string, offset, _counter, _trim, _with_captures),
     do: [binary_part(string, offset, byte_size(string) - offset)]
 
+  defp do_split([[{pos, _} | h] | t], string, offset, counter, trim, with_captures)
+       when pos - offset < 0 do
+    do_split([h | t], string, offset, counter, trim, with_captures)
+  end
+
+  defp do_split([[] | t], string, offset, counter, trim, with_captures),
+    do: do_split(t, string, offset, counter, trim, with_captures)
+
+  defp do_split([[{pos, length} | h] | t], string, offset, counter, trim, true) do
+    new_offset = pos + length
+    keep = pos - offset
+
+    <<_::binary-size(offset), part::binary-size(keep), match::binary-size(length), _::binary>> =
+      string
+
+    if keep == 0 and trim do
+      [match | do_split([h | t], string, new_offset, counter - 1, trim, true)]
+    else
+      [part, match | do_split([h | t], string, new_offset, counter - 1, trim, true)]
+    end
+  end
+
+  defp do_split([[{pos, length} | h] | t], string, offset, counter, trim, false) do
+    new_offset = pos + length
+    keep = pos - offset
+
+    if keep == 0 and trim do
+      do_split([h | t], string, new_offset, counter, trim, false)
+    else
+      <<_::binary-size(offset), part::binary-size(keep), _::binary>> = string
+      [part | do_split([h | t], string, new_offset, counter - 1, trim, false)]
+    end
+  end
+
+  @doc ~S"""
+  Receives a regex, a binary and a replacement, returns a new
+  binary where all matches are replaced by the replacement.
+
+  The replacement can be either a string or a function. The string
+  is used as a replacement for every match and it allows specific
+  captures to be accessed via `\N` or `\g{N}`, where `N` is the
+  capture. In case `\0` is used, the whole match is inserted. Note
+  that in regexes the backslash needs to be escaped, hence in practice
+  you'll need to use `\\N` and `\\g{N}`.
+
+  When the replacement is a function, the function may have arity
+  N where each argument maps to a capture, with the first argument
+  being the whole match. If the function expects more arguments
+  than captures found, the remaining arguments will receive `""`.
+
+  ## Options
+
+    * `:global` - when `false`, replaces only the first occurrence
+      (defaults to `true`)
+
+  ## Examples
+
+      iex> Regex.replace(~r/d/, "abc", "d")
+      "abc"
+
+      iex> Regex.replace(~r/b/, "abc", "d")
+      "adc"
+
+      iex> Regex.replace(~r/b/, "abc", "[\\0]")
+      "a[b]c"
+
+      iex> Regex.replace(~r/a(b|d)c/, "abcadc", "[\\1]")
+      "[b][d]"
+
+      iex> Regex.replace(~r/\.(\d)$/, "500.5", ".\\g{1}0")
+      "500.50"
+
+      iex> Regex.replace(~r/a(b|d)c/, "abcadc", fn _, x -> "[#{x}]" end)
+      "[b][d]"
+
+      iex> Regex.replace(~r/a/, "abcadc", "A", global: false)
+      "Abcadc"
+
+  """
+
   @doc """
   Returns the version of the underlying Regex engine.
   """
