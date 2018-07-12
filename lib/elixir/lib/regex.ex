@@ -179,7 +179,7 @@ defmodule Regex do
   This checks the version stored in the regular expression
   and recompiles the regex in case of version mismatch.
   """
-  @since "1.4.0"
+  @doc since: "1.4.0"
   @spec recompile(t) :: t
   def recompile(%Regex{} = regex) do
     version = version()
@@ -197,7 +197,7 @@ defmodule Regex do
   @doc """
   Recompiles the existing regular expression and raises `Regex.CompileError` in case of errors.
   """
-  @since "1.4.0"
+  @doc since: "1.4.0"
   @spec recompile!(t) :: t
   def recompile!(regex) do
     case recompile(regex) do
@@ -209,15 +209,10 @@ defmodule Regex do
   @doc """
   Returns the version of the underlying Regex engine.
   """
-  @since "1.4.0"
+  @doc since: "1.4.0"
   @spec version :: term()
-  # TODO: No longer check for function_exported? on OTP 20+.
   def version do
-    if function_exported?(:re, :version, 0) do
-      {:re.version(), :erlang.system_info(:endian)}
-    else
-      {"8.33 2013-05-29", :erlang.system_info(:endian)}
-    end
+    {:re.version(), :erlang.system_info(:endian)}
   end
 
   @doc """
@@ -589,11 +584,146 @@ defmodule Regex do
       "Abcadc"
 
   """
+  @spec replace(t, String.t(), String.t() | (... -> String.t()), [term]) :: String.t()
+  def replace(regex, string, replacement, options \\ [])
+
+  def replace(regex, string, replacement, options)
+      when is_binary(string) and is_binary(replacement) and is_list(options) do
+    do_replace(regex, string, precompile_replacement(replacement), options)
+  end
+
+  def replace(regex, string, replacement, options)
+      when is_binary(string) and is_function(replacement) and is_list(options) do
+    {:arity, arity} = Function.info(replacement, :arity)
+    do_replace(regex, string, {replacement, arity}, options)
+  end
+
+  defp do_replace(%Regex{re_pattern: compiled}, string, replacement, options) do
+    opts = if Keyword.get(options, :global) != false, do: [:global], else: []
+    opts = [{:capture, :all, :index} | opts]
+
+    case :re.run(string, compiled, opts) do
+      :nomatch ->
+        string
+
+      {:match, [mlist | t]} when is_list(mlist) ->
+        apply_list(string, replacement, [mlist | t]) |> IO.iodata_to_binary()
+
+      {:match, slist} ->
+        apply_list(string, replacement, [slist]) |> IO.iodata_to_binary()
+    end
+  end
+
+  defp precompile_replacement(""), do: []
+
+  defp precompile_replacement(<<?\\, ?g, ?{, rest::binary>>) when byte_size(rest) > 0 do
+    {ns, <<?}, rest::binary>>} = pick_int(rest)
+    [List.to_integer(ns) | precompile_replacement(rest)]
+  end
+
+  defp precompile_replacement(<<?\\, ?\\, rest::binary>>) do
+    [<<?\\>> | precompile_replacement(rest)]
+  end
+
+  defp precompile_replacement(<<?\\, x, rest::binary>>) when x in ?0..?9 do
+    {ns, rest} = pick_int(rest)
+    [List.to_integer([x | ns]) | precompile_replacement(rest)]
+  end
+
+  defp precompile_replacement(<<x, rest::binary>>) do
+    case precompile_replacement(rest) do
+      [head | t] when is_binary(head) ->
+        [<<x, head::binary>> | t]
+
+      other ->
+        [<<x>> | other]
+    end
+  end
+
+  defp pick_int(<<x, rest::binary>>) when x in ?0..?9 do
+    {found, rest} = pick_int(rest)
+    {[x | found], rest}
+  end
+
+  defp pick_int(bin) do
+    {[], bin}
+  end
+
+  defp apply_list(string, replacement, list) do
+    apply_list(string, string, 0, replacement, list)
+  end
+
+  defp apply_list(_, "", _, _, []) do
+    []
+  end
+
+  defp apply_list(_, string, _, _, []) do
+    string
+  end
+
+  defp apply_list(whole, string, pos, replacement, [[{mpos, _} | _] | _] = list)
+       when mpos > pos do
+    length = mpos - pos
+    <<untouched::binary-size(length), rest::binary>> = string
+    [untouched | apply_list(whole, rest, mpos, replacement, list)]
+  end
+
+  defp apply_list(whole, string, pos, replacement, [[{pos, length} | _] = head | tail]) do
+    <<_::size(length)-binary, rest::binary>> = string
+    new_data = apply_replace(whole, replacement, head)
+    [new_data | apply_list(whole, rest, pos + length, replacement, tail)]
+  end
+
+  defp apply_replace(string, {fun, arity}, indexes) do
+    apply(fun, get_indexes(string, indexes, arity))
+  end
+
+  defp apply_replace(_, [bin], _) when is_binary(bin) do
+    bin
+  end
+
+  defp apply_replace(string, repl, indexes) do
+    indexes = List.to_tuple(indexes)
+
+    for part <- repl do
+      cond do
+        is_binary(part) ->
+          part
+
+        part >= tuple_size(indexes) ->
+          ""
+
+        true ->
+          get_index(string, elem(indexes, part))
+      end
+    end
+  end
+
+  defp get_index(_string, {pos, _len}) when pos < 0 do
+    ""
+  end
+
+  defp get_index(string, {pos, len}) do
+    <<_::size(pos)-binary, res::size(len)-binary, _::binary>> = string
+    res
+  end
+
+  defp get_indexes(_string, _, 0) do
+    []
+  end
+
+  defp get_indexes(string, [], arity) do
+    ["" | get_indexes(string, [], arity - 1)]
+  end
+
+  defp get_indexes(string, [h | t], arity) do
+    [get_index(string, h) | get_indexes(string, t, arity - 1)]
+  end
 
   @doc """
   Returns the version of the underlying Regex engine.
   """
-  @since "1.4.0"
+  @doc since: "1.4.0"
   @spec version :: term()
   # TODO: No longer check for function_exported? on OTP 20+.
   def version do
