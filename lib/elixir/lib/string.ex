@@ -7,7 +7,7 @@ defmodule String do
   ## Codepoints and grapheme cluster
 
   The functions in this module act according to the Unicode
-  Standard, version 10.0.0.
+  Standard, version 11.0.0.
 
   As per the standard, a codepoint is a single Unicode Character,
   which may be represented by one or more bytes.
@@ -203,18 +203,31 @@ defmodule String do
   is generated at runtime and does not survive compile term.
   """
 
+  @typedoc """
+  A UTF-8 encoded binary.
+
+  Note `String.t()` and `binary()` are equivalent to analysis tools.
+  Although, for those reading the documentation, `String.t()` implies
+  it is a UTF-8 encoded binary.
+  """
   @type t :: binary
+
+  @typedoc "A UTF-8 codepoint. It may be one or more bytes."
   @type codepoint :: t
+
+  @typedoc "Multiple codepoints that may be perceived as a single character by readers"
   @type grapheme :: t
+
+  @typedoc "Pattern used in functions like `replace/3` and `split/2`"
   @type pattern :: t | [t] | :binary.cp()
 
   @conditional_mappings [:greek]
 
   @doc """
-  Checks if a string contains only printable characters.
+  Checks if a string contains only printable characters up to `character_limit`.
 
-  Takes an optional `limit` as a second argument. `printable?/2` only
-  checks the printability of the string up to the `limit`.
+  Takes an optional `character_limit` as a second argument. If `character_limit` is `0`, this
+  function will return `true`.
 
   ## Examples
 
@@ -227,37 +240,47 @@ defmodule String do
       iex> String.printable?("abc" <> <<0>>, 2)
       true
 
-  """
-  @spec printable?(t) :: boolean
-  @spec printable?(t, non_neg_integer | :infinity) :: boolean
-  def printable?(string, counter \\ :infinity)
+      iex> String.printable?("abc" <> <<0>>, 0)
+      true
 
-  def printable?(<<>>, _), do: true
-  def printable?(_, 0), do: true
+  """
+  @spec printable?(t, 0) :: true
+  @spec printable?(t, pos_integer | :infinity) :: boolean
+  def printable?(string, character_limit \\ :infinity)
+      when is_binary(string) and
+             (character_limit == :infinity or
+                (is_integer(character_limit) and character_limit >= 0)) do
+    recur_printable?(string, character_limit)
+  end
+
+  defp recur_printable?(_string, 0), do: true
+  defp recur_printable?(<<>>, _character_limit), do: true
 
   for char <- 0x20..0x7E do
-    def printable?(<<unquote(char), rest::binary>>, counter) do
-      printable?(rest, decrement(counter))
+    defp recur_printable?(<<unquote(char), rest::binary>>, character_limit) do
+      recur_printable?(rest, decrement(character_limit))
     end
   end
 
   for char <- '\n\r\t\v\b\f\e\d\a' do
-    def printable?(<<unquote(char), rest::binary>>, counter) do
-      printable?(rest, decrement(counter))
+    defp recur_printable?(<<unquote(char), rest::binary>>, character_limit) do
+      recur_printable?(rest, decrement(character_limit))
     end
   end
 
-  def printable?(<<char::utf8, rest::binary>>, counter)
-      when char in 0xA0..0xD7FF
-      when char in 0xE000..0xFFFD
-      when char in 0x10000..0x10FFFF do
-    printable?(rest, decrement(counter))
+  defp recur_printable?(<<char::utf8, rest::binary>>, character_limit)
+       when char in 0xA0..0xD7FF
+       when char in 0xE000..0xFFFD
+       when char in 0x10000..0x10FFFF do
+    recur_printable?(rest, decrement(character_limit))
   end
 
-  def printable?(binary, _) when is_binary(binary), do: false
+  defp recur_printable?(_string, _character_limit) do
+    false
+  end
 
   defp decrement(:infinity), do: :infinity
-  defp decrement(counter), do: counter - 1
+  defp decrement(character_limit), do: character_limit - 1
 
   @doc ~S"""
   Divides a string into substrings at each Unicode whitespace
@@ -287,7 +310,8 @@ defmodule String do
   Divides a string into substrings based on a pattern.
 
   Returns a list of these substrings. The pattern can
-  be a string, a list of strings, or a regular expression.
+  be a string, a list of strings, a regular expression,
+  or a compiled pattern.
 
   The string is split into as many parts as possible by
   default, but can be controlled via the `:parts` option.
@@ -343,6 +367,12 @@ defmodule String do
       iex> String.split("abc", ~r{b}, include_captures: true)
       ["a", "b", "c"]
 
+  A compiled pattern:
+
+      iex> pattern = :binary.compile_pattern([" ", ","])
+      iex> String.split("1,2 3,4", pattern)
+      ["1", "2", "3", "4"]
+
   Splitting on empty string returns graphemes:
 
       iex> String.split("abc", "")
@@ -357,21 +387,15 @@ defmodule String do
       iex> String.split("abc", "", parts: 3)
       ["", "a", "bc"]
 
-  A precompiled pattern can also be given:
-
-      iex> pattern = :binary.compile_pattern([" ", ","])
-      iex> String.split("1,2 3,4", pattern)
-      ["1", "2", "3", "4"]
-
   Note this function can split within or across grapheme boundaries.
   For example, take the grapheme "é" which is made of the characters
-  "e" and the acute accent. The following returns true:
+  "e" and the acute accent. The following returns `true`:
 
       iex> String.split(String.normalize("é", :nfd), "e")
       ["", "́"]
 
   However, if "é" is represented by the single character "e with acute"
-  accent, then it will return false:
+  accent, then it will return `false`:
 
       iex> String.split(String.normalize("é", :nfc), "e")
       ["é"]
@@ -433,8 +457,8 @@ defmodule String do
   @doc """
   Returns an enumerable that splits a string on demand.
 
-  This is in contrast to `split/3` which splits all
-  the string upfront.
+  This is in contrast to `split/3` which splits the
+  entire string upfront.
 
   Note splitter does not support regular expressions
   (as it is often more efficient to have the regular
@@ -455,6 +479,12 @@ defmodule String do
 
       iex> String.splitter("abcd", "", trim: true) |> Enum.take(10)
       ["a", "b", "c", "d"]
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern([" ", ","])
+      iex> String.splitter("1,2 3,4 5,6 7,8,...,99999", pattern) |> Enum.take(4)
+      ["1", "2", "3", "4"]
 
   """
   @spec splitter(t, pattern, keyword) :: Enumerable.t()
@@ -508,19 +538,19 @@ defmodule String do
 
   ## Examples
 
-      iex> String.split_at "sweetelixir", 5
+      iex> String.split_at("sweetelixir", 5)
       {"sweet", "elixir"}
 
-      iex> String.split_at "sweetelixir", -6
+      iex> String.split_at("sweetelixir", -6)
       {"sweet", "elixir"}
 
-      iex> String.split_at "abc", 0
+      iex> String.split_at("abc", 0)
       {"", "abc"}
 
-      iex> String.split_at "abc", 1000
+      iex> String.split_at("abc", 1000)
       {"abc", ""}
 
-      iex> String.split_at "abc", -1000
+      iex> String.split_at("abc", -1000)
       {"", "abc"}
 
   """
