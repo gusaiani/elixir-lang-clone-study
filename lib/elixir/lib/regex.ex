@@ -720,19 +720,58 @@ defmodule Regex do
     [get_index(string, h) | get_indexes(string, t, arity - 1)]
   end
 
-  @doc """
-  Returns the version of the underlying Regex engine.
+  @doc ~S"""
+  Escapes a string to be literally matched in a regex.
+
+  ## Examples
+
+      iex> Regex.escape(".")
+      "\\."
+
+      iex> Regex.escape("\\what if")
+      "\\\\what\\ if"
+
   """
-  @doc since: "1.4.0"
-  @spec version :: term()
-  # TODO: No longer check for function_exported? on OTP 20+.
-  def version do
-    if function_exported?(:re, :version, 0) do
-      {:re.version(), :erlang.system_info(:endian)}
-    else
-      {"8.33 2013-05-29", :erlang.system_info(:endian)}
-    end
+  @spec escape(String.t()) :: String.t()
+  def escape(string) when is_binary(string) do
+    string
+    |> escape(_length = 0, string)
+    |> IO.iodata_to_binary()
   end
+
+  @escapable '.^$*+?()[]{}|#-\\\t\n\v\f\r\s'
+
+  defp escape(<<char, rest::binary>>, length, original) when char in @escapable do
+    escape_char(rest, length, original, char)
+  end
+
+  defp escape(<<_, rest::binary>>, length, original) do
+    escape(rest, length + 1, original)
+  end
+
+  defp escape(<<>>, _length, original) do
+    original
+  end
+
+  defp escape_char(<<rest::binary>>, 0, _original, char) do
+    [?\\, char | escape(rest, 0, rest)]
+  end
+
+  defp escape_char(<<rest::binary>>, length, original, char) do
+    [binary_part(original, 0, length), ?\\, char | escape(rest, 0, rest)]
+  end
+
+  # Helpers
+
+  @doc false
+  # Unescape map function used by Macro.unescape_string.
+  def unescape_map(?f), do: ?\f
+  def unescape_map(?n), do: ?\n
+  def unescape_map(?r), do: ?\r
+  def unescape_map(?t), do: ?\t
+  def unescape_map(?v), do: ?\v
+  def unescape_map(?a), do: ?\a
+  def unescape_map(_), do: false
 
   # Private Helpers
 
