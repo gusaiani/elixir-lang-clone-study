@@ -632,8 +632,21 @@ defmodule String do
       "leña"
 
   """
-  @spec normalize(t, atom) :: t
-  defdelegate normalize(string, form), to: String.Normalizer
+  def normalize(string, form)
+
+  def normalize(string, :nfd) do
+    case :unicode.characters_to_nfd_binary(string) do
+      string when is_binary(string) -> string
+      {:error, bad, rest} -> bad <> normalize(rest, :nfd)
+    end
+  end
+
+  def normalize(string, :nfc) do
+    case :unicode.characters_to_nfc_binary(string) do
+      string when is_binary(string) -> string
+      {:error, bad, rest} -> bad <> normalize(rest, :nfc)
+    end
+  end
 
   @doc """
   Converts all characters in the given string to uppercase according to `mode`.
@@ -674,14 +687,18 @@ defmodule String do
   end
 
   def upcase(string, :ascii) when is_binary(string) do
-    for <<x <- string>>,
-      do: if(x >= ?a and x <= ?z, do: <<x - 32>>, else: <<x>>),
-      into: ""
+    IO.iodata_to_binary(upcase_ascii(string))
   end
 
   def upcase(string, mode) when mode in @conditional_mappings do
     String.Casing.upcase(string, [], mode)
   end
+
+  defp upcase_ascii(<<char, rest::bits>>) when char >= ?a and char <= ?z,
+    do: [char - 32 | upcase_ascii(rest)]
+
+  defp upcase_ascii(<<char, rest::bits>>), do: [char | upcase_ascii(rest)]
+  defp upcase_ascii(<<>>), do: []
 
   @doc """
   Converts all characters in the given string to lowercase according to `mode`.
@@ -730,14 +747,18 @@ defmodule String do
   end
 
   def downcase(string, :ascii) when is_binary(string) do
-    for <<x <- string>>,
-      do: if(x >= ?A and x <= ?Z, do: <<x + 32>>, else: <<x>>),
-      into: ""
+    IO.iodata_to_binary(downcase_ascii(string))
   end
 
   def downcase(string, mode) when mode in @conditional_mappings do
     String.Casing.downcase(string, [], mode)
   end
+
+  defp downcase_ascii(<<char, rest::bits>>) when char >= ?A and char <= ?Z,
+    do: [char + 32 | downcase_ascii(rest)]
+
+  defp downcase_ascii(<<char, rest::bits>>), do: [char | downcase_ascii(rest)]
+  defp downcase_ascii(<<>>), do: []
 
   @doc """
   Converts the first character in the given string to
@@ -775,7 +796,7 @@ defmodule String do
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_trailing/1 instead"
   defdelegate rstrip(binary), to: String.Break, as: :trim_trailing
 
   @doc false
@@ -840,6 +861,63 @@ defmodule String do
 
   defp replace_leading(string, _match, replacement, _prefix_size, _suffix_size, acc) do
     prepend_unless_empty(duplicate(replacement, acc), string)
+  end
+
+  @doc """
+  Replaces all trailing occurrences of `match` by `replacement` in `string`.
+
+  Returns the string untouched if there are no occurrences.
+
+  If `match` is `""`, this function raises an `ArgumentError` exception: this
+  happens because this function replaces **all** the occurrences of `match` at
+  the end of `string`, and it's impossible to replace "multiple" occurrences of
+  `""`.
+
+  ## Examples
+
+      iex> String.replace_trailing("hello world", " world", "")
+      "hello"
+      iex> String.replace_trailing("hello world world", " world", "")
+      "hello"
+
+      iex> String.replace_trailing("hello world", " world", " mundo")
+      "hello mundo"
+      iex> String.replace_trailing("hello world world", " world", " mundo")
+      "hello mundo mundo"
+
+  """
+  @spec replace_trailing(t, t, t) :: t | no_return
+  def replace_trailing(string, match, replacement)
+      when is_binary(string) and is_binary(match) and is_binary(replacement) do
+    if match == "" do
+      raise ArgumentError, "cannot use an empty string as the match to replace"
+    end
+
+    suffix_size = byte_size(match)
+    prefix_size = byte_size(string) - suffix_size
+    replace_trailing(string, match, replacement, prefix_size, suffix_size, 0)
+  end
+
+  defp replace_trailing(string, match, replacement, prefix_size, suffix_size, acc)
+       when prefix_size >= 0 do
+    case string do
+      <<prefix::size(prefix_size)-binary, suffix::binary>> when suffix == match ->
+        replace_trailing(
+          prefix,
+          match,
+          replacement,
+          prefix_size - suffix_size,
+          suffix_size,
+          acc + 1
+        )
+
+      _ ->
+        append_unless_empty(string, duplicate(replacement, acc))
+    end
+  end
+
+  defp replace_trailing(string, _match, replacement, _prefix_size, _suffix_size, acc) do
+    append_unless_empty(string, duplicate(replacement, acc))
   end
 
   defp maybe_compile_pattern(""), do: ""
