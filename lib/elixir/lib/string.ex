@@ -632,6 +632,9 @@ defmodule String do
       "leña"
 
   """
+  # TODO: Fully deprecate it on v1.10
+  @doc deprecated:
+         "Use :unicode.characters_to_nfc_binary/1 or :unicode.characters_to_nfd_binary/1 instead"
   def normalize(string, form)
 
   def normalize(string, :nfd) do
@@ -801,7 +804,7 @@ defmodule String do
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_trailing/2 with a binary as second argument instead"
   def rstrip(string, char) when is_integer(char) do
     replace_trailing(string, <<char::utf8>>, "")
   end
@@ -920,6 +923,198 @@ defmodule String do
     append_unless_empty(string, duplicate(replacement, acc))
   end
 
+  @doc """
+  Replaces prefix in `string` by `replacement` if it matches `match`.
+
+  Returns the string untouched if there is no match. If `match` is an empty
+  string (`""`), `replacement` is just prepended to `string`.
+
+  ## Examples
+
+      iex> String.replace_prefix("world", "hello ", "")
+      "world"
+      iex> String.replace_prefix("hello world", "hello ", "")
+      "world"
+      iex> String.replace_prefix("hello hello world", "hello ", "")
+      "hello world"
+
+      iex> String.replace_prefix("world", "hello ", "ola ")
+      "world"
+      iex> String.replace_prefix("hello world", "hello ", "ola ")
+      "ola world"
+      iex> String.replace_prefix("hello hello world", "hello ", "ola ")
+      "ola hello world"
+
+      iex> String.replace_prefix("world", "", "hello ")
+      "hello world"
+
+  """
+  @spec replace_prefix(t, t, t) :: t
+  def replace_prefix(string, match, replacement)
+      when is_binary(string) and is_binary(match) and is_binary(replacement) do
+    prefix_size = byte_size(match)
+
+    case string do
+      <<prefix::size(prefix_size)-binary, suffix::binary>> when prefix == match ->
+        prepend_unless_empty(replacement, suffix)
+
+      _ ->
+        string
+    end
+  end
+
+  @doc """
+  Replaces suffix in `string` by `replacement` if it matches `match`.
+
+  Returns the string untouched if there is no match. If `match` is an empty
+  string (`""`), `replacement` is just appended to `string`.
+
+  ## Examples
+
+      iex> String.replace_suffix("hello", " world", "")
+      "hello"
+      iex> String.replace_suffix("hello world", " world", "")
+      "hello"
+      iex> String.replace_suffix("hello world world", " world", "")
+      "hello world"
+
+      iex> String.replace_suffix("hello", " world", " mundo")
+      "hello"
+      iex> String.replace_suffix("hello world", " world", " mundo")
+      "hello mundo"
+      iex> String.replace_suffix("hello world world", " world", " mundo")
+      "hello world mundo"
+
+      iex> String.replace_suffix("hello", "", " world")
+      "hello world"
+
+  """
+  @spec replace_suffix(t, t, t) :: t
+  def replace_suffix(string, match, replacement)
+      when is_binary(string) and is_binary(match) and is_binary(replacement) do
+    suffix_size = byte_size(match)
+    prefix_size = byte_size(string) - suffix_size
+
+    case string do
+      <<prefix::size(prefix_size)-binary, suffix::binary>> when suffix == match ->
+        append_unless_empty(prefix, replacement)
+
+      _ ->
+        string
+    end
+  end
+
+  @compile {:inline, prepend_unless_empty: 2, append_unless_empty: 2}
+
+  defp prepend_unless_empty("", suffix), do: suffix
+  defp prepend_unless_empty(prefix, suffix), do: prefix <> suffix
+
+  defp append_unless_empty(prefix, ""), do: prefix
+  defp append_unless_empty(prefix, suffix), do: prefix <> suffix
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.trim_leading/1 instead"
+  defdelegate lstrip(binary), to: String.Break, as: :trim_leading
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.trim_leading/2 with a binary as second argument instead"
+  def lstrip(string, char) when is_integer(char) do
+    replace_leading(string, <<char::utf8>>, "")
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.trim/1 instead"
+  def strip(string) do
+    trim(string)
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.trim/2 with a binary second argument instead"
+  def strip(string, char) do
+    trim(string, <<char::utf8>>)
+  end
+
+  @doc ~S"""
+  Returns a string where all leading Unicode whitespaces
+  have been removed.
+
+  ## Examples
+
+      iex> String.trim_leading("\n  abc   ")
+      "abc   "
+
+  """
+  @spec trim_leading(t) :: t
+  defdelegate trim_leading(string), to: String.Break
+
+  @doc """
+  Returns a string where all leading `to_trim`s have been removed.
+
+  ## Examples
+
+      iex> String.trim_leading("__ abc _", "_")
+      " abc _"
+
+      iex> String.trim_leading("1 abc", "11")
+      "1 abc"
+
+  """
+  @spec trim_leading(t, t) :: t
+  def trim_leading(string, to_trim) do
+    replace_leading(string, to_trim, "")
+  end
+
+  @doc ~S"""
+  Returns a string where all trailing Unicode whitespaces
+  has been removed.
+
+  ## Examples
+
+      iex> String.trim_trailing("   abc\n  ")
+      "   abc"
+
+  """
+  @spec trim_trailing(t) :: t
+  defdelegate trim_trailing(string), to: String.Break
+
+  @doc """
+  Returns a string where all trailing `to_trim`s have been removed.
+
+  ## Examples
+
+      iex> String.trim_trailing("_ abc __", "_")
+      "_ abc "
+
+      iex> String.trim_trailing("abc 1", "11")
+      "abc 1"
+
+  """
+  @spec trim_trailing(t, t) :: t
+  def trim_trailing(string, to_trim) do
+    replace_trailing(string, to_trim, "")
+  end
+
+  @doc ~S"""
+  Returns a string where all leading and trailing Unicode whitespaces
+  have been removed.
+
+  ## Examples
+
+      iex> String.trim("\n  abc\n  ")
+      "abc"
+
+  """
+  @spec trim(t) :: t
+  def trim(string) do
+    string
+    |> trim_leading()
+    |> trim_trailing()
+  end
+
   defp maybe_compile_pattern(""), do: ""
   defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
   defp maybe_compile_pattern(pattern), do: :binary.compile_pattern(pattern)
@@ -935,12 +1130,13 @@ defmodule String do
 
       iex> String.next_grapheme("olá")
       {"o", "lá"}
+
   """
   @spec next_grapheme(t) :: {grapheme, t} | nil
   def next_grapheme(binary) do
     case next_grapheme_size(binary) do
-      {size, rest} -> {:binary.part(binary, 0, size), rest}
-      nil          -> nil
+      {size, rest} -> {binary_part(binary, 0, size), rest}
+      nil -> nil
     end
   end
 
