@@ -1314,12 +1314,228 @@ defmodule String do
       "a-b,c"
 
   When the pattern is a regular expression, one can give `\N` or
-  `\g{N}` in the `replacement` string to access a specific capture in the 
+  `\g{N}` in the `replacement` string to access a specific capture in the
   regular expression:
 
       iex> String.replace("a,b,c", ~r/,(.)/, ",\\1\\g{1}")
-      "a, bb, cc"
+      "a,bb,cc"
+
+  Notice we had to escape the backslash escape character (i.e., we used `\\N`
+  instead of just `\N` to escape the backslash; same thing for `\\g{N}`). By
+  giving `\0`, one can inject the whole matched pattern in the replacement
+  string.
+
+  When the pattern is a string, a developer can use the replaced part inside
+  the `replacement` by using the `:insert_replaced` option and specifying the
+  position(s) inside the `replacement` where the string pattern will be
+  inserted:
+
+      iex> String.replace("a,b,c", "b", "[]", insert_replaced: 1)
+      "a,[b],c"
+
+      iex> String.replace("a,b,c", ",", "[]", insert_replaced: 2)
+      "a[],b[],c"
+
+      iex> String.replace("a,b,c", ",", "[]", insert_replaced: [1, 1])
+      "a[,,]b[,,]c"
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern(",")
+      iex> String.replace("a,b,c", pattern, "[]", insert_replaced: 2)
+      "a[],b[],c"
+
+  When an empty string is provided as a `pattern`, the function will treat it as
+  an implicit empty string between each grapheme and the string will be
+  interspersed. If an empty string is provided as `replacement` the `subject`
+  will be returned:
+
+      iex> String.replace("ELIXIR", "", ".")
+      ".E.L.I.X.I.R."
+
+      iex> String.replace("ELIXIR", "", "")
+      "ELIXIR"
+
   """
+  @spec replace(t, pattern | Regex.t(), t, keyword) :: t
+  def replace(subject, pattern, replacement, options \\ [])
+  def replace(subject, "", "", _), do: subject
+
+  def replace(subject, "", replacement, options) do
+    if Keyword.get(options, :global, true) do
+      IO.iodata_to_binary([replacement | intersperse(subject, replacement)])
+    else
+      replacement <> subject
+    end
+  end
+
+  def replace(subject, pattern, replacement, options) when is_binary(replacement) do
+    if Regex.regex?(pattern) do
+      Regex.replace(pattern, subject, replacement, global: options[:global])
+    else
+      opts = translate_replace_options(options)
+      :binary.replace(subject, pattern, replacement, opts)
+    end
+  end
+
+  defp intersperse(subject, replacement) do
+    case next_grapheme(subject) do
+      {current, rest} -> [current, replacement | intersperse(rest, replacement)]
+      nil -> []
+    end
+  end
+
+  defp translate_replace_options(options) do
+    global = if Keyword.get(options, :global) != false, do: [:global], else: []
+
+    insert =
+      if insert = Keyword.get(options, :insert_replaced),
+        do: [{:insert_replaced, insert}],
+        else: []
+
+    global ++ insert
+  end
+
+  @doc ~S"""
+  Reverses the graphemes in given string.
+
+  ## Examples
+
+      iex> String.reverse("abcd")
+      "dcba"
+
+      iex> String.reverse("hello world")
+      "dlrow olleh"
+
+      iex> String.reverse("hello ∂og")
+      "go∂ olleh"
+
+  Keep in mind reversing the same string twice does
+  not necessarily yield the original string:
+
+      iex> "̀e"
+      "̀e"
+      iex> String.reverse("̀e")
+      "è"
+      iex> String.reverse(String.reverse("̀e"))
+      "è"
+
+  In the first example the accent is before the vowel, so
+  it is considered two graphemes. However, when you reverse
+  it once, you have the vowel followed by the accent, which
+  becomes one grapheme. Reversing it again will keep it as
+  one single grapheme.
+  """
+  @spec reverse(t) :: t
+  def reverse(string) do
+    do_reverse(next_grapheme(string), [])
+  end
+
+  defp do_reverse({grapheme, rest}, acc) do
+    do_reverse(next_grapheme(rest), [grapheme | acc])
+  end
+
+  defp do_reverse(nil, acc), do: IO.iodata_to_binary(acc)
+
+  @compile {:inline, duplicate: 2}
+
+  @doc """
+  Returns a string `subject` duplicated `n` times.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> String.duplicate("abc", 0)
+      ""
+
+      iex> String.duplicate("abc", 1)
+      "abc"
+
+      iex> String.duplicate("abc", 2)
+      "abcabc"
+
+  """
+  @spec duplicate(t, non_neg_integer) :: t
+  def duplicate(subject, n) do
+    :binary.copy(subject, n)
+  end
+
+  @doc """
+  Returns all codepoints in the string.
+
+  For details about codepoints and graphemes, see the `String` module documentation.
+
+  ## Examples
+
+      iex> String.codepoints("olá")
+      ["o", "l", "á"]
+
+      iex> String.codepoints("оптими зации")
+      ["о", "п", "т", "и", "м", "и", " ", "з", "а", "ц", "и", "и"]
+
+      iex> String.codepoints("ἅἪῼ")
+      ["ἅ", "Ἢ", "ῼ"]
+
+      iex> String.codepoints("\u00e9")
+      ["é"]
+
+      iex> String.codepoints("\u0065\u0301")
+      ["e", "́"]
+
+  """
+  @spec codepoints(t) :: [codepoint]
+  defdelegate codepoints(string), to: String.Unicode
+
+  @doc """
+  Returns the next codepoint in a string.
+
+  The result is a tuple with the codepoint and the
+  remainder of the string or `nil` in case
+  the string reached its end.
+
+  As with other functions in the String module, this
+  function does not check for the validity of the codepoint.
+  That said, if an invalid codepoint is found, it will
+  be returned by this function.
+
+  ## Examples
+
+      iex> String.next_codepoint("olá")
+      {"o", "lá"}
+
+  """
+  @compile {:inline, next_codepoint: 1}
+  @spec next_codepoint(t) :: {codepoint, t} | nil
+  defdelegate next_codepoint(string), to: String.Unicode
+
+  @doc ~S"""
+  Checks whether `string` contains only valid characters.
+
+  ## Examples
+
+      iex> String.valid?("a")
+      true
+
+      iex> String.valid?("ø")
+      true
+
+      iex> String.valid?(<<0xFFFF::16>>)
+      false
+
+      iex> String.valid?(<<0xEF, 0xB7, 0x90>>)
+      true
+
+      iex> String.valid?("asd" <> <<0xFFFF::16>>)
+      false
+
+  """
+  @spec valid?(t) :: boolean
+  def valid?(string)
+
+  def valid?(<<_::utf8, t::binary>>), do: valid?(t)
+  def valid?(<<>>), do: true
+  def valid?(_), do: false
 
   defp maybe_compile_pattern(""), do: ""
   defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
