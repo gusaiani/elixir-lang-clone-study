@@ -1537,9 +1537,99 @@ defmodule String do
   def valid?(<<>>), do: true
   def valid?(_), do: false
 
-  defp maybe_compile_pattern(""), do: ""
-  defp maybe_compile_pattern(pattern) when is_tuple(pattern), do: pattern
-  defp maybe_compile_pattern(pattern), do: :binary.compile_pattern(pattern)
+  @doc false # TODO: Remove on 2.0
+  @deprecated "Use String.valid?/1 instead"
+  def valid_character?(string) do
+    case string do
+      <<_::utf8>> -> valid?(string)
+      _ -> false
+    end
+  end
+
+  @doc ~S"""
+  Splits the string into chunks of characters that share a common trait.
+
+  The trait can be one of two options:
+
+    * `:valid` - the string is split into chunks of valid and invalid
+      character sequences
+
+    * `:printable` - the string is split into chunks of printable and
+      non-printable character sequences
+
+  Returns a list of binaries each of which contains only one kind of
+  characters.
+
+  If the given string is empty, an empty list is returned.
+
+  ## Examples
+
+      iex> String.chunk(<<?a, ?b, ?c, 0>>, :valid)
+      ["abc\0"]
+
+      iex> String.chunk(<<?a, ?b, ?c, 0, 0xFFFF::utf16>>, :valid)
+      ["abc\0", <<0xFFFF::utf16>>]
+
+      iex> String.chunk(<<?a, ?b, ?c, 0, 0x0FFFF::utf8>>, :printable)
+      ["abc", <<0, 0x0FFFF::utf8>>]
+
+  """
+  @spec chunk(t, :valid | :printable) :: [t]
+
+  def chunk(string, trait)
+
+  def chunk("", _), do: []
+
+  def chunk(string, trait) when trait in [:valid, :printable] do
+    {cp, _} = next_codepoint(string)
+    pred_fn = make_chunk_pred(trait)
+    do_chunk(string, pred_fn.(cp), pred_fn)
+  end
+
+  defp do_chunk(string, flag, pred_fn), do: do_chunk(string, [], <<>>, flag, pred_fn)
+
+  defp do_chunk(<<>>, acc, <<>>, _, _), do: Enum.reverse(acc)
+
+  defp do_chunk(<<>>, acc, chunk, _, _), do: Enum.reverse(acc, [chunk])
+
+  defp do_chunk(string, acc, chunk, flag, pred_fn) do
+    {cp, rest} = next_codepoint(string)
+
+    if pred_fn.(cp) != flag do
+      do_chunk(rest, [chunk | acc], cp, not flag, pred_fn)
+    else
+      do_chunk(rest, acc, chunk <> cp, flag, pred_fn)
+    end
+  end
+
+  defp make_chunk_pred(:valid), do: &valid?/1
+  defp make_chunk_pred(:printable), do: &printable?/1
+
+  @doc """
+  Returns Unicode graphemes in the string as per Extended Grapheme
+  Cluster algorithm.
+
+  The algorithm is outlined in the [Unicode Standard Annex #29,
+  Unicode Text Segmentation](http://www.unicode.org/reports/tr29/).
+
+  For details about codepoints and graphemes, see the `String` module documentation.
+
+  ## Examples
+
+      iex> String.graphemes("Ńaïve")
+      ["Ń", "a", "ï", "v", "e"]
+
+      iex> String.graphemes("\u00e9")
+      ["é"]
+
+      iex> String.graphemes("\u0065\u0301")
+      ["é"]
+
+  """
+  @spec graphemes(t) :: [grapheme]
+  defdelegate graphemes(string), to: String.Unicode
+
+  @compile {:inline, next_grapheme: 1, next_grapheme_size: 1}
 
   @doc """
   Returns the next grapheme in a string.
@@ -1577,4 +1667,87 @@ defmodule String do
   """
   @spec next_grapheme_size(t) :: {pos_integer, t} | nil
   defdelegate next_grapheme_size(string), to: String.Unicode
+
+  @doc """
+  Returns the first grapheme from a UTF-8 string,
+  `nil` if the string is empty.
+
+  ## Examples
+
+      iex> String.first("elixir")
+      "e"
+
+      iex> String.first("եոգլի")
+      "ե"
+
+  """
+  @spec first(t) :: grapheme | nil
+  def first(string) do
+    case next_grapheme(string) do
+      {char, _} -> char
+      nil -> nil
+    end
+  end
+
+  @doc """
+  Returns the last grapheme from a UTF-8 string,
+  `nil` if the string is empty.
+
+  ## Examples
+
+      iex> String.last("elixir")
+      "r"
+
+      iex> String.last("եոգլի")
+      "ի"
+
+  """
+  @spec last(t) :: grapheme | nil
+  def last(string) do
+    do_last(next_grapheme(string), nil)
+  end
+
+  defp do_last({char, rest}, _) do
+    do_last(next_grapheme(rest), char)
+  end
+
+  defp do_last(nil, last_char), do: last_char
+
+  @doc """
+  Returns the number of Unicode graphemes in a UTF-8 string.
+
+  ## Examples
+
+      iex> String.length("elixir")
+      6
+
+      iex> String.length("եոգլի")
+      5
+
+  """
+  @spec length(t) :: non_neg_integer
+  defdelegate length(string), to: String.Unicode
+
+  @doc """
+  Returns the grapheme at the `position` of the given UTF-8 `string`.
+  If `position` is greater than `string` length, then it returns `nil`.
+
+  ## Examples
+
+      iex> String.at("elixir", 0)
+      "e"
+
+      iex> String.at("elixir", 1)
+      "l"
+
+      iex> String.at("elixir", 10)
+      nil
+
+      iex> String.at("elixir", -1)
+      "r"
+
+      iex> String.at("elixir", -10)
+      nil
+
+  """
 end
