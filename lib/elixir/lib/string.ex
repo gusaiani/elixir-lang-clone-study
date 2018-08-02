@@ -1537,7 +1537,8 @@ defmodule String do
   def valid?(<<>>), do: true
   def valid?(_), do: false
 
-  @doc false # TODO: Remove on 2.0
+  @doc false
+  # TODO: Remove on 2.0
   @deprecated "Use String.valid?/1 instead"
   def valid_character?(string) do
     case string do
@@ -1750,4 +1751,188 @@ defmodule String do
       nil
 
   """
+  @spec at(t, integer) :: grapheme | nil
+
+  def at(string, position) when is_integer(position) and position >= 0 do
+    do_at(string, position)
+  end
+
+  def at(string, position) when is_integer(position) and position < 0 do
+    position = length(string) + position
+
+    case position >= 0 do
+      true -> do_at(string, position)
+      false -> nil
+    end
+  end
+
+  defp do_at(string, position) do
+    case String.Unicode.split_at(string, position) do
+      {_, nil} -> nil
+      {_, rest} -> first(rest)
+    end
+  end
+
+  @doc """
+  Returns a substring starting at the offset `start`, and of
+  length `len`.
+
+  If the offset is greater than string length, then it returns `""`.
+
+  Remember this function works with Unicode graphemes and considers
+  the slices to represent grapheme offsets. If you want to split
+  on raw bytes, check `Kernel.binary_part/3` instead.
+
+  ## Examples
+
+      iex> String.slice("elixir", 1, 3)
+      "lix"
+
+      iex> String.slice("elixir", 1, 10)
+      "lixir"
+
+      iex> String.slice("elixir", 10, 3)
+      ""
+
+      iex> String.slice("elixir", -4, 4)
+      "ixir"
+
+      iex> String.slice("elixir", -10, 3)
+      ""
+
+      iex> String.slice("a", 0, 1500)
+      "a"
+
+      iex> String.slice("a", 1, 1500)
+      ""
+
+      iex> String.slice("a", 2, 1500)
+      ""
+
+  """
+  @spec slice(t, integer, non_neg_integer) :: grapheme
+
+  def slice(_, _, 0) do
+    ""
+  end
+
+  def slice(string, start, len) when start >= 0 and len >= 0 do
+    case String.Unicode.split_at(string, start) do
+      {_, nil} ->
+        ""
+
+      {start_bytes, rest} ->
+        {len_bytes, _} = String.Unicode.split_at(rest, len)
+        binary_part(string, start_bytes, len_bytes)
+    end
+  end
+
+  def slice(string, start, len) when start < 0 and len >= 0 do
+    start = length(string) + start
+
+    case start >= 0 do
+      true -> slice(string, start, len)
+      false -> ""
+    end
+  end
+
+  @doc """
+  Returns a substring from the offset given by the start of the
+  range to the offset given by the end of the range.
+
+  If the start of the range is not a valid offset for the given
+  string or if the range is in reverse order, returns `""`.
+
+  If the start or end of the range is negative, the whole string
+  is traversed first in order to convert the negative indices into
+  positive ones.
+
+  Remember this function works with Unicode graphemes and considers
+  the slices to represent grapheme offsets. If you want to split
+  on raw bytes, check `Kernel.binary_part/3` instead.
+
+  ## Examples
+
+      iex> String.slice("elixir", 1..3)
+      "lix"
+
+      iex> String.slice("elixir", 1..10)
+      "lixir"
+
+      iex> String.slice("elixir", 10..3)
+      ""
+
+      iex> String.slice("elixir", -4..-1)
+      "ixir"
+
+      iex> String.slice("elixir", 2..-1)
+      "ixir"
+
+      iex> String.slice("elixir", -4..6)
+      "ixir"
+
+      iex> String.slice("elixir", -1..-4)
+      ""
+
+      iex> String.slice("elixir", -10..-7)
+      ""
+
+      iex> String.slice("a", 0..1500)
+      "a"
+
+      iex> String.slice("a", 1..1500)
+      ""
+
+  """
+  @spec slice(t, Range.t()) :: t
+
+  def slice(string, range)
+
+  def slice("", _.._), do: ""
+
+  def slice(string, first..-1) when first >= 0 do
+    case String.Unicode.split_at(string, first) do
+      {_, nil} ->
+        ""
+
+      {start_bytes, _} ->
+        binary_part(string, start_bytes, byte_size(string) - start_bytes)
+    end
+  end
+
+  def slice(string, first..last) when first >= 0 and last >= 0 do
+    if last >= first do
+      slice(string, first, last - first + 1)
+    else
+      ""
+    end
+  end
+
+  def slice(string, first..last) do
+    {bytes, length} = do_acc_bytes(next_grapheme_size(string), [], 0)
+
+    first = add_if_negative(first, length)
+    last = add_if_negative(last, length)
+
+    if first < 0 or first > last or first > length do
+      ""
+    else
+      last = min(last + 1, length)
+      bytes = Enum.drop(bytes, length - last)
+      first = last - first
+      {length_bytes, start_bytes} = Enum.split(bytes, first)
+      binary_part(string, Enum.sum(start_bytes), Enum.sum(length_bytes))
+    end
+  end
+
+  defp add_if_negative(value, to_add) when value < 0, do: value + to_add
+  defp add_if_negative(value, _to_add), do: value
+
+  defp do_acc_bytes({size, rest}, bytes, length) do
+    do_acc_bytes(next_grapheme_size(rest), [size | bytes], length + 1)
+  end
+
+  defp do_acc_bytes(nil, bytes, length) do
+    {bytes, length}
+  end
 end
