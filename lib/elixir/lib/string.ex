@@ -1929,10 +1929,81 @@ defmodule String do
   defp add_if_negative(value, _to_add), do: value
 
   defp do_acc_bytes({size, rest}, bytes, length) do
-    do_acc_bytes(next_grapheme_size(rest), [size | bytes], length + 1)
+    do_acc_bytes(next_grapheme_size(rest), [size | bytes], length + 1)
   end
 
   defp do_acc_bytes(nil, bytes, length) do
     {bytes, length}
   end
+
+  @doc """
+  Returns `true` if `string` starts with any of the prefixes given.
+
+  `prefix` can be either a string, a list of strings, or a compiled
+  pattern.
+
+  ## Examples
+
+      iex> String.starts_with?("elixir", "eli")
+      true
+      iex> String.starts_with?("elixir", ["erlang", "elixir"])
+      true
+      iex> String.starts_with?("elixir", ["erlang", "ruby"])
+      false
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern(["erlang", "elixir"])
+      iex> String.starts_with?("elixir", pattern)
+      true
+
+  An empty string will always match:
+
+      iex> String.starts_with?("elixir", "")
+      true
+      iex> String.starts_with?("elixir", ["", "other"])
+      true
+
+  """
+  @spec starts_with?(t, pattern) :: boolean
+  def starts_with?(string, prefix) when is_binary(string) and is_binary(prefix) do
+    starts_with_string?(string, byte_size(string), prefix)
+  end
+
+  def starts_with?(string, prefix) when is_binary(string) and is_list(prefix) do
+    string_size = byte_size(string)
+    Enum.any?(prefix, &starts_with_string?(string, string_size, &1))
+  end
+
+  def starts_with?(string, prefix) when is_binary(string) do
+    Kernel.match?({0, _}, :binary.match(string, prefix))
+  end
+
+  @compile {:inline, starts_with_string?: 3}
+  defp starts_with_string?(string, string_size, prefix) when is_binary(prefix) do
+    prefix_size = byte_size(prefix)
+
+    if prefix_size <= string_size do
+      prefix == binary_part(string, 0, prefix_size)
+    else
+      false
+    end
+  end
+
+  @doc """
+  Returns `true` if `string` ends with any of the suffixes given.
+
+  `suffixes` can be either a single suffix or a list of suffixes.
+
+  ## Examples
+
+      iex> String.ends_with?("language", "age")
+      true
+      iex> String.ends_with?("language", ["youth", "age"])
+      true
+      iex> String.ends_with?("language", ["youth", "elixir"])
+      false
+
+  An empty suffix will always match:
+  """
 end
