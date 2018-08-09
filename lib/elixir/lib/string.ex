@@ -2005,5 +2005,203 @@ defmodule String do
       false
 
   An empty suffix will always match:
+
+      iex> String.ends_with?("language", "")
+      true
+      iex> String.ends_with?("language", ["", "other"])
+      true
+
+  """
+  @spec ends_with?(t, t | [t]) :: boolean
+  def ends_with?(string, suffix) when is_binary(string) and is_binary(suffix) do
+    ends_with_string?(string, byte_size(string), suffix)
+  end
+
+  def ends_with?(string, suffix) when is_binary(string) and is_list(suffix) do
+    string_size = byte_size(string)
+    Enum.any?(suffix, &ends_with_string?(string, string_size, &1))
+  end
+
+  @compile {:inline, ends_with_string?: 3}
+  defp ends_with_string?(string, string_size, suffix) when is_binary(suffix) do
+    suffix_size = byte_size(suffix)
+
+    if suffix_size <= string_size do
+      suffix == binary_part(string, string_size - suffix_size, suffix_size)
+    else
+      false
+    end
+  end
+
+  @doc """
+  Checks if `string` matches the given regular expression.
+
+  ## Examples
+
+      iex> String.match?("foo", ~r/foo/)
+      true
+
+      iex> String.match?("bar", ~r/foo/)
+      false
+
+  """
+  @spec match?(t, Regex.t()) :: boolean
+  def match?(string, regex) do
+    Regex.match?(regex, string)
+  end
+
+  @doc """
+  Checks if `string` contains any of the given `contents`.
+
+  `contents` can be either a string, a list of strings,
+  or a compiled pattern.
+
+  ## Examples
+
+      iex> String.contains?("elixir of life", "of")
+      true
+      iex> String.contains?("elixir of life", ["life", "death"])
+      true
+      iex> String.contains?("elixir of life", ["death", "mercury"])
+      false
+
+  The argument can also be a compiled pattern:
+
+      iex> pattern = :binary.compile_pattern(["life", "death"])
+      iex> String.contains?("elixir of life", pattern)
+      true
+
+  An empty string will always match:
+
+      iex> String.contains?("elixir of life", "")
+      true
+      iex> String.contains?("elixir of life", ["", "other"])
+      true
+
+  Note this function can match within or across grapheme boundaries.
+  For example, take the grapheme "é" which is made of the characters
+  "e" and the acute accent. The following returns `true`:
+
+      iex> String.contains?(:unicode.characters_to_nfd_binary("é"), "e")
+      true
+
+  However, if "é" is represented by the single character "e with acute"
+  accent, then it will return `false`:
+
+      iex> String.contains?(:unicode.characters_to_nfc_binary("é"), "e")
+      false
+
+  """
+  @spec contains?(t, pattern) :: boolean
+  def contains?(string, []) when is_binary(string) do
+    false
+  end
+
+  def contains?(string, contents) when is_binary(string) and is_list(contents) do
+    "" in contents or :binary.match(string, contents) != :nomatch
+  end
+
+  def contains?(string, contents) when is_binary(string) do
+    "" == contents or :binary.match(string, contents) != :nomatch
+  end
+
+  @doc """
+  Converts a string into a charlist.
+
+  Specifically, this function takes a UTF-8 encoded binary and returns a list of its integer
+  codepoints. It is similar to `codepoints/1` except that the latter returns a list of codepoints as
+  strings.
+
+  In case you need to work with bytes, take a look at the
+  [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+
+  ## Examples
+
+      iex> String.to_charlist("æß")
+      'æß'
+
+  """
+  @spec to_charlist(t) :: charlist
+  def to_charlist(string) when is_binary(string) do
+    case :unicode.characters_to_list(string) do
+      result when is_list(result) ->
+        result
+
+      {:error, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :invalid
+
+      {:incomplete, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :incomplete
+    end
+  end
+
+  @doc """
+  Converts a string to an atom.
+
+  Warning: this function creates atoms dynamically and atoms are
+  not garbage-collected. Therefore, `string` should not be an
+  untrusted value, such as input received from a socket or during
+  a web request. Consider using `to_existing_atom/1` instead.
+
+  By default, the maximum number of atoms is `1_048_576`. This limit
+  can be raised or lowered using the VM option `+t`.
+
+  The maximum atom size is of 255 Unicode codepoints.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> String.to_atom("my_atom")
+      :my_atom
+
+  """
+  @spec to_atom(String.t()) :: atom
+  def to_atom(string) do
+    :erlang.binary_to_atom(string, :utf8)
+  end
+
+  @doc """
+  Converts a string to an existing atom.
+
+  The maximum atom size is of 255 Unicode codepoints.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> _ = :my_atom
+      iex> String.to_existing_atom("my_atom")
+      :my_atom
+
+      iex> String.to_existing_atom("this_atom_will_never_exist")
+      ** (ArgumentError) argument error
+
+  """
+  @spec to_existing_atom(String.t()) :: atom
+  def to_existing_atom(string) do
+    :erlang.binary_to_existing_atom(string, :utf8)
+  end
+
+  @doc """
+  Returns an integer whose text representation is `string`.
+
+  `string` must be the string representation of an integer.
+  Otherwise, an `ArgumentError` will be raised. If you want
+  to parse a string that may contain an ill-formatted integer,
+  use `Integer.parse/1`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> String.to_integer("123")
+      123
+
+  Passing a string that does not represent an integer leads to an error:
+
+      String.to_integer("invalid data")
+      #=> ** (ArgumentError) argument error
+
   """
 end
