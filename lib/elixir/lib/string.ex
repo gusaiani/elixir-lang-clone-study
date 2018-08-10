@@ -2204,4 +2204,172 @@ defmodule String do
       #=> ** (ArgumentError) argument error
 
   """
+  @spec to_integer(String.t()) :: integer
+  def to_integer(string) do
+    :erlang.binary_to_integer(string)
+  end
+
+  @doc """
+  Returns an integer whose text representation is `string` in base `base`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> String.to_integer("3FF", 16)
+      1023
+
+  """
+  @spec to_integer(String.t(), 2..36) :: integer
+  def to_integer(string, base) do
+    :erlang.binary_to_integer(string, base)
+  end
+
+  @doc """
+  Returns a float whose text representation is `string`.
+
+  `string` must be the string representation of a float including a decimal point.
+  In order to parse a string without decimal point as a float then `Float.parse/1`
+  should be used. Otherwise, an `ArgumentError` will be raised.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      iex> String.to_float("2.2017764e+0")
+      2.2017764
+
+      iex> String.to_float("3.0")
+      3.0
+
+      String.to_float("3")
+      #=> ** (ArgumentError) argument error
+
+  """
+  @spec to_float(String.t()) :: float
+  def to_float(string) do
+    :erlang.binary_to_float(string)
+  end
+
+  @doc """
+  Computes the bag distance of two strings.
+
+  Returns a float value between 0 and 1 representing the bag
+  distance between `string1` and `string2`.
+
+  The bag distance is meant to be an efficient approximation
+  of the distance between two strings to quickly rule out strings
+  that are largely different.
+
+  The algorithm is outlined in the "String Matching with Metric
+  Trees Using an Approximate Distance" paper by Ilaria Bartolini,
+  Paolo Ciaccia, and Marco Patella.
+
+  ## Examples
+
+      iex> String.bag_distance("abc", "")
+      0.0
+      iex> String.bag_distance("abcd", "a")
+      0.25
+      iex> String.bag_distance("abcd", "ab")
+      0.5
+      iex> String.bag_distance("abcd", "abc")
+      0.75
+      iex> String.bag_distance("abcd", "abcd")
+      1.0
+
+  """
+  @spec bag_distance(t, t) :: float
+  @doc since: "1.8.0"
+  def bag_distance(_string, ""), do: 0.0
+  def bag_distance("", _string), do: 0.0
+
+  def bag_distance(string1, string2) do
+    {bag1, length1} = string_to_bag(string1, %{}, 0)
+    {bag2, length2} = string_to_bag(string2, %{}, 0)
+
+    diff1 = bag_difference(bag1, bag2)
+    diff2 = bag_difference(bag2, bag1)
+
+    1 - max(diff1, diff2) / max(length1, length2)
+  end
+
+  defp string_to_bag(string, bag, length) do
+    case next_grapheme(string) do
+      {char, rest} ->
+        bag =
+          case bag do
+            %{^char => current} -> %{bag | char => current + 1}
+            %{} -> Map.put(bag, char, 1)
+          end
+
+        string_to_bag(rest, bag, length + 1)
+
+      nil ->
+        {bag, length}
+    end
+  end
+
+  defp bag_difference(bag1, bag2) do
+    Enum.reduce(bag1, 0, fn {char, count1}, sum ->
+      case bag2 do
+        %{^char => count2} -> sum + max(count1 - count2, 0)
+        %{} -> sum + count1
+      end
+    end)
+  end
+
+  @doc """
+  Computes the jaro distance between two strings.
+
+  Returns a float value between 0 (equates to no similarity) and 1
+  (is an exact match) representing [Jaro](https://en.wikipedia.org/wiki/Jaro–Winkler_distance)
+  distance between `string1` and `string2`.
+
+  The Jaro distance metric is designed and best suited for short
+  strings such as person names.
+
+  ## Examples
+
+      iex> String.jaro_distance("dwayne", "duane")
+      0.8222222222222223
+      iex> String.jaro_distance("even", "odd")
+      0.0
+      iex> String.jaro_distance("same", "same")
+      1.0
+
+  """
+  @spec jaro_distance(t, t) :: float
+  def jaro_distance(string1, string2)
+
+  def jaro_distance(string, string), do: 1.0
+  def jaro_distance(_string, ""), do: 0.0
+  def jaro_distance("", _string), do: 0.0
+
+  def jaro_distance(string1, string2) do
+    {chars1, len1} = chars_and_length(string1)
+    {chars2, len2} = chars_and_length(string2)
+
+    case match(chars1, len1, chars2, len2) do
+      {0, _trans} ->
+        0.0
+
+      {comm, trans} ->
+        (comm / len1 + comm / len2 + (comm - trans) / comm) / 3
+    end
+  end
+
+  @compile {:inline, chars_and_length: 1}
+  defp chars_and_length(string) do
+    chars = graphemes(string)
+    {chars, Kernel.length(chars)}
+  end
+
+  defp match(chars1, len1, chars2, len2) do
+    if len1 < len2 do
+      match(chars1, chars2, div(len2, 2) - 1)
+    else
+      match(chars2, chars1, div(len1, 2) - 1)
+    end
+  end
 end
