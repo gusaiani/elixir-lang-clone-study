@@ -2372,4 +2372,75 @@ defmodule String do
       match(chars2, chars1, div(len1, 2) - 1)
     end
   end
+
+  defp match(chars1, chars2, lim) do
+    match(chars1, chars2, {0, lim}, {0, 0, -1}, 0)
+  end
+
+  defp match([char | rest], chars, range, state, idx) do
+    {chars, state} = submatch(char, chars, range, state, idx)
+
+    case range do
+      {lim, lim} -> match(rest, tl(chars), range, state, idx + 1)
+      {pre, lim} -> match(rest, chars, {pre + 1, lim}, state, idx + 1)
+    end
+  end
+
+  defp match([], _, _, {comm, trans, _}, _), do: {comm, trans}
+
+  defp submatch(char, chars, {pre, _} = range, state, idx) do
+    case detect(char, chars, range) do
+      nil ->
+        {chars, state}
+
+      {subidx, chars} ->
+        {chars, proceed(state, idx - pre + subidx)}
+    end
+  end
+
+  defp detect(char, chars, {pre, lim}) do
+    detect(char, chars, pre + 1 + lim, 0, [])
+  end
+
+  defp detect(_char, _chars, 0, _idx, _acc), do: nil
+  defp detect(_char, [], _lim, _idx, _acc), do: nil
+
+  defp detect(char, [char | rest], _lim, idx, acc), do: {idx, Enum.reverse(acc, [nil | rest])}
+
+  defp detect(char, [other | rest], lim, idx, acc),
+    do: detect(char, rest, lim - 1, idx + 1, [other | acc])
+
+  defp proceed({comm, trans, former}, current) do
+    if current < former do
+      {comm + 1, trans + 1, current}
+    else
+      {comm + 1, trans, current}
+    end
+  end
+
+  @doc """
+  Returns a keyword list that represents an edit script.
+
+  Check `List.myers_difference/2` for more information.
+
+  ## Examples
+
+      iex> string1 = "fox hops over the dog"
+      iex> string2 = "fox jumps over the lazy cat"
+      iex> String.myers_difference(string1, string2)
+      [eq: "fox ", del: "ho", ins: "jum", eq: "ps over the ", del: "dog", ins: "lazy cat"]
+
+  """
+  @spec myers_difference(t, t) :: [{:eq | :ins | :del, t}]
+  def myers_difference(string1, string2) do
+    graphemes(string1)
+    |> List.myers_difference(graphemes(string2))
+    |> Enum.map(fn {kind, chars} -> {kind, IO.iodata_to_binary(chars)} end)
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.to_charlist/1 instead"
+  @spec to_char_list(t) :: charlist
+  def to_char_list(string), do: String.to_charlist(string)
 end
