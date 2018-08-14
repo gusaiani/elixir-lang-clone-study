@@ -1,27 +1,59 @@
 defmodule Code do
   @moduledoc """
-  Utilities for managing code compilation, code evaluation and code loading.
+  Utilities for managing code compilation, code evaluation, and code loading.
 
   This module complements Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html)
   to add behaviour which is specific to Elixir. Almost all of the functions in this module
   have global side effects on the behaviour of Elixir.
+
+  ## Working with files
+
+  This module contains three functions for compiling and evaluating files.
+  Here is a summary of them and their behaviour:
+
+    * `require_file/2` - compiles a file and tracks its name. It does not
+      compile the file again if it has been previously required.
+
+    * `compile_file/2` - compiles a file without tracking its name. Compiles the
+      file multiple times when invoked multiple times.
+
+    * `eval_file/2` - evaluates the file contents without tracking its name. It
+      returns the result of the last expression in the file, instead of the modules
+      defined in it.
+
+  In a nutshell, the first must be used when you want to keep track of the files
+  handled by the system, to avoid the same file from being compiled multiple
+  times. This is common in scripts.
+
+  `compile_file/2` must be used when you are interested in the modules defined in a
+  file, without tracking. `eval_file/2` should be used when you are interested in
+  the result of evaluating the file rather than the modules it defines.
   """
 
   @doc """
-  Lists all loaded files.
+  Lists all required files.
 
   ## Examples
 
       Code.require_file("../eex/test/eex_test.exs")
-      List.first(Code.loaded_files) =~ "eex_test.exs" #=> true
+      List.first(Code.required_files()) =~ "eex_test.exs"
+      #=> true
 
   """
+  @doc since: "1.7.0"
+  @spec required_files() :: [binary]
+  def required_files do
+    :elixir_code_server.call(:required)
+  end
+
+  # TODO: Deprecate me on 1.9
+  @doc false
   def loaded_files do
-    :elixir_code_server.call :loaded
+    required_files()
   end
 
   @doc """
-  Removes files from the loaded files list.
+  Removes files from the required files list.
 
   The modules defined in the file are not removed;
   calling this function only removes them from the list,
@@ -29,14 +61,27 @@ defmodule Code do
 
   ## Examples
 
-      # Load EEx test code, unload file, check for functions still available
-      Code.load_file("../eex/test/eex_test.exs")
-      Code.unload_files(Code.loaded_files)
-      function_exported?(EExTest.Compiled, :before_compile, 0) #=> true
+      # Require EEx test code
+      Code.require_file("../eex/test/eex_test.exs")
+
+      # Now unrequire all files
+      Code.unrequire_files(Code.required_files())
+
+      # Notice modules are still available
+      function_exported?(EExTest.Compiled, :before_compile, 0)
+      #=> true
 
   """
+  @doc since: "1.7.0"
+  @spec unrequire_files([binary]) :: :ok
+  def unrequire_files(files) do
+    :elixir_code_server.cast({:unrequire_files, files})
+  end
+
+  # TODO: Deprecate me on 1.9
+  @doc false
   def unload_files(files) do
-    :elixir_code_server.cast {:unload_files, files}
+    unrequire_files(files)
   end
 
   @doc """
@@ -50,13 +95,16 @@ defmodule Code do
 
   ## Examples
 
-      Code.append_path(".") #=> true
+      Code.append_path(".")
+      #=> true
 
-      Code.append_path("/does_not_exist") #=> {:error, :bad_directory}
+      Code.append_path("/does_not_exist")
+      #=> {:error, :bad_directory}
 
   """
+  @spec append_path(Path.t()) :: true | {:error, :bad_directory}
   def append_path(path) do
-    :code.add_pathz(to_charlist(Path.expand path))
+    :code.add_pathz(to_charlist(Path.expand(path)))
   end
 
   @doc """
@@ -70,11 +118,14 @@ defmodule Code do
 
   ## Examples
 
-      Code.prepend_path(".") #=> true
+      Code.prepend_path(".")
+      #=> true
 
-      Code.prepend_path("/does_not_exist") #=> {:error, :bad_directory}
+      Code.prepend_path("/does_not_exist")
+      #=> {:error, :bad_directory}
 
   """
+  @spec prepend_path(Path.t()) :: true | {:error, :bad_directory}
   def prepend_path(path) do
     :code.add_patha(to_charlist(Path.expand path))
   end
