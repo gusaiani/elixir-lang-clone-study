@@ -127,7 +127,7 @@ defmodule Code do
   """
   @spec prepend_path(Path.t()) :: true | {:error, :bad_directory}
   def prepend_path(path) do
-    :code.add_patha(to_charlist(Path.expand path))
+    :code.add_patha(to_charlist(Path.expand(path)))
   end
 
   @doc """
@@ -135,18 +135,21 @@ defmodule Code do
   directories the Erlang VM uses for finding module code.
 
   The path is expanded with `Path.expand/1` before being deleted. If the
-  path does not exist it returns `false`.
+  path does not exist, this function returns `false`.
 
   ## Examples
 
       Code.prepend_path(".")
-      Code.delete_path(".") #=> true
+      Code.delete_path(".")
+      #=> true
 
-      Code.delete_path("/does_not_exist") #=> false
+      Code.delete_path("/does_not_exist")
+      #=> false
 
   """
+  @spec delete_path(Path.t()) :: boolean
   def delete_path(path) do
-    :code.del_path(to_charlist(Path.expand path))
+    :code.del_path(to_charlist(Path.expand(path)))
   end
 
   @doc """
@@ -166,6 +169,7 @@ defmodule Code do
   Options can be:
 
     * `:file` - the file to be considered in the evaluation
+
     * `:line` - the line on which the script starts
 
   Additionally, the following scope values can be configured:
@@ -183,10 +187,10 @@ defmodule Code do
       of function names and arity must be sorted
 
   Notice that setting any of the values above overrides Elixir's default
-  values. For example, setting `:requires` to `[]`, will no longer
-  automatically require the `Kernel` module; in the same way setting
-  `:macros` will no longer auto-import `Kernel` macros like `if/2`, `case/2`,
-  etc.
+  values. For example, setting `:requires` to `[]` will no longer
+  automatically require the `Kernel` module. In the same way setting
+  `:macros` will no longer auto-import `Kernel` macros like `Kernel.if/2`,
+  `Kernel.SpecialForms.case/2`, and so on.
 
   Returns a tuple of the form `{value, binding}`,
   where `value` is the value returned from evaluating `string`.
@@ -215,16 +219,17 @@ defmodule Code do
       {3, [a: 1, b: 2]}
 
   """
+  @spec eval_string(List.Chars.t(), list, Macro.Env.t() | keyword) :: {term, binding :: list}
   def eval_string(string, binding \\ [], opts \\ [])
 
   def eval_string(string, binding, %Macro.Env{} = env) do
-    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, Map.to_list(env)
+    {value, binding, _env, _scope} = :elixir.eval(to_charlist(string), binding, Map.to_list(env))
     {value, binding}
   end
 
   def eval_string(string, binding, opts) when is_list(opts) do
     validate_eval_opts(opts)
-    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, opts
+    {value, binding, _env, _scope} = :elixir.eval(to_charlist(string), binding, opts)
     {value, binding}
   end
 
@@ -255,21 +260,21 @@ defmodule Code do
   def eval_quoted(quoted, binding \\ [], opts \\ [])
 
   def eval_quoted(quoted, binding, %Macro.Env{} = env) do
-    {value, binding, _env, _scope} = :elixir.eval_quoted quoted, binding, Map.to_list(env)
+    {value, binding, _env, _scope} = :elixir.eval_quoted(quoted, binding, Map.to_list(env))
     {value, binding}
   end
 
   def eval_quoted(quoted, binding, opts) when is_list(opts) do
     validate_eval_opts(opts)
-    {value, binding, _env, _scope} = :elixir.eval_quoted quoted, binding, opts
+    {value, binding, _env, _scope} = :elixir.eval_quoted(quoted, binding, opts)
     {value, binding}
   end
 
   defp validate_eval_opts(opts) do
     if f = opts[:functions], do: validate_imports(:functions, f)
-    if m = opts[:macros],    do: validate_imports(:macros, m)
-    if a = opts[:aliases],   do: validate_aliases(:aliases, a)
-    if r = opts[:requires],  do: validate_requires(:requires, r)
+    if m = opts[:macros], do: validate_imports(:macros, m)
+    if a = opts[:aliases], do: validate_aliases(:aliases, a)
+    if r = opts[:requires], do: validate_requires(:requires, r)
   end
 
   defp validate_requires(kind, requires) do
@@ -281,21 +286,21 @@ defmodule Code do
   end
 
   defp validate_aliases(kind, aliases) do
-    valid = is_list(aliases) and Enum.all?(aliases, fn {k, v} ->
-      is_atom(k) and is_atom(v)
-    end)
+    valid = is_list(aliases) and Enum.all?(aliases, fn {k, v} -> is_atom(k) and is_atom(v) end)
 
     unless valid do
-      raise ArgumentError, "expected :#{kind} option given to eval in the format: [{module, module}]"
+      raise ArgumentError,
+            "expected :#{kind} option given to eval in the format: [{module, module}]"
     end
   end
 
   defp validate_imports(kind, imports) do
-    valid = is_list(imports) and Enum.all?(imports, fn {k, v} ->
-      is_atom(k) and is_list(v) and Enum.all?(v, fn {name, arity} ->
-        is_atom(name) and is_integer(arity)
-      end)
-    end)
+    valid =
+      is_list(imports) and
+        Enum.all?(imports, fn {k, v} ->
+          is_atom(k) and is_list(v) and
+            Enum.all?(v, fn {name, arity} -> is_atom(name) and is_integer(arity) end)
+        end)
 
     unless valid do
       raise ArgumentError, "expected :#{kind} option given to eval in the format: [{module, [{name, arity}]}]"
