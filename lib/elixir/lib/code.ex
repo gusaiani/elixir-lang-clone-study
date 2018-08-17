@@ -473,7 +473,69 @@ defmodule Code do
       some_call arg1,
                 arg2,
                 arg3
+
+  If the last argument is a data structure, such as maps and lists, and
+  the beginning of the data structure fits on the same line as the function
+  call, then no indentation happens, this allows code like this:
+
+      Enum.reduce(some_collection, initial_value, fn element, acc ->
+        # code
+      end)
+
+      some_function_without_parens %{
+        foo: :bar,
+        baz: :bat
+      }
+
+  ## Code comments
+
+  The formatter also handles code comments in a way to guarantee a space
+  is always added between the beginning of the comment (#) and the next
+  character.
+
+  The formatter also extracts all trailing comments to their previous line.
+  For example, the code below
+
+      hello #world
+
+  will be rewritten to
+
+      # world
+      hello
+
+  Because code comments are handled apart from the code representation (AST),
+  there are some situations where code comments are seen as ambiguous by the
+  code formatter. For example, the comment in the anonymous function below
+
+      fn
+        arg1 ->
+          body1
+          # comment
+
+        arg2 ->
+          body2
+      end
+
+  and in this one
+
+      fn
+        arg1 ->
+          body1
+
+        # comment
+        arg2 ->
+          body2
+      end
+
+  are considered equivalent (the nesting is discarded alongside most of
+  user formatting). In such cases, the code formatter will always format to
+  the latter.
   """
+  @doc since: "1.6.0"
+  @spec format_string!(binary, keyword) :: iodata
+  def format_string!(string, opts \\ []) when is_binary(string) and is_list(opts) do
+    line_length = Keyword.get(opts, :line_length, 98)
+    algebra = Code.Formatter.to_algebra!
 
   @doc """
   Evaluates the quoted contents.
