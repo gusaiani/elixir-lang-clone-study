@@ -535,7 +535,20 @@ defmodule Code do
   @spec format_string!(binary, keyword) :: iodata
   def format_string!(string, opts \\ []) when is_binary(string) and is_list(opts) do
     line_length = Keyword.get(opts, :line_length, 98)
-    algebra = Code.Formatter.to_algebra!
+    algebra = Code.Formatter.to_algebra!(string, opts)
+    Inspect.Algebra.format(algebra, line_length)
+  end
+
+  @doc """
+  Formats a file.
+
+  See `format_string!/2` for more information on code formatting and
+  available options.
+  """
+  @doc since: "1.6.0"
+  @spec format_file!(binary, keyword) :: iodata
+  def format_file!(file, opts \\ []) when is_binary(file) and is_list(opts) do
+  end
 
   @doc """
   Evaluates the quoted contents.
