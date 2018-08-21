@@ -99,20 +99,136 @@ defmodule File do
           :utf8
           | {
               :encoding,
-              :latin,
+              :latin1
               | :unicode
               | :utf8
               | :utf16
               | :utf32
               | {:utf16, :big | :little}
               | {:utf32, :big | :little}
-          }
+            }
 
   @type stream_mode ::
           encoding_mode()
           | :trim_bom
           | {:read_ahead, pos_integer | false}
           | {:delayed_write, non_neg_integer, non_neg_integer}
+
+  @doc """
+  Returns `true` if the path is a regular file.
+
+  This function follows symbolic links, so if a symbolic link points to a
+  regular file, `true` is returned.
+
+  ## Options
+
+  The supported options are:
+
+    * `:raw` - a single atom to bypass the file server and only check
+      for the file locally
+
+  ## Examples
+
+      File.regular?(__ENV__.file)
+      #=> true
+
+  """
+  @spec regular?(Path.t(), [regular_option]) :: boolean
+        when regular_option: :raw
+  def regular?(path, opts \\ []) do
+    :elixir_utils.read_file_type(IO.chardata_to_string(path), opts) == {:ok, :regular}
+  end
+
+  @doc """
+  Returns `true` if the given path is a directory.
+
+  This function follows symbolic links, so if a symbolic link points to a
+  directory, `true` is returned.
+
+  ## Options
+
+  The supported options are:
+
+    * `:raw` - a single atom to bypass the file server and only check
+      for the file locally
+
+  ## Examples
+
+      File.dir?("./test")
+      #=> true
+
+      File.dir?("test")
+      #=> true
+
+      File.dir?("/usr/bin")
+      #=> true
+
+      File.dir?("~/Downloads")
+      #=> false
+
+      "~/Downloads" |> Path.expand() |> File.dir?()
+      #=> true
+
+  """
+  @spec dir?(Path.t(), [dir_option]) :: boolean
+        when dir_option: :raw
+  def dir?(path, opts \\ []) do
+    :elixir_utils.read_file_type(IO.chardata_to_string(path), opts) == {:ok, :directory}
+  end
+
+  @doc """
+  Returns `true` if the given path exists.
+
+  It can be a regular file, directory, socket, symbolic link, named pipe or device file.
+  Returns `false` for symbolic links pointing to non-existing targets.
+
+  ## Options
+
+  The supported options are:
+
+    * `:raw` - a single atom to bypass the file server and only check
+      for the file locally
+
+  ## Examples
+
+      File.exists?("test/")
+      #=> true
+
+      File.exists?("missing.txt")
+      #=> false
+
+      File.exists?("/dev/null")
+      #=> true
+
+  """
+  @spec exists?(Path.t(), [exists_option]) :: boolean
+        when exists_option: :raw
+  def exists?(path, opts \\ []) do
+    opts = [{:time, :posix}] ++ opts
+    match?({:ok, _}, :file.read_file_info(IO.chardata_to_string(path), opts))
+  end
+
+  @doc """
+  Tries to create the directory `path`.
+
+  Missing parent directories are not created.
+  Returns `:ok` if successful, or `{:error, reason}` if an error occurs.
+
+  Typical error reasons are:
+
+    * `:eacces`  - missing search or write permissions for the parent
+      directories of `path`
+    * `:eexist`  - there is already a file or directory named `path`
+    * `:enoent`  - a component of `path` does not exist
+    * `:enospc`  - there is no space left on the device
+    * `:enotdir` - a component of `path` is not a directory;
+      on some platforms, `:enoent` is returned instead
+
+  """
+  @spec mkdir(Path.t()) :: :ok | {:error, posix}
+  def mkdir(path) do
+    :file.make_dir(IO.chardata_to_string(path))
+  end
 
   @doc """
   Returns `{:ok, binary}`, where `binary` is a binary data object that contains the contents

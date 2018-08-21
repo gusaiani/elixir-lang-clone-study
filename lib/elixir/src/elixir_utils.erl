@@ -3,6 +3,7 @@
 -module(elixir_utils).
 -export([get_line/1, split_last/1, noop/0,
          relative_to_cwd/1,
+         read_file_type/1, read_file_type/2,
          returns_boolean/1,
          extract_guards/1]).
 -include("elixir.hrl").
@@ -27,6 +28,15 @@ split_last([])           -> {[], []};
 split_last(List)         -> split_last(List, []).
 split_last([H], Acc)     -> {lists:reverse(Acc), H};
 split_last([H | T], Acc) -> split_last(T, [H | Acc]).
+
+read_file_type(File) ->
+  read_file_type(File, []).
+
+read_file_type(File, Opts) ->
+  case file:read_file_info(File, [{time, posix} | Opts]) of
+    {ok, #file_info{type=Type}} -> {ok, Type};
+    {error, _} = Error -> Error
+  end.
 
 %% Boolean checks
 
