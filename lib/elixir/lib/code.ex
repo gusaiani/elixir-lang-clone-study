@@ -548,6 +548,9 @@ defmodule Code do
   @doc since: "1.6.0"
   @spec format_file!(binary, keyword) :: iodata
   def format_file!(file, opts \\ []) when is_binary(file) and is_list(opts) do
+    string = File.read!(file)
+    formatted = format_string!(string, [file: file, line: 1] ++ opts)
+    [formatted, ?\n]
   end
 
   @doc """
@@ -629,29 +632,47 @@ defmodule Code do
   @doc """
   Converts the given string to its quoted form.
 
-  Returns `{:ok, quoted_form}`
-  if it succeeds, `{:error, {line, error, token}}` otherwise.
+  Returns `{:ok, quoted_form}` if it succeeds,
+  `{:error, {line, error, token}}` otherwise.
 
   ## Options
 
-    * `:file` - the filename to be used in stacktraces
-      and the file reported in the `__ENV__/0` macro
+    * `:file` - the filename to be reported in case of parsing errors.
+      Defaults to "nofile".
 
-    * `:line` - the line reported in the `__ENV__/0` macro
+    * `:line` - the starting line of the string being parsed.
+      Defaults to 1.
+
+    * `:columns` - when `true`, attach a `:column` key to the quoted
+      metadata. Defaults to `false`.
 
     * `:existing_atoms_only` - when `true`, raises an error
-      when non-existing atoms are found by the tokenizer
+      when non-existing atoms are found by the tokenizer.
+      Defaults to `false`.
 
-  ## Macro.to_string/2
+    * `:warn_on_unnecessary_quotes` - when `false`, does not warn
+      when atoms, keywords or calls have unnecessary quotes on
+      them. Defaults to `true`.
+
+  ## `Macro.to_string/2`
 
   The opposite of converting a string to its quoted form is
   `Macro.to_string/2`, which converts a quoted form to a string/binary
   representation.
   """
+  @spec string_to_quoted(List.Chars.t(), keyword) ::
+          {:ok, Macro.t()} | {:error, {line :: pos_integer, term, term}}
   def string_to_quoted(string, opts \\ []) when is_list(opts) do
     file = Keyword.get(opts, :file, "nofile")
     line = Keyword.get(opts, :line, 1)
-    :elixir.string_to_quoted(to_charlist(string), line, file, opts)
+
+    case :elixir.string_to_tokens(to_charlist(string), line, file, opts) do
+      {:ok, tokens} ->
+        :elixir.tokens_to_quoted(tokens, file, opts)
+
+      {:error, _error_msg} = error ->
+        error
+    end
   end
 
   @doc """
@@ -664,6 +685,7 @@ defmodule Code do
 
   Check `string_to_quoted/2` for options information.
   """
+  @spec string_to_quoted!(List.Chars.t(), keyword) :: Macro.t()
   def string_to_quoted!(string, opts \\ []) when is_list(opts) do
     file = Keyword.get(opts, :file, "nofile")
     line = Keyword.get(opts, :line, 1)
@@ -675,39 +697,23 @@ defmodule Code do
 
   Accepts `relative_to` as an argument to tell where the file is located.
 
-  While `load_file` loads a file and returns the loaded modules and their
-  byte code, `eval_file` simply evaluates the file contents and returns the
-  evaluation result and its bindings.
+  While `require_file/2` and `compile_file/2` return the loaded modules and their
+  bytecode, `eval_file/2` simply evaluates the file contents and returns the
+  evaluation result and its bindings (exactly the same return value as `eval_string/3`).
   """
-  def eval_file(file, relative_to \\ nil) do
+  @spec eval_file(binary, nil | binary) :: {term, binding :: list}
+  def eval_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
     eval_string(File.read!(file), [], file: file, line: 1)
   end
 
-  @doc """
-  Loads the given file.
-
-  Accepts `relative_to` as an argument to tell where the file is located.
-  If the file was already required/loaded, loads it again.
-
-  It returns a list of tuples `{ModuleName, <<byte_code>>}`, one tuple for
-  each module defined in the file.
-
-  Notice that if `load_file` is invoked by different processes concurrently,
-  the target file will be loaded concurrently many times. Check `require_file/2`
-  if you don't want a file to be loaded concurrently.
-
-  ## Examples
-
-      Code.load_file("eex_test.exs", "../eex/test") |> List.first
-      #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
-
-  """
+  # TODO: Deprecate me on 1.9
+  @doc false
   def load_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
     :elixir_code_server.call({:acquire, file})
     loaded = :elixir_compiler.file(file)
-    :elixir_code_server.cast({:loaded, file})
+    :elixir_code_server.cast({:required, file})
     loaded
   end
 
@@ -715,45 +721,51 @@ defmodule Code do
   Requires the given `file`.
 
   Accepts `relative_to` as an argument to tell where the file is located.
-  The return value is the same as that of `load_file/2`. If the file was already
-  required/loaded, `require_file` doesn't do anything and returns `nil`.
+  If the file was already required, `require_file/2` doesn't do anything and
+  returns `nil`.
 
-  Notice that if `require_file` is invoked by different processes concurrently,
-  the first process to invoke `require_file` acquires a lock and the remaining
-  ones will block until the file is available. I.e., if `require_file` is called
-  N times with a given file, it will be loaded only once. The first process to
-  call `require_file` will get the list of loaded modules, others will get `nil`.
+  Notice that if `require_file/2` is invoked by different processes concurrently,
+  the first process to invoke `require_file/2` acquires a lock and the remaining
+  ones will block until the file is available. This means that if `require_file/2`
+  is called more than once with a given file, that file will be compiled only once.
+  The first process to call `require_file/2` will get the list of loaded modules,
+  others will get `nil`.
 
-  Check `load_file/2` if you want a file to be loaded multiple times. See also
-  `unload_files/1`
+  See `compile_file/2` if you would like to compile a file without tracking its
+  filenames. Finally, if you would like to get the result of evaluating a file rather
+  than the modules defined in it, see `eval_file/2`.
 
   ## Examples
 
-  If the code is already loaded, it returns `nil`:
+  If the file has not been required, it returns the list of modules:
 
-      Code.require_file("eex_test.exs", "../eex/test") #=> nil
-
-  If the code is not loaded yet, it returns the same as `load_file/2`:
-
-      Code.require_file("eex_test.exs", "../eex/test") |> List.first
+      modules = Code.require_file("eex_test.exs", "../eex/test")
+      List.first(modules)
       #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
 
+  If the file has been required, it returns `nil`:
+
+      Code.require_file("eex_test.exs", "../eex/test")
+      #=> nil
+
   """
+  @spec require_file(binary, nil | binary) :: [{module, binary}] | nil
   def require_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
 
+    # TODO: Simply block until :required or :proceed once load_file is removed in 2.0
     case :elixir_code_server.call({:acquire, file}) do
-      :loaded ->
+      :required ->
         nil
 
       {:queued, ref} ->
         receive do
-          {:elixir_code_server, ^ref, :loaded} -> nil
+          {:elixir_code_server, ^ref, :required} -> nil
         end
 
       :proceed ->
         loaded = :elixir_compiler.file(file)
-        :elixir_code_server.cast({:loaded, file})
+        :elixir_code_server.cast({:required, file})
         loaded
     end
   end
@@ -765,11 +777,12 @@ defmodule Code do
 
   ## Examples
 
-      Code.compiler_options
+      Code.compiler_options()
       #=> %{debug_info: true, docs: true,
-            warnings_as_errors: false, ignore_module_conflict: false}
+      #=>   warnings_as_errors: false, ignore_module_conflict: false}
 
   """
+  @spec compiler_options() :: %{optional(atom) => boolean}
   def compiler_options do
     :elixir_config.get(:compiler_options)
   end
@@ -777,14 +790,15 @@ defmodule Code do
   @doc """
   Returns a list with the available compiler options.
 
-  See `Code.compiler_options/1` for more info.
+  See `compiler_options/1` for more info.
 
   ## Examples
 
-      iex> Code.available_compiler_options
+      iex> Code.available_compiler_options()
       [:docs, :debug_info, :ignore_module_conflict, :relative_paths, :warnings_as_errors]
 
   """
+  @spec available_compiler_options() :: [atom]
   def available_compiler_options do
     [:docs, :debug_info, :ignore_module_conflict, :relative_paths, :warnings_as_errors]
   end
