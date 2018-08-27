@@ -881,10 +881,17 @@ defmodule Code do
   Compiles the given string.
 
   Returns a list of tuples where the first element is the module name
-  and the second one is its bytecode (as a binary).
+  and the second one is its bytecode (as a binary). A `file` can be
+  given as second argument which will be used for reporting warnings
+  and errors.
 
-  For compiling many files at once, check `Kernel.ParallelCompiler.files/2`.
+  **Warning**: `string` can be any Elixir code and code can be executed with
+  the same privileges as the Erlang VM: this means that such code could
+  compromise the machine (for example by executing system commands).
+  Don't use `compile_string/2` with untrusted input (such as strings coming
+  from the network).
   """
+  @spec compile_string(List.Chars.t(), binary) :: [{module, binary}]
   def compile_string(string, file \\ "nofile") when is_binary(file) do
     :elixir_compiler.string(to_charlist(string), file)
   end
@@ -893,10 +900,32 @@ defmodule Code do
   Compiles the quoted expression.
 
   Returns a list of tuples where the first element is the module name and
-  the second one is its byte code (as a binary).
+  the second one is its bytecode (as a binary). A `file` can be
+  given as second argument which will be used for reporting warnings
+  and errors.
   """
+  @spec compile_quoted(Macro.t(), binary) :: [{module, binary}]
   def compile_quoted(quoted, file \\ "nofile") when is_binary(file) do
     :elixir_compiler.quoted(quoted, file)
+  end
+
+  @doc """
+  Compiles the given file.
+
+  Accepts `relative_to` as an argument to tell where the file is located.
+
+  Returns a list of tuples where the first element is the module name and
+  the second one is its bytecode (as a binary). Opposite to `require_file/2`,
+  it does not track the filename of the compiled file.
+
+  If you would like to get the result of evaluating file rather than the
+  modules defined in it, see `eval_file/2`.
+
+  For compiling many files concurrently, see `Kernel.ParallelCompiler.compile/2`.
+  """
+  @spec compile_file(binary, nil | binary) :: [{module, binary}]
+  def compile_file(file, relative_to \\ nil) when is_binary(file) do
+    :elixir_compiler.file(find_file(file, relative_to))
   end
 
   @doc """
@@ -970,6 +999,7 @@ defmodule Code do
       true
 
   """
+  @spec ensure_loaded?(module) :: boolean
   def ensure_loaded?(module) when is_atom(module) do
     match?({:module, ^module}, ensure_loaded(module))
   end
@@ -1017,83 +1047,86 @@ defmodule Code do
   end
 
   @doc ~S"""
-  Returns the docs for the given module.
+  Returns the docs for the given module or path to `.beam` file.
 
   When given a module name, it finds its BEAM code and reads the docs from it.
 
-  When given a path to a .beam file, it will load the docs directly from that
+  When given a path to a `.beam` file, it will load the docs directly from that
   file.
 
-  The return value depends on the `kind` value:
-
-    * `:docs` - list of all docstrings attached to functions and macros
-      using the `@doc` attribute
-
-    * `:moduledoc` - tuple `{<line>, <doc>}` where `line` is the line on
-      which module definition starts and `doc` is the string
-      attached to the module using the `@moduledoc` attribute
-
-    * `:callback_docs` - list of all docstrings attached to
-      `@callbacks` using the `@doc` attribute
-
-    * `:type_docs` - list of all docstrings attached to
-      `@type` callbacks using the `@typedoc` attribute
-
-    * `:all` - a keyword list with `:docs` and `:moduledoc`, `:callback_docs`,
-      and `:type_docs`.
-
-  If the module cannot be found, it returns `nil`.
+  It returns the term stored in the documentation chunk in the format defined by
+  [EEP 48](http://erlang.org/eep/eeps/eep-0048.html) or `{:error, reason}` if
+  the chunk is not available.
 
   ## Examples
 
-      # Get the module documentation
-      iex> {_line, text} = Code.get_docs(Atom, :moduledoc)
-      iex> String.split(text, "\n") |> Enum.at(0)
+      # Module documentation of an existing module
+      iex> {:docs_v1, _, :elixir, _, %{"en" => module_doc}, _, _} = Code.fetch_docs(Atom)
+      iex> module_doc |> String.split("\n") |> Enum.at(0)
       "Convenience functions for working with atoms."
 
-      # Module doesn't exist
-      iex> Code.get_docs(ModuleNotGood, :all)
-      nil
+      # A module that doesn't exist
+      iex> Code.fetch_docs(ModuleNotGood)
+      {:error, :module_not_found}
 
   """
-  @doc_kinds [:docs, :moduledoc, :callback_docs, :type_docs, :all]
+  @doc since: "1.7.0"
+  @spec fetch_docs(module | String.t()) ::
+          {:docs_v1, annotation, beam_language, format, module_doc :: doc_content, metadata,
+           docs :: [doc_element]}
+          | {:error, :module_not_found | :chunk_not_found | {:invalid_chunk, binary}}
+        when annotation: :erl_anno.anno(),
+             beam_language: :elixir | :erlang | :lfe | :alpaca | atom(),
+             doc_content: %{binary => binary} | :none | :hidden,
+             doc_element:
+               {{kind :: atom, function_name :: atom, arity}, annotation, signature, doc_content,
+                metadata},
+             format: binary,
+             signature: [binary],
+             metadata: map
+  def fetch_docs(module_or_path)
 
-  def get_docs(module, kind) when is_atom(module) and kind in @doc_kinds do
+  def fetch_docs(module) when is_atom(module) do
     case :code.get_object_code(module) do
-      {_module, bin, _beam_path} ->
-        do_get_docs(bin, kind)
-
-      :error ->
-        nil
+      {_module, bin, _beam_path} -> do_fetch_docs(bin)
+      :error -> {:error, :module_not_found}
     end
   end
 
-  def get_docs(binpath, kind) when is_binary(binpath) and kind in @doc_kinds do
-    do_get_docs(String.to_charlist(binpath), kind)
+  def fetch_docs(path) when is_binary(path) do
+    do_fetch_docs(String.to_charlist(path))
   end
 
-  @docs_chunk 'ExDc'
+  @docs_chunk 'Docs'
 
-  defp do_get_docs(bin_or_path, kind) do
+  defp do_fetch_docs(bin_or_path) do
     case :beam_lib.chunks(bin_or_path, [@docs_chunk]) do
       {:ok, {_module, [{@docs_chunk, bin}]}} ->
-        lookup_docs(:erlang.binary_to_term(bin), kind)
+        try do
+          :erlang.binary_to_term(bin)
+        rescue
+          _ -> {:error, {:invalid_chunk, bin}}
+        end
 
       {:error, :beam_lib, {:missing_chunk, _, @docs_chunk}} ->
-        nil
+        {:error, :chunk_not_found}
     end
   end
 
-  defp lookup_docs({:elixir_docs_v1, docs}, kind),
-    do: do_lookup_docs(docs, kind)
+  @doc ~S"""
+  Deprecated function to retrieve old documentation format.
 
-  # unsupported chunk version
-  defp lookup_docs(_, _), do: nil
-
-  defp do_lookup_docs(docs, :all), do: docs
-
-  defp do_lookup_docs(docs, kind),
-    do: Keyword.get(docs, kind)
+  Elixir v1.7 adopts [EEP 48](http://erlang.org/eep/eeps/eep-0048.html)
+  which is a new documentation format meant to be shared across all
+  BEAM languages. The old format, used by `Code.get_docs/2`, is no
+  longer available, and therefore this function always returns `nil`.
+  Use `Code.fetch_docs/1` instead.
+  """
+  @deprecated "Code.get_docs/2 always returns nil as its outdated documentation is no longer stored on BEAM files. Use Code.fetch_docs/1 instead"
+  @spec get_docs(module, :moduledoc | :docs | :callback_docs | :type_docs | :all) :: nil
+  def get_docs(_module, _kind) do
+    nil
+  end
 
   ## Helpers
 
