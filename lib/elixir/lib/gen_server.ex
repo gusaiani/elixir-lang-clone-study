@@ -29,8 +29,8 @@ defmodule GenServer do
         end
 
         @impl true
-        def handle_call(:pop, _from, [h | t]) do
-          {:reply, h, t}
+        def handle_call(:pop, _from, [head | tail]) do
+          {:reply, head, tail}
         end
 
         @impl true
@@ -63,18 +63,64 @@ defmodule GenServer do
   that must be handled by the `c:handle_call/3` callback in the GenServer.
   A `cast/2` message must be handled by `c:handle_cast/2`.
 
+  ## Client / Server APIs
+
+  Although in the example above we have used `GenServer.start_link/3` and
+  friends to directly start and communicate with the server, most of the
+  time we don't call the `GenServer` functions directly. Instead, we wrap
+  the calls in new functions representing the public API of the server.
+
+  Here is a better implementation of our Stack module:
+
+      defmodule Stack do
+        use GenServer
+
+        # Client
+
+        def start_link(default) when is_list(default) do
+          GenServer.start_link(__MODULE__, default)
+        end
+
+        def push(pid, item) do
+          GenServer.cast(pid, {:push, item})
+        end
+
+        def pop(pid) do
+          GenServer.call(pid, :pop)
+        end
+
+        # Server (callbacks)
+
+        @impl true
+        def init(stack) do
+          {:ok, stack}
+        end
+
+        @impl true
+        def handle_call(:pop, _from, [head | tail]) do
+          {:reply, head, tail}
+        end
+
+        @impl true
+        def handle_cast({:push, item}, state) do
+          {:noreply, [item | state]}
+        end
+      end
+
+  In practice, it is common to have both server and client functions in
+  the same module. If the server and/or client implementations are growing
+  complex, you may want to have them in different modules.
+
   ## use GenServer and callbacks
 
-  There are 6 callbacks required to be implemented in a `GenServer`. By
-  adding `use GenServer` to your module, Elixir will automatically define
-  all 6 callbacks for you, leaving it up to you to implement the ones
-  you want to customize.
+  There are 7 callbacks to be implemented when you use a `GenServer`.
+  The only required callback is `init/1`.
 
   `use GenServer` also defines a `child_spec/1` function, allowing the
   defined module to be put under a supervision tree. The generated
   `child_spec/1` can be customized with the following options:
 
-    * `:id` - the child specification id, defaults to the current module
+    * `:id` - the child specification identifier, defaults to the current module
     * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
     * `:restart` - when the child should be restarted, defaults to `:permanent`
     * `:shutdown` - how to shut down the child
@@ -112,71 +158,29 @@ defmodule GenServer do
       {:ok, _} = GenServer.start_link(Stack, [:hello], name: MyStack)
 
       # Now messages can be sent directly to MyStack
-      GenServer.call(MyStack, :pop) #=> :hello
+      GenServer.call(MyStack, :pop)
+      #=> :hello
 
   Once the server is started, the remaining functions in this module (`call/3`,
-  `cast/2`, and friends) will also accept an atom, or any `:global` or `:via`
-  tuples. In general, the following formats are supported:
+  `cast/2`, and friends) will also accept an atom, or any `{:global, ...}` or
+  `{:via, ...}` tuples. In general, the following formats are supported:
 
-    * a `pid`
-    * an `atom` if the server is locally registered
+    * a PID
+    * an atom if the server is locally registered
     * `{atom, node}` if the server is locally registered at another node
     * `{:global, term}` if the server is globally registered
     * `{:via, module, name}` if the server is registered through an alternative
       registry
 
   If there is an interest to register dynamic names locally, do not use
-  atoms, as atoms are never garbage collected and therefore dynamically
-  generated atoms won't be garbage collected. For such cases, you can
+  atoms, as atoms are never garbage-collected and therefore dynamically
+  generated atoms won't be garbage-collected. For such cases, you can
   set up your own local registry by using the `Registry` module.
-
-  ## Client / Server APIs
-
-  Although in the example above we have used `GenServer.start_link/3` and
-  friends to directly start and communicate with the server, most of the
-  time we don't call the `GenServer` functions directly. Instead, we wrap
-  the calls in new functions representing the public API of the server.
-
-  Here is a better implementation of our Stack module:
-
-      defmodule Stack do
-        use GenServer
-
-        # Client
-
-        def start_link(default) do
-          GenServer.start_link(__MODULE__, default)
-        end
-
-        def push(pid, item) do
-          GenServer.cast(pid, {:push, item})
-        end
-
-        def pop(pid) do
-          GenServer.call(pid, :pop)
-        end
-
-        # Server (callbacks)
-
-        @impl true
-        def handle_call(:pop, _from, [h | t]) do
-          {:reply, h, t}
-        end
-
-        @impl true
-        def handle_cast({:push, item}, state) do
-          {:noreply, [item | state]}
-        end
-      end
-
-  In practice, it is common to have both server and client functions in
-  the same module. If the server and/or client implementations are growing
-  complex, you may want to have them in different modules.
 
   ## Receiving "regular" messages
 
   The goal of a `GenServer` is to abstract the "receive" loop for developers,
-  automatically handling system messages, support code change, synchronous
+  automatically handling system messages, supporting code change, synchronous
   calls and more. Therefore, you should never call your own "receive" inside
   the GenServer callbacks as doing so will cause the GenServer to misbehave.
 
@@ -192,35 +196,84 @@ defmodule GenServer do
       defmodule MyApp.Periodically do
         use GenServer
 
-        def start_link do
+        def start_link(_) do
           GenServer.start_link(__MODULE__, %{})
         end
 
         @impl true
         def init(state) do
-          schedule_work() # Schedule work to be performed on start
+          # Schedule work to be performed on start
+          schedule_work()
+
           {:ok, state}
         end
 
         @impl true
         def handle_info(:work, state) do
           # Do the desired work here
-          schedule_work() # Reschedule once more
+          ...
+
+          # Reschedule once more
+          schedule_work()
+
           {:noreply, state}
         end
 
-        defp schedule_work() do
-          Process.send_after(self(), :work, 2 * 60 * 60 * 1000) # In 2 hours
+        defp schedule_work do
+          # In 2 hours
+          Process.send_after(self(), :work, 2 * 60 * 60 * 1000)
         end
       end
+
+  ## When (not) to use a GenServer
+
+  So far, we have learned that a `GenServer` can be used as a supervised process
+  that handles sync and async calls. It can also handle system messages, such as
+  periodic messages and monitoring events. GenServer processes may also be named.
+
+  A GenServer, or a process in general, must be used to model runtime characteristics
+  of your system. A GenServer must never be used for code organization purposes.
+
+  In Elixir, code organization is done by modules and functions, processes are not
+  necessary. For example, imagine you are implementing a calculator and you decide
+  to put all the calculator operations behind a GenServer:
+
+      def add(a, b) do
+        GenServer.call(__MODULE__, {:add, a, b})
+      end
+
+      def handle_call({:add, a, b}, _from, state) do
+        {:reply, a + b, state}
+      end
+
+      def handle_call({:subtract, a, b}, _from, state) do
+        {:reply, a - b, state}
+      end
+
+  This is an anti-pattern not only because it convolutes the calculator logic but
+  also because you put the calculator logic behind a single process that will
+  potentially become a bottleneck in your system, especially as the number of
+  calls grow. Instead just define the functions directly:
+
+      def add(a, b) do
+        a + b
+      end
+
+      def subtract(a, b) do
+        a - b
+      end
+
+  If you don't need a process, then you don't need a process. Use processes only to
+  model runtime properties, such as mutable state, concurrency and failures, never
+  for code organization.
 
   ## Debugging with the :sys module
 
   GenServers, as [special processes](http://erlang.org/doc/design_principles/spec_proc.html),
-  can be debugged using the [`:sys` module](http://www.erlang.org/doc/man/sys.html). Through various hooks, this module
-  allows developers to introspect the state of the process and trace
-  system events that happen during its execution, such as received messages,
-  sent replies and state changes.
+  can be debugged using the [`:sys` module](http://www.erlang.org/doc/man/sys.html).
+  Through various hooks, this module allows developers to introspect the state of
+  the process and trace system events that happen during its execution, such as
+  received messages, sent replies and state changes.
 
   Let's explore the basic functions from the
   [`:sys` module](http://www.erlang.org/doc/man/sys.html) used for debugging:
@@ -255,29 +308,48 @@ defmodule GenServer do
       *DBG* <0.122.0> got cast {push,1}
       *DBG* <0.122.0> new state [1]
       :ok
+
       iex> :sys.get_state(pid)
       [1]
+
       iex> Stack.pop(pid)
       *DBG* <0.122.0> got call pop from <0.80.0>
       *DBG* <0.122.0> sent 1 to <0.80.0>, new state []
       1
+
       iex> :sys.statistics(pid, :get)
       {:ok,
-       [start_time: {{2016, 7, 16}, {12, 29, 41}},
-        current_time: {{2016, 7, 16}, {12, 29, 50}},
-        reductions: 117, messages_in: 2, messages_out: 0]}
+       [
+         start_time: {{2016, 7, 16}, {12, 29, 41}},
+         current_time: {{2016, 7, 16}, {12, 29, 50}},
+         reductions: 117,
+         messages_in: 2,
+         messages_out: 0
+       ]}
+
       iex> :sys.no_debug(pid) # turn off all debug handlers
       :ok
+
       iex> :sys.get_status(pid)
       {:status, #PID<0.122.0>, {:module, :gen_server},
-       [["$initial_call": {Stack, :init, 1},            # pdict
-         "$ancestors": [#PID<0.80.0>, #PID<0.51.0>]],
-        :running,                                       # :running | :suspended
-        #PID<0.80.0>,                                   # parent
-        [],                                             # debugger state
-        [header: 'Status for generic server <0.122.0>', # module status
-         data: [{'Status', :running}, {'Parent', #PID<0.80.0>},
-           {'Logged events', []}], data: [{'State', [1]}]]]}
+       [
+         [
+           "$initial_call": {Stack, :init, 1},            # process dictionary
+           "$ancestors": [#PID<0.80.0>, #PID<0.51.0>]
+         ],
+         :running,                                        # :running | :suspended
+         #PID<0.80.0>,                                    # parent
+         [],                                              # debugger state
+         [
+           header: 'Status for generic server <0.122.0>', # module status
+           data: [
+             {'Status', :running},
+             {'Parent', #PID<0.80.0>},
+             {'Logged events', []}
+           ],
+           data: [{'State', [1]}]
+         ]
+       ]}
 
   ## Learn more
 
@@ -289,6 +361,7 @@ defmodule GenServer do
     * [`:gen_server` module documentation](http://www.erlang.org/doc/man/gen_server.html)
     * [gen_server Behaviour – OTP Design Principles](http://www.erlang.org/doc/design_principles/gen_server_concepts.html)
     * [Clients and Servers – Learn You Some Erlang for Great Good!](http://learnyousomeerlang.com/clients-and-servers)
+
   """
 
   @doc """
@@ -304,18 +377,24 @@ defmodule GenServer do
   except `handle_info(:timeout, state)` will be called after `timeout`
   milliseconds if no messages are received within the timeout.
 
-  Returning `{:ok, state, :hibernate}` is similar to
-  `{:ok, state}` except the process is hibernated before entering the loop. See
+  Returning `{:ok, state, :hibernate}` is similar to `{:ok, state}`
+  except the process is hibernated before entering the loop. See
   `c:handle_call/3` for more information on hibernation.
 
-  Returning `:ignore` will cause `start_link/3` to return `:ignore` and the
-  process will exit normally without entering the loop or calling `c:terminate/2`.
-  If used when part of a supervision tree the parent supervisor will not fail
-  to start nor immediately try to restart the `GenServer`. The remainder of the
-  supervision tree will be (re)started and so the `GenServer` should not be
-  required by other processes. It can be started later with
-  `Supervisor.restart_child/2` as the child specification is saved in the parent
-  supervisor. The main use cases for this are:
+  Returning `{:ok, state, {:continue, continue}}` is similar to
+  `{:ok, state}` except that immediately after entering the loop
+  the `c:handle_continue/2` callback will be invoked with the value
+  `continue` as first argument.
+
+  Returning `:ignore` will cause `start_link/3` to return `:ignore` and
+  the process will exit normally without entering the loop or calling
+  `c:terminate/2`. If used when part of a supervision tree the parent
+  supervisor will not fail to start nor immediately try to restart the
+  `GenServer`. The remainder of the supervision tree will be started
+  and so the `GenServer` should not be required by other processes.
+  It can be started later with `Supervisor.restart_child/2` as the child
+  specification is saved in the parent supervisor. The main use cases for
+  this are:
 
     * The `GenServer` is disabled by configuration but might be enabled later.
     * An error occurred and it will be handled by a different mechanism than the
@@ -328,7 +407,7 @@ defmodule GenServer do
   """
   @callback init(args :: term) ::
               {:ok, state}
-              | {:ok, state, timeout | :hibernate}
+              | {:ok, state, timeout | :hibernate | {:continue, term}}
               | :ignore
               | {:stop, reason :: any}
             when state: any
@@ -354,6 +433,10 @@ defmodule GenServer do
   already in the message queue this will be immediately. Hibernating a
   `GenServer` causes garbage collection and leaves a continuous heap that
   minimises the memory used by the process.
+
+  Returning `{:reply, reply, new_state, {:continue, continue}}` is similar to
+  `{:reply, reply, new_state}` except `c:handle_continue/2` will be invoked
+  immediately after with the value `continue` as first argument.
 
   Hibernating should not be used aggressively as too much time could be spent
   garbage collecting. Normally it should only be used when a message is not

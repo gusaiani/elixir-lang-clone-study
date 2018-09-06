@@ -1,14 +1,15 @@
 defmodule Stream do
   @moduledoc """
-  Module for creating and composing streams.
+  Functions for creating and composing streams.
 
-  Streams are composable, lazy enumerables. Any enumerable that generates
+  Streams are composable, lazy enumerables (for an introduction on
+  enumerables, see the `Enum` module). Any enumerable that generates
   items one by one during enumeration is called a stream. For example,
   Elixir's `Range` is a stream:
 
       iex> range = 1..5
       1..5
-      iex> Enum.map range, &(&1 * 2)
+      iex> Enum.map(range, &(&1 * 2))
       [2, 4, 6, 8, 10]
 
   In the example above, as we mapped over the range, the elements being
@@ -121,13 +122,22 @@ defmodule Stream do
 
   ## Transformers
 
-  # Deprecate on v1.7
+  # TODO: Remove by 2.0
   @doc false
+  @deprecated "Use Stream.chunk_every/2 instead"
   def chunk(enum, n), do: chunk(enum, n, n, nil)
 
-  # Deprecate on v1.7
+  # TODO: Remove by 2.0
   @doc false
-  def chunk(enum, n, step, leftover \\ nil)
+  @deprecated "Use Stream.chunk_every/3 instead"
+  def chunk(enum, n, step) do
+    chunk_every(enum, n, step, nil)
+  end
+
+  # TODO: Remove by 2.0
+  @doc false
+  @deprecated "Use Stream.chunk_every/4 instead"
+  def chunk(enum, n, step, leftover)
       when is_integer(n) and n > 0 and is_integer(step) and step > 0 do
     chunk_every(enum, n, step, leftover || :discard)
   end
@@ -135,6 +145,7 @@ defmodule Stream do
   @doc """
   Shortcut to `chunk_every(enum, count, count)`.
   """
+  @doc since: "1.5.0"
   @spec chunk_every(Enumerable.t(), pos_integer) :: Enumerable.t()
   def chunk_every(enum, count), do: chunk_every(enum, count, count, [])
 
@@ -155,19 +166,20 @@ defmodule Stream do
 
   ## Examples
 
-      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 2) |> Enum.to_list
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 2) |> Enum.to_list()
       [[1, 2], [3, 4], [5, 6]]
 
-      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, :discard) |> Enum.to_list
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, :discard) |> Enum.to_list()
       [[1, 2, 3], [3, 4, 5]]
 
-      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, [7]) |> Enum.to_list
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 2, [7]) |> Enum.to_list()
       [[1, 2, 3], [3, 4, 5], [5, 6, 7]]
 
-      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 3, []) |> Enum.to_list
+      iex> Stream.chunk_every([1, 2, 3, 4, 5, 6], 3, 3, []) |> Enum.to_list()
       [[1, 2, 3], [4, 5, 6]]
 
   """
+  @doc since: "1.5.0"
   @spec chunk_every(Enumerable.t(), pos_integer, pos_integer, Enumerable.t() | :discard) ::
           Enumerable.t()
   def chunk_every(enum, count, step, leftover \\ [])
@@ -205,11 +217,11 @@ defmodule Stream do
 
   ## Examples
 
-      iex> chunk_fun = fn i, acc ->
-      ...>   if rem(i, 2) == 0 do
-      ...>     {:cont, Enum.reverse([i | acc]), []}
+      iex> chunk_fun = fn item, acc ->
+      ...>   if rem(item, 2) == 0 do
+      ...>     {:cont, Enum.reverse([item | acc]), []}
       ...>   else
-      ...>     {:cont, [i | acc]}
+      ...>     {:cont, [item | acc]}
       ...>   end
       ...> end
       iex> after_fun = fn
@@ -221,6 +233,7 @@ defmodule Stream do
       [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
 
   """
+  @doc since: "1.5.0"
   @spec chunk_while(
           Enumerable.t(),
           acc,
@@ -231,9 +244,9 @@ defmodule Stream do
   def chunk_while(enum, acc, chunk_fun, after_fun) do
     lazy(
       enum,
-      acc,
-      fn f1 -> R.chunk_while(chunk_fun, f1) end,
-      &after_chunk_while(&1, &2, after_fun)
+      [acc | after_fun],
+      fn f1 -> chunk_while_fun(chunk_fun, f1) end,
+      &after_chunk_while/2
     )
   end
 
