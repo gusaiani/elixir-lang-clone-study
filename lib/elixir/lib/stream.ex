@@ -627,7 +627,7 @@ defmodule Stream do
   Open up a file, replace all `#` by `%` and stream to another file
   without loading the whole file in memory:
 
-      stream = File.stream!("/path/to/file")
+      File.stream!("/path/to/file")
       |> Stream.map(&String.replace(&1, "#", "%"))
       |> Stream.into(File.stream!("/path/to/other/file"))
       |> Stream.run()
@@ -1193,7 +1193,9 @@ defmodule Stream do
 
   defp do_zip_next_tuple([{fun, zip_acc, zip_op} | zips], acc, callback, yielded_elems, buffer) do
     [elem | rest] = zip_acc
-    next_buffer = [{fun, erst, zip_op} | buffer]
+    next_buffer = [{fun, rest, zip_op} | buffer]
+    do_zip_next_tuple(zips, acc, callback, [elem | yielded_elems], next_buffer)
+  end
 
   defp do_zip_next_tuple([] = _zips, acc, callback, yielded_elems, buffer) do
     # "yielded_elems" is a reversed list of results for the current iteration of
@@ -1204,11 +1206,11 @@ defmodule Stream do
   end
 
   defp do_zip_close(zips) do
-    :lists.foreach(fn {fun, _} -> fun.({:halt, []}) end, zips)
+    :lists.foreach(fn {fun, _, _} -> fun.({:halt, []}) end, zips)
   end
 
-  defp do_zip_step(x, []) do
-    {:suspend, [x]}
+  defp do_zip_step(x, acc) do
+    {:suspend, :lists.reverse([x | acc])}
   end
 
   ## Sources
@@ -1285,7 +1287,7 @@ defmodule Stream do
 
   ## Examples
 
-      iex> Stream.iterate(0, &(&1+1)) |> Enum.take(5)
+      iex> Stream.iterate(0, &(&1 + 1)) |> Enum.take(5)
       [0, 1, 2, 3, 4]
 
   """
@@ -1347,14 +1349,16 @@ defmodule Stream do
 
   ## Examples
 
-      Stream.resource(fn -> File.open!("sample") end,
-                      fn file ->
-                        case IO.read(file, :line) do
-                          data when is_binary(data) -> {[data], file}
-                          _ -> {:halt, file}
-                        end
-                      end,
-                      fn file -> File.close(file) end)
+      Stream.resource(
+        fn -> File.open!("sample") end,
+        fn file ->
+          case IO.read(file, :line) do
+            data when is_binary(data) -> {[data], file}
+            _ -> {:halt, file}
+          end
+        end,
+        fn file -> File.close(file) end
+      )
 
   """
   @spec resource((() -> acc), (acc -> {[element], acc} | {:halt, acc}), (acc -> term)) ::
@@ -1459,7 +1463,10 @@ defmodule Stream do
 
   ## Examples
 
-      iex> Stream.unfold(5, fn 0 -> nil; n -> {n, n-1} end) |> Enum.to_list()
+      iex> Stream.unfold(5, fn
+      ...>   0 -> nil
+      ...>   n -> {n, n - 1}
+      ...> end) |> Enum.to_list()
       [5, 4, 3, 2, 1]
 
   """
@@ -1498,6 +1505,7 @@ defmodule Stream do
       []
 
   """
+  @doc since: "1.6.0"
   @spec intersperse(Enumerable.t(), any) :: Enumerable.t()
   def intersperse(enumerable, intersperse_element) do
     Stream.transform(enumerable, false, fn
