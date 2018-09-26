@@ -258,12 +258,12 @@ defmodule Record do
     quote bind_quoted: [name: name, tag: tag, kv: kv] do
       defined_arity =
         Enum.find(0..2, fn arity ->
-          Module.defines?(__MODULE__, {name, arity}))
+          Module.defines?(__MODULE__, {name, arity})
         end)
 
       if defined_arity do
         raise ArgumentError,
-        "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
+              "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
       end
 
       tag = tag || name
@@ -279,4 +279,139 @@ defmodule Record do
       end
     end
   end
-end
+
+  @doc """
+  Same as `defrecord/3` but generates private macros.
+  """
+  defmacro defrecordp(name, tag \\ nil, kv) do
+    quote bind_quoted: [name: name, tag: tag, kv: kv] do
+      defined_arity =
+        Enum.find(0..2, fn arity ->
+          Module.defines?(__MODULE__, {name, arity})
+        end)
+
+      if defined_arity do
+        raise ArgumentError,
+              "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
+      end
+
+      tag = tag || name
+
+      fields = Record.__fields__(:defrecordp, kv)
+
+      defmacrop unquote(name)(args \\ []) do
+        Record.__access__(unquote(tag), unquote(fields), args, __CALLER__)
+      end
+
+      defmacrop unquote(name)(record, args) do
+        Record.__access__(unquote(tag), unquote(fields), record, args, __CALLER__)
+      end
+    end
+  end
+
+  # Normalizes of record fields to have default values.
+  @doc false
+  def __fields__(type, fields) do
+    normalizer_fun = fn
+      {key, value} when is_atom(key) ->
+        try do
+          Macro.escape(value)
+        rescue
+          e in [ArgumentError] ->
+            raise ArgumentError, "invalid value for record field #{key}, " <> Exception.message(e)
+        else
+          value -> {key, value}
+        end
+
+      key when is_atom(key) ->
+        {key, nil}
+
+      other ->
+        raise ArgumentError, "#{type} fields must be atoms, got: #{inspect(other)}"
+    end
+
+    :lists.map(normalizer_fun, fields)
+  end
+
+  # Callback invoked from record/0 and record/1 macros.
+  @doc false
+  def __access__(tag, fields, args, caller) do
+    cond do
+      is_atom(args) ->
+        index(tag, fields, args)
+
+      Keyword.keyword?(args) ->
+        create(tag, fields, args, caller)
+
+      true ->
+        fields = Macro.escape(fields)
+
+        case Macro.expand(args, caller) do
+          {:{}, _, [^tag | list]} when length(list) == length(fields) ->
+            record = List.to_tuple([tag | list])
+            Record.__keyword__(tag, fields, record)
+
+          {^tag, arg} when length(fields) == 1 ->
+            Record.__keyword__(tag, fields, {tag, arg})
+
+          _ ->
+            quote(do: Record.__keyword__(unquote(tag), unquote(fields), unquote(args)))
+        end
+    end
+  end
+
+  # Callback invoked from the record/2 macro.
+  @doc false
+  def __access__(tag, fields, record, args, caller) do
+    cond do
+      is_atom(args) ->
+        get(tag, fields, record, args)
+
+      Keyword.keyword?(args) ->
+        update(tag, fields, record, args, caller)
+
+      true ->
+        raise ArgumentError,
+              "expected arguments to be a compile time atom or a keyword list, got: " <>
+                Macro.to_string(args)
+    end
+  end
+
+  # Gets the index of field.
+  defp index(tag, fields, field) do
+    if index = find_index(fields, field, 0) do
+      # Convert to Elixir index
+      index - 1
+    else
+      raise ArgumentError, "record #{inspect(tag)} does not have the key: #{inspect(field)}"
+    end
+  end
+
+  # Creates a new record with the given default fields and keyword values.
+  defp create(tag, fields, keyword, caller) do
+    in_match = Macro.Env.in_match?(caller)
+    keyword = apply_underscore(fields, keyword)
+
+    {match, remaining} =
+      Enum.map_reduce(fields, keyword, fn {field, default}, each_keyword ->
+        new_fields =
+          case Keyword.fetch(each_keyword, field) do
+            {:ok, value} -> value
+            :error when in_match -> {:_, [], nil}
+            :error -> Macro.escape(default)
+          end
+
+        {new_fields, Keyword.delete(each_keyword, field)}
+      end)
+
+    case remaining do
+      [] ->
+        {:{}, [], [tag | match]}
+
+      _ ->
+        keys = for {key, _} <- remaining, do: key
+        raise ArgumentError, "record #{inspect(tag)} does not have the key: #{inspect(hd(keys))}"
+    end
+  end
+
+
