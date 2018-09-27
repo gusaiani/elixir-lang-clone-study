@@ -414,4 +414,83 @@ defmodule Record do
     end
   end
 
+  # Updates a record given by var with the given keyword.
+  defp update(tag, fields, var, keyword, caller) do
+    if Macro.Env.in_match?(caller) do
+      raise ArgumentError, "cannot invoke update style macro inside match"
+    end
 
+    keyword = apply_underscore(fields, keyword)
+
+    Enum.reduce(keyword, var, fn {key, value}, acc ->
+      index = find_index(fields, key, 0)
+
+      if index do
+        quote do
+          :erlang.setelement(unquote(index), unquote(acc), unquote(value))
+        end
+      else
+        raise ArgumentError, "record #{inspect(tag)} does not have the key: #{inspect(key)}"
+      end
+    end)
+  end
+
+  # Gets a record key from the given var.
+  defp get(tag, fields, var, key) do
+    index = find_index(fields, key, 0)
+
+    if index do
+      quote do
+        :erlang.element(unquote(index), unquote(var))
+      end
+    else
+      raise ArgumentError, "record #{inspect(tag)} does not have the key: #{inspect(key)}"
+    end
+  end
+
+  defp find_index([{k, _} | _], k, i), do: i + 2
+  defp find_index([{_, _} | t], k, i), do: find_index(t, k, i + 1)
+  defp find_index([], _k, _i), do: nil
+
+  # Returns a keyword list of the record
+  @doc false
+  def __keyword__(tag, fields, record) do
+    if is_record(record, tag) do
+      [_tag | values] = Tuple.to_list(record)
+
+      case join_keyword(fields, values, []) do
+        kv when is_list(kv) ->
+          kv
+
+        expected_fields ->
+          raise ArgumentError,
+                "expected argument to be a #{inspect(tag)} record with " <>
+                  "#{expected_fields} fields, got: " <> inspect(record)
+      end
+    else
+      raise ArgumentError,
+            "expected argument to be a literal atom, literal keyword or " <>
+              "a #{inspect(tag)} record, got runtime: " <> inspect(record)
+    end
+  end
+
+  # Returns a keyword list, or expected number of fields on size mismatch
+  defp join_keyword([{field, _default} | fields], [value | values], acc),
+    do: join_keyword(fields, values, [{field, value} | acc])
+
+  defp join_keyword([], [], acc), do: :lists.reverse(acc)
+  defp join_keyword(rest_fields, _rest_values, acc), do: length(acc) + length(rest_fields)
+
+  defp apply_underscore(fields, keyword) do
+    case Keyword.fetch(keyword, :_) do
+      {:ok, default} ->
+        fields
+        |> Enum.map(fn {k, _} -> {k, default} end)
+        |> Keyword.merge(keyword)
+        |> Keyword.delete(:_)
+
+      :error ->
+        keyword
+    end
+  end
+end
