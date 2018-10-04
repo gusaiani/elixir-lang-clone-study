@@ -91,4 +91,75 @@ defmodule RecordTest do
   Record.defrecord(:user, __MODULE__, name: "john", age: 25)
 
   Record.defrecordp(:file_info, Record.extract(:file_info, from_lib: "kernel/include/file.hrl"))
+
+  Record.defrecordp(
+    :certificate,
+    :OTPCertificate,
+    Record.extract(:OTPCertificate, from_lib: "public_key/include/public_key.hrl")
+  )
+
+  test "records are tagged" do
+    assert elem(file_info(), 0) == :file_info
+  end
+
+  test "records macros" do
+    record = user()
+    assert user(record, :name) == "john"
+    assert user(record, :age) == 25
+
+    record = user(record, name: "meg")
+    assert user(record, :name) == "meg"
+
+    assert elem(record, user(:name)) == "meg"
+    assert elem(record, 0) == RecordTest
+
+    user(name: name) = record
+    assert name == "meg"
+
+    assert user(:name) == 1
+  end
+
+  test "records with default values" do
+    record = user(_: :_, name: "meg")
+    assert user(record, :name) == "meg"
+    assert user(record, :age) == :_
+
+    assert match?(user(_: _), user())
+    refute match?(user(_: "other"), user())
+
+    record = user(user(), _: :_, name: "meg")
+    assert user(record, :name) == "meg"
+    assert user(record, :age) == :_
+  end
+
+  Record.defrecord(
+    :defaults,
+    struct: ~D[2016-01-01],
+    map: %{},
+    tuple_zero: {},
+    tuple_one: {1},
+    tuple_two: {1, 2},
+    tuple_three: {1, 2, 3},
+    list: [1, 2, 3],
+    call: MapSet.new(),
+    string: "abc",
+    binary: <<1, 2, 3>>,
+    charlist: 'abc'
+  )
+
+  test "records with literal defaults and on-the-fly record" do
+    assert defaults(defaults()) == [
+             struct: ~D[2016-01-01],
+             map: %{},
+             tuple_zero: {},
+             tuple_one: {1},
+             tuple_two: {1, 2},
+             tuple_three: {1, 2, 3},
+             list: [1, 2, 3],
+             call: MapSet.new(),
+             string: "abc",
+             binary: <<1, 2, 3>>,
+             charlist: 'abc'
+           ]
+  end
 end
