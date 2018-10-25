@@ -137,22 +137,97 @@ defmodule Application do
   this way. The resulting environment can still be overridden again via specific
   `-Application` flags passed to `erl`.
 
-  This particular aspect of applications is explained in more detail in the
-  OTP documentation:
+  Loading an application *does not* load its modules.
 
-    * [`:application` module](http://www.erlang.org/doc/man/application.html)
-    * [Applications – OTP Design Principles](http://www.erlang.org/doc/design_principles/applications.html)
+  In practice, you rarely load applications by hand because that is part of the
+  start process, explained next.
 
-  A developer may also implement the `stop/1` callback (automatically defined
-  by `use Application`) which does any application cleanup. It receives the
-  application state and can return any value. Note that shutting down the
-  supervisor is automatically handled by the VM.
+  ### Starting applications
 
-  An application without a supervision tree doesn't define an application
-  module callback in the application definition in `mix.exs` file. Even though
-  there is no module with application callbacks such as `start/2` and
-  `stop/1`, the application can be started and stopped the same way as an
-  application with a supervision tree.
+  Applications are also *started*:
+
+      Application.start(:ex_unit)
+      #=> :ok
+
+  Once your application is compiled, running your system is a matter of starting
+  your current application and its dependencies. Differently from other languages,
+  Elixir does not have a `main` procedure that is responsible for starting your
+  system. Instead, you start one or more applications, each with their own
+  initialization and termination logic.
+
+  When an application is started, the runtime loads it if it hasn't been loaded
+  yet (in the technical sense described above). Then, it checks if the
+  dependencies listed in the `applications` key of the resource file are already
+  started. Having at least one dependency not started is an error condition, but
+  when you start an application with `mix run`, Mix takes care of starting all
+  the dependencies for you, so in practice you don't need to worry about it
+  unless you are starting applications manually with the API provided by this
+  module.
+
+  If the application does not have a callback module configured, starting is
+  done at this point. Otherwise, its `c:start/2` callback if invoked. The PID of
+  the top-level supervisor returned by this function is stored by the runtime
+  for later use, and the returned application state is saved too, if any.
+
+  ### Stopping applications
+
+  Started applications are, finally, *stopped*:
+
+      Application.stop(:ex_unit)
+      #=> :ok
+
+  Stopping an application without a callback module is defined, but except for
+  some system tracing, it is in practice a no-op.
+
+  Stopping an application with a callback module has three steps:
+
+  1. If present, invoke the optional callback `c:prep_stop/1`.
+  2. Terminate the top-level supervisor.
+  3. Invoke the required callback `c:stop/1`.
+
+  The arguments passed to the callbacks are related to the state optionally
+  returned by `c:start/2`, and are documented in the section about the callback
+  module above.
+
+  It is important to highlight that step 2 is a blocking one. Termination of a
+  supervisor triggers a recursive chain of children terminations, therefore
+  orderly shutting down all descendant processes. The `c:stop/1` callback is
+  invoked only after termination of the whole supervision tree.
+
+  Shutting down a live system cleanly can be done by calling `System.stop/1`. It
+  will shut down every application in the opposite order they had been started.
+
+  By default, a SIGTERM from the operating system will automatically translate to
+  `System.stop/0`. You can also have more explicit control over OS signals via the
+  `:os.set_signal/2` function.
+
+  ## Tooling
+
+  The Mix build tool can also be used to start your applications. For example,
+  `mix test` automatically starts your application dependencies and your application
+  itself before your test runs. `mix run --no-halt` boots your current project and
+  can be used to start a long running system. See `mix help run`.
+
+  Developers can also use tools like [Distillery](https://github.com/bitwalker/distillery)
+  that build **releases**. Releases are able to package all of your source code
+  as well as the Erlang VM into a single directory. Releases also give you explicit
+  control over how each application is started and in which order. They also provide
+  a more streamlined mechanism for starting and stopping systems, debugging, logging,
+  as well as system monitoring.
+
+  Finally, Elixir provides tools such as escripts and archives, which are
+  different mechanisms for packaging your application. Those are typically used
+  when tools must be shared between developers and not as deployment options.
+  See `mix help archive.build` and `mix help escript.build` for more detail.
+
+  ## Further information
+
+  For further details on applications please check the documentation of the
+  [`application`](http://www.erlang.org/doc/man/application.html) Erlang module,
+  and the
+  [Applications](http://www.erlang.org/doc/design_principles/applications.html)
+  section of the [OTP Design Principles User's
+  Guide](http://erlang.org/doc/design_principles/users_guide.html).
   """
 
   @doc """
@@ -190,20 +265,30 @@ defmodule Application do
   callback.
   """
   @callback start(start_type, start_args :: term) ::
-    {:ok, pid} |
-    {:ok, pid, state} |
-    {:error, reason :: term}
+              {:ok, pid}
+              | {:ok, pid, state}
+              | {:error, reason :: term}
 
   @doc """
-  Called when an application is stopped.
+  Called before stopping the application.
 
-  This function is called when an application has stopped, i.e., when its
+  This function is called before the top-level supervisor is terminated. It
+  receives the state returned by `c:start/2`, if it did, or `[]` otherwise.
+  The return value is later passed to `c:stop/1`.
+  """
+  @callback prep_stop(state) :: state
+
+  @doc """
+  Called after an application has been stopped.
+
+  This function is called after an application has been stopped, i.e., after its
   supervision tree has been stopped. It should do the opposite of what the
-  `start/2` callback did, and should perform any necessary cleanup. The return
+  `c:start/2` callback did, and should perform any necessary cleanup. The return
   value of this callback is ignored.
 
-  `state` is the return value of the `start/2` callback or the return value of
-  the `prep_stop/1` function if the application module defines such a function.
+  `state` is the state returned by `c:start/2`, if it did, or `[]` otherwise.
+  If the optional callback `c:prep_stop/1` is present, `state` is its return
+  value instead.
 
   `use Application` defines a default implementation of this function which does
   nothing and just returns `:ok`.
@@ -211,7 +296,7 @@ defmodule Application do
   @callback stop(state) :: term
 
   @doc """
-  Start an application in synchronous phases.
+  Starts an application in synchronous phases.
 
   This function is called after `start/2` finishes but before
   `Application.start/2` returns. It will be called once for every start phase
@@ -219,8 +304,7 @@ defmodule Application do
   in the order they are listed in.
   """
   @callback start_phase(phase :: term, start_type, phase_args :: term) ::
-    :ok |
-    {:error, reason :: term}
+              :ok | {:error, reason :: term}
 
   @optional_callbacks start_phase: 3
 
