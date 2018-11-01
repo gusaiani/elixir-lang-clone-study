@@ -306,7 +306,18 @@ defmodule Application do
   @callback start_phase(phase :: term, start_type, phase_args :: term) ::
               :ok | {:error, reason :: term}
 
-  @optional_callbacks start_phase: 3
+  @doc """
+  Callback invoked after code upgrade, if the application environment
+  has changed.
+
+  `changed` is a keyword list of keys and their changed values in the
+  application environment. `new` is a keyword list with all new keys
+  and their values. `removed` is a list with all removed keys.
+  """
+  @callback config_change(changed, new, removed) :: :ok
+            when changed: keyword, new: keyword, removed: [atom]
+
+  @optional_callbacks start_phase: 3, prep_stop: 1, config_change: 3
 
   @doc false
   defmacro __using__(_) do
@@ -326,26 +337,38 @@ defmodule Application do
   @type key :: atom
   @type value :: term
   @type state :: term
-  @type start_type :: :permanent | :transient | :temporary
+  @type start_type :: :normal | {:takeover, node} | {:failover, node}
+  @type restart_type :: :permanent | :transient | :temporary
 
-  @application_keys [:description, :id, :vsn, :modules, :maxP, :maxT, :registered,
-                     :included_applications, :applications, :mod, :start_phases]
+  @application_keys [
+    :description,
+    :id,
+    :vsn,
+    :modules,
+    :maxP,
+    :maxT,
+    :registered,
+    :included_applications,
+    :applications,
+    :mod,
+    :start_phases
+  ]
 
   @doc """
   Returns the spec for `app`.
 
   The following keys are returned:
 
-    * #{Enum.map_join @application_keys, "\n  * ", &inspect/1}
+    * #{Enum.map_join(@application_keys, "\n  * ", &"`#{inspect(&1)}`")}
 
   Note the environment is not returned as it can be accessed via
   `fetch_env/2`. Returns `nil` if the application is not loaded.
   """
   @spec spec(app) :: [{key, value}] | nil
-  def spec(app) do
+  def spec(app) when is_atom(app) do
     case :application.get_all_key(app) do
       {:ok, info} -> :lists.keydelete(:env, 1, info)
-      :undefined  -> nil
+      :undefined -> nil
     end
   end
 
@@ -357,7 +380,7 @@ defmodule Application do
   will raise. Returns `nil` if the application is not loaded.
   """
   @spec spec(app, key) :: value | nil
-  def spec(app, key) when key in @application_keys do
+  def spec(app, key) when is_atom(app) and key in @application_keys do
     case :application.get_key(app, key) do
       {:ok, value} -> value
       :undefined -> nil
@@ -383,7 +406,7 @@ defmodule Application do
   Returns all key-value pairs for `app`.
   """
   @spec get_all_env(app) :: [{key, value}]
-  def get_all_env(app) do
+  def get_all_env(app) when is_atom(app) do
     :application.get_all_env(app)
   end
 
@@ -392,9 +415,44 @@ defmodule Application do
 
   If the configuration parameter does not exist, the function returns the
   `default` value.
+
+  ## Examples
+
+  `get_env/3` is commonly used to read the configuration of your OTP applications.
+  Since Mix configurations are commonly used to configure applications, we will use
+  this as a point of illustration.
+
+  Consider a new application `:my_app`. `:my_app` contains a database engine which
+  supports a pool of databases. The database engine needs to know the configuration for
+  each of those databases, and that configuration is supplied by key-value pairs in
+  environment of `:my_app`.
+
+      config :my_app, Databases.RepoOne,
+        # A database configuration
+        ip: "localhost",
+        port: 5433
+
+      config :my_app, Databases.RepoTwo,
+        # Another database configuration (for the same OTP app)
+        ip: "localhost",
+        port: 20717
+
+      config :my_app, my_app_databases: [Databases.RepoOne, Databases.RepoTwo]
+
+  Our database engine used by `:my_app` needs to know what databases exist, and
+  what the database configurations are. The database engine can make a call to
+  `get_env(:my_app, :my_app_databases)` to retrieve the list of databases (specified
+  by module names). Our database engine can then traverse each repository in the
+  list and then call `get_env(:my_app, Databases.RepoOne)` and so forth to retrieve
+  the configuration of each one.
+
+  **Important:** if you are writing a library to be used by other developers,
+  it is generally recommended to avoid the application environment, as the
+  application environment is effectively a global storage. For more information,
+  read our [library guidelines](library-guidelines.html).
   """
   @spec get_env(app, key, value) :: value
-  def get_env(app, key, default \\ nil) do
+  def get_env(app, key, default \\ nil) when is_atom(app) do
     :application.get_env(app, key, default)
   end
 
@@ -404,7 +462,7 @@ defmodule Application do
   If the configuration parameter does not exist, the function returns `:error`.
   """
   @spec fetch_env(app, key) :: {:ok, value} | :error
-  def fetch_env(app, key) do
+  def fetch_env(app, key) when is_atom(app) do
     case :application.get_env(app, key) do
       {:ok, value} -> {:ok, value}
       :undefined -> :error
@@ -416,14 +474,30 @@ defmodule Application do
 
   If the configuration parameter does not exist, raises `ArgumentError`.
   """
-  @spec fetch_env!(app, key) :: value | no_return
-  def fetch_env!(app, key) do
+  @spec fetch_env!(app, key) :: value
+  def fetch_env!(app, key) when is_atom(app) do
     case fetch_env(app, key) do
-      {:ok, value} -> value
+      {:ok, value} ->
+        value
+
       :error ->
-        raise ArgumentError,
-          "application #{inspect app} is not loaded, " <>
-          "or the configuration parameter #{inspect key} is not set"
+        vsn = :application.get_key(app, :vsn)
+        app = inspect(app)
+        key = inspect(key)
+
+        case vsn do
+          {:ok, _} ->
+            raise ArgumentError,
+                  "could not fetch application environment #{key} for application #{app} " <>
+                    "because configuration #{key} was not set"
+
+          :undefined ->
+            raise ArgumentError,
+                  "could not fetch application environment #{key} for application #{app} " <>
+                    "because the application was not loaded/started. If your application " <>
+                    "depends on #{app} at runtime, make sure to load/start it or list it " <>
+                    "under :extra_applications in your mix.exs file"
+        end
     end
   end
 
@@ -439,13 +513,13 @@ defmodule Application do
   environment values specified in the `.app` file will override the ones
   previously set.
 
-  The persistent option can be set to `true` when there is a need to guarantee
+  The `:persistent` option can be set to `true` when there is a need to guarantee
   parameters set with this function will not be overridden by the ones defined
   in the application resource file on load. This means persistent values will
   stick after the application is loaded and also on application reload.
   """
-  @spec put_env(app, key, value, [timeout: timeout, persistent: boolean]) :: :ok
-  def put_env(app, key, value, opts \\ []) do
+  @spec put_env(app, key, value, timeout: timeout, persistent: boolean) :: :ok
+  def put_env(app, key, value, opts \\ []) when is_atom(app) do
     :application.set_env(app, key, value, opts)
   end
 
@@ -454,8 +528,8 @@ defmodule Application do
 
   See `put_env/4` for a description of the options.
   """
-  @spec delete_env(app, key, [timeout: timeout, persistent: boolean]) :: :ok
-  def delete_env(app, key, opts \\ []) do
+  @spec delete_env(app, key, timeout: timeout, persistent: boolean) :: :ok
+  def delete_env(app, key, opts \\ []) when is_atom(app) do
     :application.unset_env(app, key, opts)
   end
 
@@ -469,7 +543,7 @@ defmodule Application do
       :ok = Application.ensure_started(:my_test_dep)
 
   """
-  @spec ensure_started(app, start_type) :: :ok | {:error, term}
+  @spec ensure_started(app, restart_type) :: :ok | {:error, term}
   def ensure_started(app, type \\ :temporary) when is_atom(app) do
     :application.ensure_started(app, type)
   end
@@ -481,7 +555,7 @@ defmodule Application do
   `:applications` in the `.app` file in case they were not previously
   started.
   """
-  @spec ensure_all_started(app, start_type) :: {:ok, [app]} | {:error, {app, term}}
+  @spec ensure_all_started(app, restart_type) :: {:ok, [app]} | {:error, {app, term}}
   def ensure_all_started(app, type \\ :temporary) when is_atom(app) do
     :application.ensure_all_started(app, type)
   end
@@ -520,7 +594,7 @@ defmodule Application do
   Note also that the `:transient` type is of little practical use, since when a
   supervision tree terminates, the reason is set to `:shutdown`, not `:normal`.
   """
-  @spec start(app, start_type) :: :ok | {:error, term}
+  @spec start(app, restart_type) :: :ok | {:error, term}
   def start(app, type \\ :temporary) when is_atom(app) do
     :application.start(app, type)
   end
@@ -531,7 +605,7 @@ defmodule Application do
   When stopped, the application is still loaded.
   """
   @spec stop(app) :: :ok | {:error, term}
-  def stop(app) do
+  def stop(app) when is_atom(app) do
     :application.stop(app)
   end
 
@@ -584,29 +658,48 @@ defmodule Application do
   For more information on code paths, check the `Code` module in
   Elixir and also Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html).
   """
-  @spec app_dir(app) :: String.t
+  @spec app_dir(app) :: String.t()
   def app_dir(app) when is_atom(app) do
     case :code.lib_dir(app) do
       lib when is_list(lib) -> IO.chardata_to_string(lib)
-      {:error, :bad_name} -> raise ArgumentError, "unknown application: #{inspect app}"
+      {:error, :bad_name} -> raise ArgumentError, "unknown application: #{inspect(app)}"
     end
   end
 
   @doc """
   Returns the given path inside `app_dir/1`.
+
+  If `path` is a string, then it will be used as the path inside `app_dir/1`. If
+  `path` is a list of strings, it will be joined (see `Path.join/1`) and the result
+  will be used as the path inside `app_dir/1`.
+
+  ## Examples
+
+      File.mkdir_p!("foo/ebin")
+      Code.prepend_path("foo/ebin")
+
+      Application.app_dir(:foo, "my_path")
+      #=> "foo/my_path"
+
+      Application.app_dir(:foo, ["my", "nested", "path"])
+      #=> "foo/my/nested/path"
+
   """
-  @spec app_dir(app, String.t | [String.t]) :: String.t
-  def app_dir(app, path) when is_binary(path) do
+  @spec app_dir(app, String.t() | [String.t()]) :: String.t()
+  def app_dir(app, path)
+
+  def app_dir(app, path) when is_atom(app) and is_binary(path) do
     Path.join(app_dir(app), path)
   end
-  def app_dir(app, path) when is_list(path) do
+
+  def app_dir(app, path) when is_atom(app) and is_list(path) do
     Path.join([app_dir(app) | path])
   end
 
   @doc """
   Returns a list with information about the applications which are currently running.
   """
-  @spec started_applications(timeout) :: [tuple]
+  @spec started_applications(timeout) :: [{app, description :: charlist(), vsn :: charlist()}]
   def started_applications(timeout \\ 5000) do
     :application.which_applications(timeout)
   end
@@ -614,9 +707,9 @@ defmodule Application do
   @doc """
   Returns a list with information about the applications which have been loaded.
   """
-  @spec loaded_applications :: [tuple]
+  @spec loaded_applications :: [{app, description :: charlist(), vsn :: charlist()}]
   def loaded_applications do
-    :application.loaded_applications
+    :application.loaded_applications()
   end
 
   @doc """
@@ -624,7 +717,7 @@ defmodule Application do
   `ensure_started/2`, `stop/1`, `load/1` and `unload/1`,
   returns a string.
   """
-  @spec format_error(any) :: String.t
+  @spec format_error(any) :: String.t()
   def format_error(reason) do
     try do
       do_format_error(reason)
@@ -643,8 +736,8 @@ defmodule Application do
 
   # {:error, reason} return value
   defp do_format_error({reason, {mod, :start, args}}) do
-    Exception.format_mfa(mod, :start, args) <> " returned an error: " <>
-      Exception.format_exit(reason)
+    Exception.format_mfa(mod, :start, args) <>
+      " returned an error: " <> Exception.format_exit(reason)
   end
 
   # error or exit(reason) call, use exit reason as reason.
@@ -654,8 +747,7 @@ defmodule Application do
 
   # bad return value
   defp do_format_error({:bad_return, {{mod, :start, args}, return}}) do
-    Exception.format_mfa(mod, :start, args) <>
-      " returned a bad value: " <> inspect(return)
+    Exception.format_mfa(mod, :start, args) <> " returned a bad value: " <> inspect(return)
   end
 
   defp do_format_error({:already_started, app}) when is_atom(app) do
