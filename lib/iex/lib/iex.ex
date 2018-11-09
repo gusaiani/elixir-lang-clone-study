@@ -249,7 +249,7 @@ defmodule IEx do
   and we can access the information and modules defined over there:
 
       iex(foo@HOST)1> Hello.world
-      "it works"
+      "it works!"
 
   In fact, connecting to remote shells is so common that we provide
   a shortcut via the command line as well:
@@ -265,5 +265,122 @@ defmodule IEx do
   Connecting an Elixir shell to a remote node without Elixir is
   **not** supported.
 
+  ## The .iex.exs file
+
+  When starting, IEx looks for a local `.iex.exs` file (located in the current
+  working directory), then a global one (located at `~/.iex.exs`) and loads the
+  first one it finds (if any). The code in the loaded `.iex.exs` file is
+  evaluated in the shell's context. So, for instance, any modules that are
+  loaded or variables that are bound in the `.iex.exs` file will be available in the
+  shell after it has booted.
+
+  For example, take the following `.iex.exs` file:
+
+      # Load another ".iex.exs" file
+      import_file "~/.iex.exs"
+
+      # Import some module from lib that may not yet have been defined
+      import_if_available MyApp.Mod
+
+      # Print something before the shell starts
+      IO.puts "hello world"
+
+      # Bind a variable that'll be accessible in the shell
+      value = 13
+
+  Running IEx in the directory where the above `.iex.exs` file is located
+  results in:
+
+      $ iex
+      Erlang/OTP 20 [...]
+
+      hello world
+      Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
+      iex(1)> value
+      13
+
+  It is possible to load another file by supplying the `--dot-iex`
+  option to IEx. See `iex --help`.
+
+  ## Configuring the shell
+
+  There are a number of customization options provided by IEx. Take a look
+  at the docs for the `IEx.configure/1` function by typing `h IEx.configure/1`.
+
+  Those options can be configured in your project configuration file or globally
+  by calling `IEx.configure/1` from your `~/.iex.exs` file. For example:
+
+      # .iex.exs
+      IEx.configure(inspect: [limit: 3])
+
+  Now run the shell:
+
+      $ iex
+      Erlang/OTP 20 [...]
+
+      Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
+      iex(1)> [1, 2, 3, 4, 5]
+      [1, 2, 3, ...]
+
+  """
+
+  @doc """
+  Configures IEx.
+
+  The supported options are:
+
+    * `:colors`
+    * `:inspect`
+    * `:width`
+    * `:history_size`
+    * `:default_prompt`
+    * `:alive_prompt`
+
+  They are discussed individually in the sections below.
+
+  ## Colors
+
+  A keyword list that encapsulates all color settings used by the
+  shell. See documentation for the `IO.ANSI` module for the list of
+  supported colors and attributes.
+
+  List of supported keys in the keyword list:
+
+    * `:enabled` - boolean value that allows for switching the coloring on and off
+    * `:eval_result` - color for an expression's resulting value
+    * `:eval_info` - ... various informational messages
+    * `:eval_error` - ... error messages
+    * `:eval_interrupt` - ... interrupt messages
+    * `:stack_info` - ... the stacktrace color
+    * `:blame_diff` - ... when blaming source with no match
+    * `:ls_directory` - ... for directory entries (ls helper)
+    * `:ls_device` - ... device entries (ls helper)
+
+  When printing documentation, IEx will convert the Markdown
+  documentation to ANSI as well. Colors for this can be configured
+  via:
+
+    * `:doc_code`        - the attributes for code blocks (cyan, bright)
+    * `:doc_inline_code` - inline code (cyan)
+    * `:doc_headings`    - h1 and h2 (yellow, bright)
+    * `:doc_title`       - the overall heading for the output (reverse, yellow, bright)
+    * `:doc_bold`        - (bright)
+    * `:doc_underline`   - (underline)
+
+  IEx will also color inspected expressions using the `:syntax_colors`
+  option. Such can be disabled with:
+
+      IEx.configure [colors: [syntax_colors: false]]
+
+  You can also configure the syntax colors, however, as desired:
+
+      IEx.configure [colors: [syntax_colors: [atom: :red]]]
+
+  Configuration for most built-in data types are supported: `:atom`,
+  `:string`, `:binary`, `:list`, `:number`, `:boolean`, `:nil`, etc.
+  The default is:
+
+      [number: :magenta, atom: cyan, string: :green,
+       boolean: :magenta, nil: :magenta]
   """
 end
