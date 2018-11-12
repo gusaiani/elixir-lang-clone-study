@@ -132,7 +132,7 @@ defmodule IEx do
 
     * via the `BREAK` menu (available via `Ctrl+C`) by typing `q`, pressing enter
     * by hitting `Ctrl+C`, `Ctrl+C`
-    * by hitting `Ctrl+\`
+    * by hitting `Ctrl+\ `
 
   If you are connected to remote shell, it remains alive after disconnection.
 
@@ -380,7 +380,104 @@ defmodule IEx do
   `:string`, `:binary`, `:list`, `:number`, `:boolean`, `:nil`, etc.
   The default is:
 
-      [number: :magenta, atom: cyan, string: :green,
+      [number: :magenta, atom: :cyan, string: :green,
        boolean: :magenta, nil: :magenta]
+
+  ## Inspect
+
+  A keyword list containing inspect options used by the shell
+  when printing results of expression evaluation. Default to
+  pretty formatting with a limit of 50 entries.
+
+  To show all entries, configure the limit to `:infinity`:
+
+      IEx.configure [inspect: [limit: :infinity]]
+
+  See `Inspect.Opts` for the full list of options.
+
+  ## Width
+
+  An integer indicating the maximum number of columns to use in output.
+  The default value is 80 columns. The actual output width is the minimum
+  of this number and result of `:io.columns`. This way you can configure IEx
+  to be your largest screen size and it should always take up the full width
+  of your current terminal screen.
+
+  ## History size
+
+  Number of expressions and their results to keep in the history.
+  The value is an integer. When it is negative, the history is unlimited.
+
+  ## Prompt
+
+  This is an option determining the prompt displayed to the user
+  when awaiting input.
+
+  The value is a keyword list with two possible keys representing prompt types:
+
+    * `:default_prompt` - used when `Node.alive?/0` returns `false`
+    * `:alive_prompt`   - used when `Node.alive?/0` returns `true`
+
+  The following values in the prompt string will be replaced appropriately:
+
+    * `%counter` - the index of the history
+    * `%prefix`  - a prefix given by `IEx.Server`
+    * `%node`    - the name of the local node
+
   """
+  def configure(options) do
+    IEx.Config.configure(options)
+  end
+
+  @doc """
+  Returns IEx configuration.
+  """
+  def configuration do
+    IEx.Config.configuration()
+  end
+
+  @doc """
+  Registers a function to be invoked after the IEx process is spawned.
+  """
+  def after_spawn(fun) when is_function(fun) do
+    IEx.Config.after_spawn(fun)
+  end
+
+  @doc """
+  Returns registered `after_spawn` callbacks.
+  """
+  def after_spawn do
+    IEx.Config.after_spawn()
+  end
+
+  @doc """
+  Returns `true` if IEx was started.
+  """
+  def started? do
+    IEx.Config.started?()
+  end
+
+  @doc """
+  Returns `string` escaped using the specified `color`.
+
+  ANSI escapes in `string` are not processed in any way.
+  """
+  def color(color, string) do
+    case IEx.Config.color(color) do
+      nil ->
+        string
+
+      ansi ->
+        [ansi | string] |> IO.ANSI.format(true) |> IO.iodata_to_binary()
+    end
+  end
+
+  @doc """
+  Gets the IEx width for printing.
+
+  Used by helpers and it has a default maximum cap of 80 chars.
+  """
+  def width do
+    IEx.Config.width()
+  end
 end
