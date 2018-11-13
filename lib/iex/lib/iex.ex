@@ -480,4 +480,56 @@ defmodule IEx do
   def width do
     IEx.Config.width()
   end
+
+  @doc """
+  Gets the options used for inspecting.
+  """
+  def inspect_opts do
+    IEx.Config.inspect_opts()
+  end
+
+  @doc """
+  Pries into the process environment.
+
+  This is useful for debugging a particular chunk of code
+  when executed by a particular process. The process becomes
+  the evaluator of IEx commands and is temporarily changed to
+  have a custom group leader. Those values are reverted by
+  calling `IEx.Helpers.respawn/0`, which starts a new IEx shell,
+  freeing up the pried one.
+
+  When a process is pried, all code runs inside IEx and has
+  access to all imports and aliases from the original code.
+  However, the code is evaluated and therefore cannot access
+  private functions of the module being pried. Module functions
+  still need to be accessed via `Mod.fun(args)`.
+
+  Alternatively, you can use `IEx.break!/4` to setup a breakpoint
+  on a given module, function and arity you have no control of.
+  While `IEx.break!/4` is more flexible,  it does not contain
+  information about imports and aliases from the source code.
+
+  ## Examples
+
+  Let's suppose you want to investigate what is happening
+  with some particular function. By invoking `IEx.pry/0` from
+  the function, IEx will allow you to access its binding
+  (variables), verify its lexical information and access
+  the process information. Let's see an example:
+
+      import Enum, only: [map: 2]
+
+      defmodule Adder do
+        def add(a, b) do
+          c = a + b
+          require IEx; IEx.pry()
+        end
+      end
+
+  When invoking `Adder.add(1, 2)`, you will receive a message in
+  your shell to pry the given environment. By allowing it,
+  the shell will be reset and you gain access to all variables
+  and the lexical scope from above:
+  """
+
 end
