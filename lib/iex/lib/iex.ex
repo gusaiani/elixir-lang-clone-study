@@ -25,13 +25,13 @@ defmodule IEx do
   documented and where the function name is in the form of `__foo__`.
 
   Autocomplete may not be available on some Windows shells. You may need
-  to pass the `--werl` flag when starting IEx, as in `iex --werl` for it
+  to pass the `--werl` option when starting IEx, as in `iex --werl` for it
   to work. `--werl` may be permanently enabled by setting the `IEX_WITH_WERL`
   environment variable.
 
   ## Shell history
 
-  It is possible to get shell history by passing some flags that enable it
+  It is possible to get shell history by passing some options that enable it
   in the VM. This can be done on a per-need basis when starting IEx:
 
       iex --erl "-kernel shell_history enabled"
@@ -530,6 +530,59 @@ defmodule IEx do
   your shell to pry the given environment. By allowing it,
   the shell will be reset and you gain access to all variables
   and the lexical scope from above:
+
+      pry(1)> map([a, b, c], &IO.inspect(&1))
+      1
+      2
+      3
+
+  Keep in mind that `IEx.pry/0` runs in the caller process,
+  blocking the caller during the evaluation cycle. The caller
+  process can be freed by calling `respawn/0`, which starts a
+  new IEx evaluation cycle, letting this one go:
+
+      pry(2)> respawn()
+      true
+
+      Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
+
+  Setting variables or importing modules in IEx does not
+  affect the caller's environment. However, sending and
+  receiving messages will change the process state.
+
+  ## Pry and macros
+
+  When setting up Pry inside a code defined by macros, such as:
+
+      defmacro __using__(_) do
+        quote do
+          def add(a, b) do
+            c = a + b
+            require IEx; IEx.pry()
+          end
+        end
+      end
+
+  The variables defined inside `quote` won't be available during
+  prying due to the hygiene mechanism in quoted expressions. The
+  hygiene mechanism changes the variable names in quoted expressions
+  so they don't collide with variables defined by the users of the
+  macros. Therefore the original names are not available.
+
+  ## Pry and `mix test`
+
+  To use `IEx.pry/0` during tests, you need to run `mix` inside
+  the `iex` command and pass the `--trace` to `mix test` to avoid running
+  into timeouts:
+
+      iex -S mix test --trace
+      iex -S mix test path/to/file:line --trace
+
   """
+  defmacro pry() do
+    quote do
+      IEx.Pry.pry(binding(), __ENV__)
+    end
+  end
 
 end
