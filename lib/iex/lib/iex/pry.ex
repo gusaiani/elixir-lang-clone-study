@@ -69,7 +69,10 @@ defmodule IEx.Pry do
       end
 
     # We cannot use colors because IEx may be off
-    case IEx.Broker.take_over(request, [evaluator: self()] ++ opts)
+    case IEx.Broker.take_over(request, [evaluator: self()] ++ opts) do
+      {:ok, server, group_leader} ->
+        IEx.Evaluator.init(:no_ack, server, group_leader, opts)
+    end
   end
 
   @elixir_internals [:elixir, :erl_val, IEx.Evaluator, IEx.Pry]
