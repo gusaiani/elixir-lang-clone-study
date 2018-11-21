@@ -585,4 +585,24 @@ defmodule IEx do
     end
   end
 
+  @doc """
+  Macro-based shortcut for `IEx.break!/4`.
+  """
+  @doc since: "1.5.0"
+  defmacro break!(ast, stops \\ 1) do
+    quote do
+      IEx.__break__!(unquote(Macro.escape(ast)), unquote(Macro.escape(stops)), __ENV__)
+    end
+  end
+
+  def __break__!({:/, _, [call, arity]} = ast, stops, env) when is_integer(arity) do
+    with {module, fun, []} <- Macro.decompose_call(call),
+         module when is_atom(module) <- Macro.expand(module, env) do
+      IEx.Pry.break!(module, fun, arity, stops)
+    else
+      _ ->
+        raise_unknown_break_ast!(ast)
+    end
+  end
+
 end

@@ -72,10 +72,30 @@ defmodule IEx.Pry do
     case IEx.Broker.take_over(request, [evaluator: self()] ++ opts) do
       {:ok, server, group_leader} ->
         IEx.Evaluator.init(:no_ack, server, group_leader, opts)
+
+      {:error, :no_iex} ->
+        extra =
+          if match?({:win32, _}, :os.type()) do
+            " If you are using Windows, you may need to start IEx with the --werl option."
+          else
+            ""
+          end
+
+        message = "Cannot pry #{inspect(self)} at #{location}. Is an IEx shell running?" <> extra
+        IO.puts(:stdio, message)
+        {:error, :no_iex}
+
+      {:error, _} = error ->
+        error
     end
   end
 
-  @elixir_internals [:elixir, :erl_val, IEx.Evaluator, IEx.Pry]
+  def pry(binding, opts) when is_list(opts) do
+    vars = for {k, _} when is_atom(k) <- binding, do: {k, nil}
+    pry(binding, %{:elixir.env_for_eval(opts) | vars: vars})
+  end
+
+  @elixir_internals [:elixir, :erl_eval, IEx.Evaluator, IEx.Pry]
 
   defp prune_stacktrace([{mod, _, _, _} | t]) when mod in @elixir_internals do
     prune_stacktrace(t)
@@ -110,5 +130,36 @@ defmodule IEx.Pry do
     else
       _ -> :error
     end
+  end
+
+  defp whereami_lines(file, line, radius) do
+    min = max(line - radius - 1, 0)
+    max = line + radius - 1
+
+    file
+    |> File.stream!()
+    |> Enum.slice(min..max)
+    |> Enum.with_index(min + 1)
+    |> Enum.map(&whereami_format_line(&1, line))
+  end
+
+  defp whereami_format_line({line_text, line_number}, line) do
+    gutter = String.pad_leading(Integer.to_string(line_number), 5, " ")
+
+    if line_number == line do
+      IO.ANSI.format_fragment([:bright, gutter, ": ", line_text, :normal])
+    else
+      [gutter, ": ", line_text]
+    end
+  end
+
+  @doc """
+  Sets up a breakpoint on the given module/function/arity.
+  """
+  @spec break(module, function, arity, pos_integer) :: {:ok, id()} | {:error, break_error()}
+  def break(module, function, arity, breaks \\ 1)
+      when is_atom(module) and is_atom(function) and is_integer(arity) and arity >= 0 and
+             is_integer(breaks) and breaks > 0 do
+    break_call(module, function, arity, quote(do: _), breaks)
   end
 end
