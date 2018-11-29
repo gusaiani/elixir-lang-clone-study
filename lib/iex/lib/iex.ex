@@ -605,4 +605,112 @@ defmodule IEx do
     end
   end
 
+  def __break__!({{:., _, [module, fun]}, _, args} = ast, stops, env) do
+    __break__!(ast, module, fun, args, true, stops, env)
+  end
+
+  def __break__!({:when, _, [{{:., _, [module, fun]}, _, args}, guards]} = ast, stops, env) do
+    __break__!(ast, module, fun, args, guards, stops, env)
+  end
+
+  def __break__!(ast, _stops) do
+    raise_unknown_break_ast!(ast)
+  end
+
+  defp __break__!(ast, module, fun, args, guards, stops, env) do
+    module = Macro.expand(module, env)
+
+    unless is_atom(module) do
+      raise_unknown_break_ast!(ast)
+    end
+
+    IEx.Pry.break!(module, fun, args, guards, env, stops)
+  end
+
+  defp raise_unknown_break_ast!(ast) do
+    raise ArgumentError, """
+    unknown expression to break on, expected one of:
+
+      * Mod.fun/arity, such as: URI.parse/1
+      * Mod.fun(arg1, arg2, ...), such as: URI.parse(_)
+      * Mod.fun(arg1, arg2, ...) when guard, such as: URI.parse(var) when is_binary(var)
+
+    Got #{Macro.to_string(ast)}
+    """
+  end
+
+  @doc """
+  Sets up a breakpoint in `module`, `function` and `arity` with
+  the given number of `stops`.
+
+  This function will instrument the given module and load a new
+  version in memory with breakpoints at the given function and
+  arity. If the module is recompiled, all breakpoints are lost.
+
+  When a breakpoint is reached, IEx will ask if you want to `pry`
+  the given function and arity. In other words, this works similar
+  to `IEx.pry/0` as the running process becomes the evaluator of
+  IEx commands and is temporarily changed to have a custom group
+  leader. However, differently from `IEx.pry/0`, aliases and imports
+  from the source code won't be available in the shell.
+
+  IEx helpers includes many conveniences related to breakpoints.
+  Below they are listed with the full module, such as `IEx.Helpers.breaks/0`,
+  but remember it can be called directly as `breaks()` inside IEx.
+  They are:
+
+    * `IEx.Helpers.break!/2` - sets up a breakpoint for a given `Mod.fun/arity`
+    * `IEx.Helpers.break!/4` - sets up a breakpoint for the given module, function, arity
+    * `IEx.Helpers.breaks/0` - prints all breakpoints and their ids
+    * `IEx.Helpers.continue/0` - continues until the next breakpoint in the same shell
+    * `IEx.Helpers.open/0` - opens editor on the current breakpoint
+    * `IEx.Helpers.remove_breaks/0` - removes all breakpoints in all modules
+    * `IEx.Helpers.remove_breaks/1` - removes all breakpoints in a given module
+    * `IEx.Helpers.reset_break/1` - sets the number of stops on the given id to zero
+    * `IEx.Helpers.reset_break/3` - sets the number of stops on the given module, function, arity to zero
+    * `IEx.Helpers.respawn/0` - starts a new shell (breakpoints will ask for permission once more)
+    * `IEx.Helpers.whereami/1` - shows the current location
+
+  By default, the number of stops in a breakpoint is 1. Any follow-up
+  call won't stop the code execution unless another breakpoint is set.
+
+  Alternatively, the number of stops can be increased by passing the `stops`
+  argument. `IEx.Helpers.reset_break/1` and `IEx.Helpers.reset_break/3`
+  can be used to reset the number back to zero. Note the module remains
+  "instrumented" even after all stops on all breakpoints are consumed.
+  You can remove the instrumentation in a given module by calling
+  `IEx.Helpers.remove_breaks/1` and on all modules by calling
+  `IEx.Helpers.remove_breaks/0`.
+
+  To exit a breakpoint, the developer can either invoke `continue()`,
+  which will block the shell until the next breakpoint is found or
+  the process terminates, or invoke `respawn()`, which starts a new IEx
+  shell, freeing up the pried one.
+
+  ## Examples
+
+  The examples below will use `break!`, assuming that you are setting
+  a breakpoint directly from your IEx shell. But you can set up a break
+  from anywhere by using the fully qualified name `IEx.break!`.
+
+  The following sets up a breakpoint on `URI.decode_query/2`:
+
+      break! URI, :decode_query, 2
+
+  This call will setup a breakpoint that stops once.
+  To set a breakpoint that will stop 10 times:
+
+      break! URI, :decode_query, 2, 10
+
+  `IEx.break!/2` is a convenience macro that allows breakpoints
+  to be given in the `Mod.fun/arity` format:
+
+      break! URI.decode_query/2
+
+  Or to set a breakpoint that will stop 10 times:
+
+      break! URI.decode_query/2, 10
+
+  """
+
 end
