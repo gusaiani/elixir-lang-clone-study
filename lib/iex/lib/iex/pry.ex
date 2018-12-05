@@ -162,4 +162,35 @@ defmodule IEx.Pry do
              is_integer(breaks) and breaks > 0 do
     break_call(module, function, arity, quote(do: _), breaks)
   end
+
+  @doc """
+  Sets up a breakpoint on the given module/function/args with the given `guard`.
+
+  It requires an `env` to be given to make the expansion of the guards.
+  """
+  @spec break(module, function, [Macro.t()], Macro.t(), Macro.Env.t(), pos_integer) ::
+          {:ok, id()} | {:error, break_error()}
+  def break(module, function, args, guards, env, breaks \\ 1)
+      when is_atom(module) and is_atom(function) and is_list(args) and is_integer(breaks) and
+            breaks > 0 do
+    condition = build_args_guard_condition(args, guard, env)
+    break_call(module, function, length(args), condition, breaks)
+  end
+
+  defp break_call(module, function, arity, condition, breaks) do
+    GenServer.call(@server, {:break, module, {function, arity}, condition, breaks}, @timeout)
+  end
+
+  ## Callbacks
+
+  @impl true
+  def handle_call({:break, module, fa, condition, breaks}, _from, counter) do
+    # If there is a match for the given module and fa, we
+    # use the ref, otherwise we create a new one.
+    {ref, counter} =
+      case :ets.match_object(@table, {:_, module, fa, :_, :_}) do
+        [{ref, _, _, _, _}] -> {ref, counter}
+        [] -> {counter, counter + 1}
+      end
+  end
 end

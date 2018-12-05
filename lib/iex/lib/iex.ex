@@ -711,6 +711,70 @@ defmodule IEx do
 
       break! URI.decode_query/2, 10
 
-  """
+  This function returns the breakpoint ID and will raise if there
+  is an error setting up the breakpoint.
+
+  ## Patterns and guards
+
+  `IEx.break!/2` allows patterns to be given, triggering the
+  breakpoint only in some occasions. For example, to trigger
+  the breakpoint only when the first argument is the "foo=bar"
+  string:
+
+      break! URI.decode_query("foo=bar", _)
+
+  Or to trigger it whenever the second argument is a map with
+  more than one element:
+
+      break! URI.decode_query(_, map) when map_size(map) > 0
+
+  Only a single break point can be set per function. So if you call
+  `IEx.break!` multiple times with different patterns, only the last
+  pattern is kept.
+
+  Notice that, while patterns may be given to macros, remember that
+  macros receive ASTs as arguments, and not values. For example, if
+  you try to break on a macro with the following pattern:
+
+      break! MyModule.some_macro(pid) when pid == self()
+
+  This breakpoint will never be reached, because a macro never receives
+  a PID. Even if you call the macro as `MyModule.some_macro(self())`,
+  the macro will receive the AST representing the `self()` call, and not
+  the PID itself.
+
+  ## Breaks and `mix test`
+
+  To use `IEx.break!/4` during tests, you need to run `mix` inside
+  the `iex` command and pass the `--trace` to `mix test` to avoid running
+  into timeouts:
+
+      iex -S mix test --trace
+      iex -S mix test path/to/file:line --trace
+
+      """
+  @doc since: "1.5.0"
+  def break!(module, function, arity, stops \\ 1) when is_integer(arity) do
+    IEx.Pry.break!(module, function, arity, stops)
+  end
+
+  ## Callbacks
+
+  # This is a callback invoked by Erlang shell utilities
+  # when someone presses Ctrl+G and adds 's Elixir.IEx'
+  @doc false
+  def start(opts \\ [], mfa \\ {IEx, :dont_display_result, []}) do
+    spawn(fn ->
+      case :init.notify_when_started(self()) do
+        :started -> :ok
+        _ -> :init.wait_until_started()
+      end
+
+      :ok = start_iex()
+      :ok = set_expand_fun()
+      :ok = run_after_spawn()
+      IEx.Server.run_from_shell(opts, mfa)
+    end)
+  end
 
 end

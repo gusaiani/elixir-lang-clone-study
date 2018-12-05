@@ -139,6 +139,20 @@ defmodule Process do
     nillify(:erlang.erase(key))
   end
 
+  @doc """
+  Returns the PID of the group leader for the calling process.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      Process.group_leader()
+      #=> #PID<0.53.0>
+
+  """
+  @spec group_leader() :: pid
+  defdelegate group_leader(), to: :erlang
+
   @compile {:inline, nillify: 1}
   defp nillify(:undefined), do: nil
   defp nillify(other), do: other
