@@ -153,6 +153,19 @@ defmodule Process do
   @spec group_leader() :: pid
   defdelegate group_leader(), to: :erlang
 
+  @doc """
+  Sets the group leader of the given `pid` to `leader`.
+
+  Typically, this is used when a process started from a certain shell should
+  have a group leader other than `:init`.
+
+  Inlined by the compiler.
+  """
+  @spec group_leader(pid, leader :: pid) :: true
+  def group_leader(pid, leader) do
+    :erlang.group_leader(leader, pid)
+  end
+
   @compile {:inline, nillify: 1}
   defp nillify(:undefined), do: nil
   defp nillify(other), do: other

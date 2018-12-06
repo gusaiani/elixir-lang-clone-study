@@ -6,7 +6,23 @@ defmodule IEx.Broker do
 
   use GenServer
 
-  ## Shell Api
+  ## Shell API
+
+  ## Broker API
+
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, :ok, name: @name)
+  end
+
+  @doc """
+  Registers an IEx server in the broker.
+
+  All instances, except shell ones, are registered.
+  """
+  @spec register(pid) :: :ok
+  def register(pid) do
+    GenServer.call(@name, {:register, pid})
+  end
 
   @doc """
   Client responds to a takeover request.
@@ -47,5 +63,24 @@ defmodule IEx.Broker do
     ref = Process.monitor(pid)
     state = put_in(state.servers[ref], pid)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:accept, {ref, _server_ref}, group_leader}, {server, _}, state) do
+    case pop_in(state.takeovers[ref]) do
+      {nil, state} ->
+        {:reply, {:error, :already_accepted}, state}
+
+      {{from, _}, state} ->
+        GenServer.reply(from, {:ok, server, group_leader})
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:refuse, {ref, server_ref}}, _from, state) do
+    if takeover = state.takeovers[ref] do
+      {:reply, {:error, :refused}, refuse(state, ref, takeover, server_ref)}
+    else
+      {:reply, {:error, :refused}, state}
+    end
   end
 end

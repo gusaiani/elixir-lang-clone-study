@@ -11,6 +11,7 @@ defmodule IEx.Evaluator do
 
   """
   def init(command, server, leader, opts) do
-    old_leader = Process.group_leader
+    old_leader = Process.group_leader()
+    Process.group_leader
   end
 end

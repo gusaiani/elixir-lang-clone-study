@@ -10,6 +10,23 @@ defmodule IEx.Server do
 
   """
 
+  @doc since: "1.8.0"
+  @spec run(keyword) :: :ok
+  def run(opts) when is_list(opts) do
+    IEx.Broker.register(self())
+    run_without_registration(opts)
+  end
+
+  defp run_without_registration(opts) do
+    Process.flag(:trap_exit, true)
+
+    IO.puts(
+      "Interactive Elixir (#{System.version()}) - press Ctrl+C to exit (type h() ENTER for help)"
+    )
+
+    evaluator = start_evaluator(opts)
+  end
+
   ## Private APIs
 
   # Starts IEx to run directly from the Erlang shell.
@@ -30,8 +47,18 @@ defmodule IEx.Server do
   defp shell_loop(opts, pid, ref) do
     receive do
       {:take_over, take_pid, take_ref, take_identifier, take_opts} ->
-        if take_over?
+        if take_over?(take_pid, take_ref, take_identifier) do
+          run_without_registration(take_opts)
     end
+  end
+
+  # Starts an evaluator using the provided options.
+  @doc false
+  @spec start_evaluator(keyword) :: pid
+  def start_evaluator(opts) do
+    evaluator =
+      opts[:evaluator] ||
+        :proc_lib.start(IEx.Evaluator, :init, [:ack, self(), Process.group_leader(), opts])
   end
 
   defp take_over?(take_pid, take_ref, take_identifier) when is_binary(take_identifier) do
@@ -41,6 +68,16 @@ defmodule IEx.Server do
 
   defp take_over?(take_pid, take_ref, take_response) do
     case IEx.Broker.respond(take_pid, take_ref, take_response) do
+      :ok ->
+        true
+
+      {:error, :refused} ->
+        false
+
+      {:error, :already_accepted} ->
+        io_error("** session was already accepted elsewhere")
+        false
+      end
     end
   end
 
