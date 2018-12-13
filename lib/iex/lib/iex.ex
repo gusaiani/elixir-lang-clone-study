@@ -48,6 +48,10 @@ defmodule IEx do
 
       set ERL_AFLAGS "-kernel shell_history enabled"
 
+  On Windows10 / Powershell:
+
+      $env:ERL_AFLAGS = "-kernel shell_history enabled"
+
   ## Expressions in IEx
 
   As an interactive shell, IEx evaluates expressions. This has some
@@ -752,7 +756,7 @@ defmodule IEx do
       iex -S mix test --trace
       iex -S mix test path/to/file:line --trace
 
-      """
+  """
   @doc since: "1.5.0"
   def break!(module, function, arity, stops \\ 1) when is_integer(arity) do
     IEx.Pry.break!(module, function, arity, stops)
@@ -761,7 +765,7 @@ defmodule IEx do
   ## Callbacks
 
   # This is a callback invoked by Erlang shell utilities
-  # when someone presses Ctrl+G and adds 's Elixir.IEx'
+  # when someone presses Ctrl+G and adds 's Elixir.IEx'.
   @doc false
   def start(opts \\ [], mfa \\ {IEx, :dont_display_result, []}) do
     spawn(fn ->
@@ -777,4 +781,44 @@ defmodule IEx do
     end)
   end
 
+  @doc false
+  def dont_display_result, do: :"do not show this result in output"
+
+  ## Helpers
+
+  defp start_iex() do
+    {:ok, _} = Application.ensure_all_started(:iex)
+    :ok
+  end
+
+  defp set_expand_fun do
+    gl = Process.group_leader()
+    glnode = node(gl)
+
+    expand_fun =
+      if glnode != node() do
+        _ = ensure_module_exists(glnode, IEx.Remsh)
+        IEx.Remsh.expand(node())
+      else
+        &IEx.Autocomplete.expand(&1)
+      end
+
+    # expand_fun is not supported by a shell variant
+    # on Windows, so we do two IO calls, not caring
+    # about the result of the expand_fun one.
+    _ = :io.setopts(gl, expand_fun: expand_fun)
+    :io.setopts(gl, binary: true, encoding: :unicode)
+  end
+
+  defp ensure_module_exists(node, mod) do
+    unless :rpc.call(node, :code, :is_loaded, [mod]) do
+      {m, b, f} = :code.get_object_code(mod)
+      {:module, _} = :rpc.call(node, :code, :load_binary, [m, f, b])
+    end
+  end
+
+  defp run_after_spawn do
+    _ = for fun <- Enum.reverse(after_spawn()), do: fun.()
+    :ok
+  end
 end
