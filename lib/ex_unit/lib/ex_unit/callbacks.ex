@@ -2,17 +2,28 @@ defmodule ExUnit.Callbacks do
   @moduledoc ~S"""
   Defines ExUnit callbacks.
 
-  This module defines both `setup_all` and `setup` callbacks, as well as
-  the `on_exit/2`, `start_supervised/2` and `stop_supervised/1` functions.
+  This module defines the `setup/1`, `setup/2`, `setup_all/1`, and
+  `setup_all/2` callbacks, as well as the `on_exit/2`, `start_supervised/2`
+  and `stop_supervised/1` functions.
 
-  The setup callbacks are defined via macros and each one can optionally
-  receive a map with metadata, usually referred to as `context`. The
-  callback may optionally put extra data into the `context` to be used in
-  the tests.
+  The setup callbacks are defined via macros and each one can
+  optionally receive a map with test state and metadata, usually
+  referred to as `context`. The context to be used in the tests can be
+  optionally extended by the setup callbacks by returning a properly
+  structured value (see below).
 
   The `setup_all` callbacks are invoked only once per module, before any
-  test runs. All `setup` callbacks are run before each test. No callback
-  runs if the test case has no tests or all tests have been filtered out.
+  test is run. All `setup` callbacks are run before each test. No callback
+  is run if the test case has no tests or all tests have been filtered out.
+
+  `setup` and `setup_all` callbacks can be defined by a block, by passing
+  an atom naming a one-arity function, or by passing a list of such
+  atoms. Both can opt to receive the current context by specifying it
+  as parameter if defined by a block. Functions used to define a test
+  setup must accept the context as single argument.
+
+  A test module can define multiple `setup` and `setup_all` callbacks,
+  and they are invoked in order of appearance.
 
   `start_supervised/2` is used to start processes under a supervisor. The
   supervisor is linked to the current test process. The supervisor as well
@@ -21,8 +32,8 @@ defmodule ExUnit.Callbacks do
 
   `on_exit/2` callbacks are registered on demand, usually to undo an action
   performed by a setup callback. `on_exit/2` may also take a reference,
-  allowing callback to be overridden in the future. A registered `on_exit/2`
-  callback always runs, while failures in `setup` and `setup_all` will stop
+  allowing the callback to be overridden in the future. A registered `on_exit/2`
+  callback will always run, while failures in `setup` and `setup_all` will stop
   all remaining setup callbacks from executing.
 
   Finally, `setup_all` callbacks run in a separate process per module, while
@@ -32,7 +43,7 @@ defmodule ExUnit.Callbacks do
   linked to the test process will also exit, although asynchronously. Therefore
   it is preferred to use `start_supervised/2` to guarantee synchronous termination.
 
-  Here is a run down of the life-cycle of the test process:
+  Here is a rundown of the life-cycle of the test process:
 
     1. the test process is spawned
     2. it runs `setup/2` callbacks
@@ -43,16 +54,12 @@ defmodule ExUnit.Callbacks do
 
   ## Context
 
-  If you return a keyword list, a map, or `{:ok, keywords | map}` from
-  `setup_all`, the keyword list/map will be merged into the current context and
-  be available in all subsequent `setup_all`, `setup`, and the `test` itself.
+  If `setup_all` or `setup` return a keyword list, a map, or `{:ok,
+  keywords | map}`, the keyword list or map will be merged into the
+  current context and will be available in all subsequent `setup_all`,
+  `setup`, and the `test` itself.
 
-  Similarly, returning a keyword list, map, or `{:ok, keywords | map}` from
-  `setup` means that the returned keyword list/map will be merged into the
-  current context and be available in all subsequent `setup` and the `test`
-  itself.
-
-  Returning `:ok` leaves the context unchanged (both in `setup` and `setup_all`
+  Returning `:ok` leaves the context unchanged (in `setup` and `setup_all`
   callbacks).
 
   Returning anything else from `setup_all` will force all tests to fail,
@@ -67,7 +74,7 @@ defmodule ExUnit.Callbacks do
         setup_all do
           IO.puts "Starting AssertionTest"
 
-          # No context is returned here
+          # Context is not updated here
           :ok
         end
 
@@ -81,6 +88,11 @@ defmodule ExUnit.Callbacks do
 
           # Returns extra metadata to be merged into context
           [hello: "world"]
+
+          # Similarly, any of the following would work:
+          #   {:ok, [hello: "world"]}
+          #   %{hello: "world"}
+          #   {:ok, %{hello: "world"}}
         end
 
         # Same as above, but receives the context as argument
@@ -98,6 +110,7 @@ defmodule ExUnit.Callbacks do
 
         test "uses metadata from setup", context do
           assert context[:hello] == "world"
+          assert context[:from_named_setup] == true
         end
 
         defp invoke_local_or_imported_function(context) do
@@ -121,16 +134,30 @@ defmodule ExUnit.Callbacks do
 
   @doc false
   defmacro __before_compile__(env) do
-    [compile_callbacks(env, :setup),
-     compile_callbacks(env, :setup_all)]
+    [compile_callbacks(env, :setup), compile_callbacks(env, :setup_all)]
   end
 
   @doc """
   Defines a callback to be run before each test in a case.
 
+  Accepts a block or the name of a one-arity function in the form of an atom,
+  or a list of such atoms.
+
+  Can return values to be merged into the context, to set up the state for
+  tests. For more details, see the "Context" section shown above.
+
   ## Examples
 
+      def clean_up_tmp_directory(context) do
+        # perform setup
+        :ok
+      end
+
       setup :clean_up_tmp_directory
+
+      setup do
+        [conn: Plug.Conn.build_conn()]
+      end
 
   """
   defmacro setup(block) do
@@ -139,13 +166,19 @@ defmodule ExUnit.Callbacks do
     else
       quote do
         @ex_unit_setup ExUnit.Callbacks.__callback__(unquote(block), @ex_unit_describe) ++
-                       @ex_unit_setup
+                         @ex_unit_setup
       end
     end
   end
 
   @doc """
   Defines a callback to be run before each test in a case.
+
+  Accepts a block or the name of a one-arity function in the form of an atom,
+  or a list of such atoms.
+
+  Can return values to be merged into the `context`, to set up the state for
+  tests. For more details, see the "Context" section shown above.
 
   ## Examples
 
@@ -154,14 +187,14 @@ defmodule ExUnit.Callbacks do
       end
 
   """
-  defmacro setup(var, block) do
-    do_setup(var, block)
+  defmacro setup(context, block) do
+    do_setup(context, block)
   end
 
-  defp do_setup(var, block) do
-    quote bind_quoted: [var: escape(var), block: escape(block)] do
+  defp do_setup(context, block) do
+    quote bind_quoted: [context: escape(context), block: escape(block)] do
       name = :"__ex_unit_setup_#{length(@ex_unit_setup)}"
-      defp unquote(name)(unquote(var)), unquote(block)
+      defp unquote(name)(unquote(context)), unquote(block)
       @ex_unit_setup [{name, @ex_unit_describe} | @ex_unit_setup]
     end
   end
@@ -169,8 +202,25 @@ defmodule ExUnit.Callbacks do
   @doc """
   Defines a callback to be run before all tests in a case.
 
+  Accepts a block or the name of a one-arity function in the form of an atom,
+  or a list of such atoms.
+
+  Can return values to be merged into the `context`, to set up the state for
+  tests. For more details, see the "Context" section shown above.
+
   ## Examples
 
+      def clean_up_tmp_directory(context) do
+        # perform setup
+        :ok
+      end
+
+      # block
+      setup_all do
+        [conn: Plug.Conn.build_conn()]
+      end
+
+      # one-arity function name
       setup_all :clean_up_tmp_directory
 
   """
@@ -179,16 +229,24 @@ defmodule ExUnit.Callbacks do
       do_setup_all(quote(do: _), block)
     else
       quote do
-        @ex_unit_describe && raise "cannot invoke setup_all/1 inside describe as setup_all/1 " <>
-                                   "always applies to all tests in a module"
+        @ex_unit_describe &&
+          raise "cannot invoke setup_all/1 inside describe as setup_all/1 " <>
+                  "always applies to all tests in a module"
+
         @ex_unit_setup_all ExUnit.Callbacks.__callback__(unquote(block), nil) ++
-                           @ex_unit_setup_all
+                             @ex_unit_setup_all
       end
     end
   end
 
   @doc """
   Defines a callback to be run before all tests in a case.
+
+  Accepts a block or the name of a one-arity function in the form of an atom,
+  or a list of such atoms.
+
+  Can return values to be merged into the `context`, to set up the state for
+  tests. For more details, see the "Context" section shown above.
 
   ## Examples
 
@@ -197,15 +255,15 @@ defmodule ExUnit.Callbacks do
       end
 
   """
-  defmacro setup_all(var, block) do
-    do_setup_all(var, block)
+  defmacro setup_all(context, block) do
+    do_setup_all(context, block)
   end
 
-  defp do_setup_all(var, block) do
-    quote bind_quoted: [var: escape(var), block: escape(block)] do
+  defp do_setup_all(context, block) do
+    quote bind_quoted: [context: escape(context), block: escape(block)] do
       @ex_unit_describe && raise "cannot invoke setup_all/2 inside describe"
       name = :"__ex_unit_setup_all_#{length(@ex_unit_setup_all)}"
-      defp unquote(name)(unquote(var)), unquote(block)
+      defp unquote(name)(unquote(context)), unquote(block)
       @ex_unit_setup_all [{name, nil} | @ex_unit_setup_all]
     end
   end
@@ -217,15 +275,17 @@ defmodule ExUnit.Callbacks do
   runs in a separate process than the caller.
 
   `on_exit/2` is usually called from `setup` and `setup_all`
-  callbacks, often to undo the action performed during `setup`.
+  callbacks, often to undo the action performed during the setup.
   However, `on_exit/2` may also be called dynamically, where a
   reference can be used to guarantee the callback will be invoked
   only once.
   """
-  @spec on_exit(term, (() -> term)) :: :ok | no_return
+  @spec on_exit(term, (() -> term)) :: :ok
   def on_exit(name_or_ref \\ make_ref(), callback) when is_function(callback, 0) do
     case ExUnit.OnExitHandler.add(self(), name_or_ref, callback) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       :error ->
         raise ArgumentError, "on_exit/2 callback can only be invoked from the test process"
     end
@@ -266,8 +326,9 @@ defmodule ExUnit.Callbacks do
   This function returns `{:ok, pid}` in case of success, otherwise it
   returns `{:error, reason}`.
   """
-  @spec start_supervised(Supervisor.child_spec | module | {module, term}, keyword) ::
-        Supervisor.on_start_child
+  @doc since: "1.5.0"
+  @spec start_supervised(Supervisor.child_spec() | module | {module, term}, keyword) ::
+          Supervisor.on_start_child()
   def start_supervised(child_spec_or_module, opts \\ []) do
     sup =
       case ExUnit.OnExitHandler.get_supervisor(self()) do
@@ -275,14 +336,40 @@ defmodule ExUnit.Callbacks do
           {:ok, sup} = Supervisor.start_link([], @supervisor_opts)
           ExUnit.OnExitHandler.put_supervisor(self(), sup)
           sup
+
         {:ok, sup} ->
           sup
+
         :error ->
           raise ArgumentError, "start_supervised/2 can only be invoked from the test process"
       end
 
     Supervisor.start_child(sup, Supervisor.child_spec(child_spec_or_module, opts))
   end
+
+  @doc """
+  Same as `start_supervised/2` but returns the PID on success and raises if
+  not started properly.
+  """
+  @doc since: "1.6.0"
+  @spec start_supervised!(Supervisor.child_spec() | module | {module, term}, keyword) :: pid
+  def start_supervised!(child_spec_or_module, opts \\ []) do
+    case start_supervised(child_spec_or_module, opts) do
+      {:ok, pid} ->
+        pid
+
+      {:ok, pid, _info} ->
+        pid
+
+      {:error, reason} ->
+        raise "failed to start child with the spec #{inspect(child_spec_or_module)}.\n" <>
+                "Reason: #{start_supervised_error(reason)}"
+    end
+  end
+
+  defp start_supervised_error({{:EXIT, reason}, _info}), do: Exception.format_exit(reason)
+  defp start_supervised_error({reason, _info}), do: Exception.format_exit(reason)
+  defp start_supervised_error(reason), do: Exception.format_exit(reason)
 
   @doc """
   Stops a child process started via `start_supervised/2`.
