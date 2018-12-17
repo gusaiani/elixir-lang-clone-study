@@ -58,5 +58,122 @@ defmodule IEx.Helpers do
   exports (functions and macros) in the `IEx.Helpers` module:
 
       iex> exports(IEx.Helpers)
+
+  This module also includes helpers for debugging purposes, see
+  `IEx.break!/4` for more information.
+
+  To learn more about IEx as a whole, type `h(IEx)`.
   """
+
+  import IEx, only: [dont_display_result: 0]
+
+  @doc """
+  Recompiles the current mix application.
+
+  This helper only works when IEx is started with a Mix
+  project, for example, `iex -S mix`. The application is
+  not restarted after compilation, which means any long
+  running process may crash as any changed module will be
+  temporarily removed and recompiled, without going through
+  the proper code changes callback.
+
+  If you want to reload a single module, consider using
+  `r(ModuleName)` instead.
+
+  This function is meant to be used for development and
+  debugging purposes. Do not depend on it in production code.
+
+  ## Options
+
+    * `:force` - when `true`, forces the application to recompile
+
+  """
+  def recompile(options \\ []) do
+    if mix_started?() do
+      config = Mix.Project.config()
+      consolidation = Mix.Project.consolidation_path(config)
+      reenable_tasks(config)
+
+      # No longer allow consolidations to be accessed
+      Code.delete_path(consolidation)
+      purge_protocols(consolidation)
+
+      force? = Keyword.get(options, :force, false)
+      arguments = if force?, do: ["--force"], else: []
+
+      {result, _} = Mix.Task.run("compile", arguments)
+
+      # Reenable consolidation and allow them to be loaded.
+      Code.prepend_path(consolidation)
+      purge_protocols(consolidation)
+
+      result
+    else
+      IO.puts(IEx.color(:eval_error, "Mix is not running. Please start IEx with: iex -S mix"))
+      :error
+    end
+  end
+
+  defp mix_started? do
+    List.keyfind(Application.started_applications(), :mix, 0) != nil
+  end
+
+  defp reenable_tasks(config) do
+    Mix.Task.reenable("compile")
+    Mix.Task.reenable("compile.all")
+    Mix.Task.reenable("compile.protocols")
+    compilers = config[:compilers] || Mix.compilers()
+    Enum.each(compilers, &Mix.Task.reenable("compile.#{&1}"))
+  end
+
+  defp purge_protocols(path) do
+    case File.ls(path) do
+      {:ok, beams} ->
+        Enum.each(beams, fn beam ->
+          module = beam |> Path.rootname() |> String.to_atom()
+          :code.purge(module)
+          :code.delete(module)
+        end)
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  @doc """
+  Compiles the given files.
+
+  It expects a list of files to compile and an optional path to write
+  the compiled code to. By default files are in-memory compiled.
+  To write compiled files to the current directory, an empty string
+  can be given.
+
+  It returns the names of the compiled modules.
+
+  If you want to recompile an existing module, check `r/1` instead.
+
+  ## Examples
+
+  In the example below, we pass a directory to where the `c/2` function will
+  write the compiled `.beam` files to. This directory is typically named "ebin"
+  in Erlang/Elixir systems:
+
+      iex> c(["foo.ex", "bar.ex"], "ebin")
+      [Foo, Bar]
+
+  When compiling one file, there is no need to wrap it in a list:
+
+      iex> c("baz.ex")
+      [Baz]
+
+  """
+  def c(files, path \\ :in_memory) when is_binary(path) or path == :in_memory do
+    files = List.wrap(files)
+
+    unless Enum.all?(files, &is_binary/1) do
+      raise ArgumentError, "expected a binary or a list of binaries as argument"
+    end
+
+    {found, not_found} = Enum.split_with(files, &File.exists?/1)
+  end
 end
