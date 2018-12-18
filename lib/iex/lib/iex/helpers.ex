@@ -68,7 +68,7 @@ defmodule IEx.Helpers do
   import IEx, only: [dont_display_result: 0]
 
   @doc """
-  Recompiles the current mix application.
+  Recompiles the current Mix application.
 
   This helper only works when IEx is started with a Mix
   project, for example, `iex -S mix`. The application is
@@ -94,7 +94,7 @@ defmodule IEx.Helpers do
       consolidation = Mix.Project.consolidation_path(config)
       reenable_tasks(config)
 
-      # No longer allow consolidations to be accessed
+      # No longer allow consolidations to be accessed.
       Code.delete_path(consolidation)
       purge_protocols(consolidation)
 
@@ -175,5 +175,48 @@ defmodule IEx.Helpers do
     end
 
     {found, not_found} = Enum.split_with(files, &File.exists?/1)
+
+    unless Enum.empty?(not_found) do
+      raise ArgumentError, "could not find files #{Enum.join(not_found, ", ")}"
+    end
+
+    {erls, exs} = Enum.split_with(found, &String.ends_with?(&1, ".erl"))
+
+    erl_modules =
+      Enum.map(erls, fn source ->
+        {module, binary} = compile_erlang(source)
+
+        if path != :in_memory do
+          base = source |> Path.basename() |> Path.rootname()
+          File.write!(Path.join(path, base <> ".beam"), binary)
+        end
+
+        module
+      end)
+
+    ex_modules =
+      case compile_elixir(exs, path) do
+        {:ok, modules, _} -> modules
+        {:error, _, _} -> raise CompileError
+      end
+
+    erl_modules ++ ex_modules
+  end
+
+  defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)
+
+  # Compiles and loads an Erlang source file, returns {module, binary}
+  defp compile_erlang(source) do
+    source = Path.relative_to_cwd(source) |> String.to_charlist
+
+    case :compile.file(source, [:binary, :report]) do
+      {:ok, module, binary} ->
+        :code.purge(module)
+        {:module, module} = :code.load_binary(module, source, binary)
+        {module, binary}
+
+      _ ->
+        raise CompileError
+    end
   end
 end
