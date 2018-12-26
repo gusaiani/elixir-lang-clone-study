@@ -203,6 +203,42 @@ defmodule IEx.Helpers do
     erl_modules ++ ex_modules
   end
 
+  @doc """
+  Clears the console screen.
+
+  This function only works if ANSI escape codes are enabled
+  on the shell, which means this function is by defualt
+  unavailable on Windows machines.
+  """
+  def clear() do
+    if IO.ANSI.enabled?() do
+      IO.write([IO.ANSI.home(), IO.ANSI.clear()])
+    else
+      IO.puts("Cannot clear the screen because ANSI escape codes are not enabled on this shell")
+    end
+
+    dont_display_result()
+  end
+
+  @doc """
+  Opens the current prying location.
+
+  This command only works inside a pry session started manually
+  via `IEx.pry/0` or a breakpoint set via `IEx.break!/4`. Calling
+  this function during a regular `IEx` session will print an error.
+
+  Keep in mind the `open/0` location may not exist when prying
+  precompiled source code, such as Elixir itself.
+
+  For more information and to open any module or function, see `open/1`.
+  """
+  def open() do
+    case Process.get(:iex_whereami) do
+      {fine, line, _} ->
+        IEx.Introspection.open
+    end
+  end
+
   defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)
 
   # Compiles and loads an Erlang source file, returns {module, binary}
