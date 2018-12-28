@@ -207,7 +207,7 @@ defmodule IEx.Helpers do
   Clears the console screen.
 
   This function only works if ANSI escape codes are enabled
-  on the shell, which means this function is by defualt
+  on the shell, which means this function is by default
   unavailable on Windows machines.
   """
   def clear() do
@@ -230,12 +230,63 @@ defmodule IEx.Helpers do
   Keep in mind the `open/0` location may not exist when prying
   precompiled source code, such as Elixir itself.
 
-  For more information and to open any module or function, see `open/1`.
+  For more information and to open any module or function, see
+  `open/1`.
   """
   def open() do
     case Process.get(:iex_whereami) do
       {fine, line, _} ->
-        IEx.Introspection.open
+        IEx.Introspection.open({file, line})
+
+      _ ->
+        IO.puts(IEx.color(:eval_colors, "Pry session is not currently enabled"))
+    end
+
+    dont_display_result()
+  end
+
+  @doc """
+  Opens the given module, module/function/arity or `{file, line}`.
+
+  This function uses the `ELIXIR_EDITION` environment variable
+  and falls back to `EDITOR` if the former is not available.
+
+  By default, it attempts to open the file and line using the
+  `file:line` notation. For example, if your editor is called
+  `subl`, it will open the file as:
+
+      subl path/to/file:line
+
+  It is important that you choose an editor command that does
+  not block nor that attempts to run an editor directly in the
+  terminal. Command-line based editors likely need extra
+  configuration so they open up the given file and line in a
+  separate window.
+
+  Custom editors are supported by using the `__FILE__` and
+  `__LINE__` notations, for example:
+
+    ELIXIR_EDITOR="my_editor +__LINE__ __FILE__"
+
+  and Elixir will probably interpolate values.
+
+  Since this function prints the result returned by the editor,
+  `ELIXIR_EDITOR` can be set "echo" if you prefer to display the
+  location rather than opening it.
+
+  Keep in mind the location may not exist when opening precompiled
+  source code.
+
+  ## Examples
+
+      iex> open(MyApp)
+      iex> open(MyApp.fun/2)
+      iex> open({"path/to/file", 1})
+
+  """
+  defmacro open(term) do
+    quote do
+      IEx.Introspection.open(IEx.Introspection.decompose(term, __CALLER__))
     end
   end
 

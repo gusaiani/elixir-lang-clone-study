@@ -338,7 +338,7 @@ defmodule Macro do
       :error
 
   """
-  @spec decompose_call(Macro.t()) :: {atom, [Macro.t()]} | {Macro.t(), atom, [Macro.t()]} | :error
+  @spec decompose_call(t()) :: {atom, [t()]} | {t(), atom, [t()]} | :error
   def decompose_call(ast)
 
   def decompose_call({{:., _, [remote, function]}, _, args})
