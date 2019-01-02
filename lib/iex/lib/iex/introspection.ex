@@ -74,4 +74,28 @@ defmodule IEx.Introspection do
       {_, tuple, _} ->
     end
   end
+
+  @doc """
+  Prints documentation.
+  """
+  def h(module) when is_atom(module) do
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        case Code.fetch_docs(module) do
+          {:docs_v1, _, _, _, %{} = doc, metadata, _} ->
+            print_doc
+        end
+    end
+  end
+
+  defp print_doc(heading, types, doc, metadata) do
+    doc = translate_doc(doc) || ""
+
+    if opts = IEx.Config.ansi_docs() do
+      IO.ANSI.Docs
+  end
+
+  defp translate_doc(:none), do: nil
+  defp translate_doc(:hidden), do: nil
+  defp translate_doc(%{"en" => doc}), do: doc
 end

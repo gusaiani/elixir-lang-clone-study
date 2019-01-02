@@ -48,4 +48,32 @@ defmodule IO.ANSI do
 
   @doc "Clears screen."
   defsequence(:clear, "2", "J")
+
+  @doc ~S"""
+  Formats a chardata-like argument by converting named ANSI sequences into actual
+  ANSI codes.
+
+  The named sequences are represented by atoms.
+
+  An optional boolean parameter can be passed to enable or disable
+  emitting actual ANSI codes. When `false`, no ANSI codes will be emitted.
+  By default checks if ANSI is enabled using the `enabled?/0` function.
+
+  ## Examples
+
+      iex> IO.ANSI.format_fragment([:bright, 'Word'], true)
+      [[[[[[] | "\e[1m]"], 87], 111], 114], 100]
+
+  """
+  def format_fragment(chardata, emit? \\ enabled?()) when is_boolean(emit?) do
+    do_format(chardata, [], [], emit?, false)
+  end
+
+  defp do_format([term | rest], rem, acc, emit?, append_reset) do
+    do_format(term, [rest | rem], acc, emit?, append_reset)
+  end
+
+  defp do_format(term, rem, acc, true, append_reset) when is_atom(term) do
+    do_format([], rem, [acc | format_sequence])
+  end
 end

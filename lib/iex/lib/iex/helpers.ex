@@ -235,11 +235,11 @@ defmodule IEx.Helpers do
   """
   def open() do
     case Process.get(:iex_whereami) do
-      {fine, line, _} ->
+      {file, line, _} ->
         IEx.Introspection.open({file, line})
 
       _ ->
-        IO.puts(IEx.color(:eval_colors, "Pry session is not currently enabled"))
+        IO.puts(IEx.color(:eval_error, "Pry session is not currently enabled"))
     end
 
     dont_display_result()
@@ -248,7 +248,7 @@ defmodule IEx.Helpers do
   @doc """
   Opens the given module, module/function/arity or `{file, line}`.
 
-  This function uses the `ELIXIR_EDITION` environment variable
+  This function uses the `ELIXIR_EDITOR` environment variable
   and falls back to `EDITOR` if the former is not available.
 
   By default, it attempts to open the file and line using the
@@ -266,9 +266,9 @@ defmodule IEx.Helpers do
   Custom editors are supported by using the `__FILE__` and
   `__LINE__` notations, for example:
 
-    ELIXIR_EDITOR="my_editor +__LINE__ __FILE__"
+      ELIXIR_EDITOR="my_editor +__LINE__ __FILE__"
 
-  and Elixir will probably interpolate values.
+  and Elixir will properly interpolate values.
 
   Since this function prints the result returned by the editor,
   `ELIXIR_EDITOR` can be set "echo" if you prefer to display the
@@ -286,8 +286,15 @@ defmodule IEx.Helpers do
   """
   defmacro open(term) do
     quote do
-      IEx.Introspection.open(IEx.Introspection.decompose(term, __CALLER__))
+      IEx.Introspection.open(unquote(IEx.Introspection.decompose(term, __CALLER__)))
     end
+  end
+
+  @doc """
+  Prints the documentation for `IEx.Helpers`.
+  """
+  def h() do
+    IEx.Introspection.h(IEx.Helpers)
   end
 
   defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)
