@@ -92,7 +92,10 @@ defmodule IEx.Introspection do
     doc = translate_doc(doc) || ""
 
     if opts = IEx.Config.ansi_docs() do
-      IO.ANSI.Docs
+      IO.ANSI.Docs.print_heading(heading, opts)
+      IO.write(types)
+      IO.ANSI.Docs.print_metadata
+    end
   end
 
   defp translate_doc(:none), do: nil

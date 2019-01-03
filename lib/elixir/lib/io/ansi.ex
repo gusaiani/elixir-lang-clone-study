@@ -74,6 +74,26 @@ defmodule IO.ANSI do
   end
 
   defp do_format(term, rem, acc, true, append_reset) when is_atom(term) do
-    do_format([], rem, [acc | format_sequence])
+    do_format([], rem, [acc | format_sequence(term)], true, !!append_reset)
+  end
+
+  defp do_format(term, rem, acc, false, append_reset) when not is_list(term) do
+    do_format([], rem, acc, false, append_reset)
+  end
+
+  defp do_format(term, rem, acc, emit?, append_reset) when not is_list(term) do
+    do_format([], rem, [acc, term], emit?, append_reset)
+  end
+
+  defp do_format([], [next | rest], acc, emit?, append_reset) do
+    do_format(next, rest, acc, emit?, append_reset)
+  end
+
+  defp do_format([], [], acc, true, true) do
+    [acc | IO.ANSI.reset()]
+  end
+
+  defp do_format([], [], acc, _emit?, _append_reset) do
+    acc
   end
 end
