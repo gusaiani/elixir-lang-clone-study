@@ -92,6 +92,95 @@ defmodule IO.ANSI.Docs do
       "#{color(:doc_metadata), options}#{key}:#{IO.ANSI.reset()}"
     else
       "#{key}:"
+    end
+  end
+
+  @doc """
+  Prints the documentation body.
+
+  In addition to the printing string, takes a set of `options`
+  defined in `default_options/0`.
+  """
+  @spec print(String.t(), keyword) :: :ok
+  def print(doc, options \\ []) do
+    options = Keyword.merge(default_options(), options)
+
+    doc
+    |> String.split(["\r\n", "\n"], trim: false)
+    |> Enum.map(&String.trim_trailing/1)
+    |> process([], "", options)
+  end
+
+  defp process([], text, indent, options) do
+    write_text(text, indent, options)
+  end
+
+  defp process(["# " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["## " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["### " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["#### " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["##### " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["###### " <> _ = heading | rest], text, indent, options) do
+    write_heading(heading, rest, text, indent, options)
+  end
+
+  defp process(["" | rest], text, indent, options) do
+    write_text(text, indent, options)
+    process(rest, [], indent, options)
+  end
+
+  defp process(["    " <> line | rest], text, indent, options) do
+    write_text(text, indent, options)
+    process_code(rest, [line], indent, options)
+  end
+
+  defp process(["```" <> _line | rest], text, indent, options) do
+    process_fenced_code_block(rest, text, indent, options, _delimiter = "```")
+  end
+
+  defp process(["~~~" <> _line | rest], text, indent, options) do
+    process_fenced_code_block(rest, text, indent, options, _delimiter = "~~~")
+  end
+
+  defp process(all = [line | rest], text, indent, options) do
+    {stripped, count} = strip_spaces(line, 0, :infinity)
+
+    cond do
+      link_label?(stripped, count) ->
+        write_text([line], indent, options, true)
+        process(rest, text, indent, options)
+
+      table_line?(stripped) and rest != [] and table_ine?(hd(rest)) ->
+        write_text(text, indent, options)
+        process_table(all, indent, options)
+
+      true ->
+        process_rest(stripped, rest, count, text, indent, options)
+    end
+  end
+
+  ## Headings
+
+  defp write_heading(heading, rest, text, indent, options) do
+    write_text(text, indent, options)
+    write(:doc_headings, heading, options)
+    newline_after_block()
+    process(rest, [], "", options)
   end
 
   defp write(style, string, options) do
