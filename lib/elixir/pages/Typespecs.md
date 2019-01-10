@@ -113,3 +113,115 @@ The following literals are also supported in typespecs:
                                           ## Tuples
           | {}                            # empty tuple
           | {:ok, type}                   # two-element tuple with an atom and any type
+
+### Built-in types
+
+The following types are also provided by Elixir as shortcuts on top of the basic and literal types described above.
+
+Built-in type           | Defined as
+:---------------------- | :---------
+`term()`                | `any()`
+`arity()`               | `0..255`
+`as_boolean(t)`         | `t`
+`binary()`              | `<<_::_*8>>`
+`bitstring()`           | `<<_::_*1>>`
+`boolean()`             | `false` \| `true`
+`byte()`                | `0..255`
+`char()`                | `0..0x10FFFF`
+`charlist()`            | `[char()]`
+`nonempty_charlist()`   | `[char(), ...]`
+`fun()`                 | `(... -> any)`
+`function()`            | `fun()`
+`identifier()`          | `pid()` \| `port()` \| `reference()`
+`iodata()`              | `iolist()` \| `binary()`
+`iolist()`              | `maybe_improper_list(byte() \| binary() \| iolist(), binary() \| [])`
+`keyword()`             | `[{atom(), any()}]`
+`keyword(t)`            | `[{atom(), t}]`
+`list()`                | `[any()]`
+`nonempty_list()`       | `nonempty_list(any())`
+`maybe_improper_list()` | `maybe_improper_list(any(), any())`
+`nonempty_maybe_improper_list()` | `nonempty_maybe_improper_list(any(), any())`
+`mfa()`                 | `{module(), atom(), arity()}`
+`module()`              | `atom()`
+`no_return()`           | `none()`
+`node()`                | `atom()`
+`number()`              | `integer()` \| `float()`
+`struct()`              | `%{:__struct__ => atom(), optional(atom()) => any()}`
+`timeout()`             | `:infinity` \| `non_neg_integer()`
+
+`as_boolean(t)` exists to signal users that the given value will be treated as a boolean, where `nil` and `false` will be evaluated as `false` and everything else is `true`. For example, `Enum.filter/2` has the following specification: `filter(t, (element -> as_boolean(term))) :: list`.
+
+### Remote types
+
+Any module is also able to define its own types and the modules in Elixir are no exception. For example, the `Range` module defines a `t/0` type that represents a range: this type can be referred to as `t:Range.t/0`. In a similar fashion, a string is `t:String.t/0`, any enumerable can be `t:Enum.t/0`, and so on.
+
+### Maps
+
+The key types in maps are allowed to overlap, and if they do, the leftmost key takes precedence.
+A map value does not belong to this type if it contains a key that is not in the allowed map keys.
+
+If you want to denote that keys that were not previously defined in the map are allowed,
+it is common to end a map type with `optional(any) => any`.
+
+Notice that the syntactic representation of `map()` is `%{optional(any) => any}`, not `%{}`. The notation `%{}` specifies the singleton type for the empty map.
+
+### User-defined types
+
+The `@type`, `@typep`, and `@opaque` module attributes can be used to define new types:
+
+    @type type_name :: type
+    @typep type_name :: type
+    @opaque type_name :: type
+
+A type defined with `@typep` is private. An opaque type, defined with `@opaque` is a type where the internal structure of the type will not be visible, but the type is still public.
+
+Types can be parameterized by defining variables as parameters; these variables can then be used to define the type.
+
+    @type dict(key, value) :: [{key, value}]
+
+## Defining a specification
+
+A specification for a function can be defined as follows:
+
+    @spec function_name(type1, type2) :: return_type
+
+Guards can be used to restrict type variables given as arguments to the function.
+
+    @spec function(arg) :: [arg] when arg: atom
+
+If you want to specify more than one variable, you separate them by a comma.
+
+    @spec function(arg1, arg2) :: {arg1, arg2} when arg1: atom, arg2: integer
+
+Type variables with no restriction can also be defined using `var`.
+
+    @spec function(arg) :: [arg] when arg: var
+
+You can also name your arguments in a typespec using `arg_name :: arg_type` syntax. This is particularly useful in documentation as a way to differentiate multiple arguments of the same type (or multiple elements of the same type in a type definition):
+
+    @spec days_since_epoch(year :: integer, month :: integer, day :: integer) :: integer
+    @type color :: {red :: integer, green :: integer, blue :: integer}
+
+Specifications can be overloaded just like ordinary functions.
+
+    @spec function(integer) :: atom
+    @spec function(atom) :: integer
+
+## Behaviours
+
+Behaviours in Elixir (and Erlang) are a way to separate and abstract the generic part of a component (which becomes the *behaviour module*) from the specific part (which becomes the *callback module*).
+
+A behaviour module defines a set of functions and macros (referred to as *callbacks*) that callback modules implementing that behaviour must export. This "interface" identifies the specific part of the component. For example, the `GenServer` behaviour and functions abstract away all the message-passing (sending and receiving) and error reporting that a "server" process will likely want to implement from the specific parts such as the actions that this server process has to perform.
+
+To define a behaviour module, it's enough to define one or more callbacks in that module. To define callbacks, the `@callback` and `@macrocallback` module attributes can be used (for function callbacks and macro callbacks respectively).
+
+    defmodule MyBehaviour do
+      @callback my_fun(arg :: any) :: any
+      @macrocallback my_macro(arg :: any) :: Macro.t
+    end
+
+As seen in the example above, defining a callback is a matter of defining a specification for that callback, made of:
+
+  * the callback name (`my_fun` or `my_macro` in the example)
+  * the arguments that the callback must accept (`arg :: any` in the example)
+  * the *expected* type of the callback return value
