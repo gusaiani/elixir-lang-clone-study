@@ -225,3 +225,41 @@ As seen in the example above, defining a callback is a matter of defining a spec
   * the callback name (`my_fun` or `my_macro` in the example)
   * the arguments that the callback must accept (`arg :: any` in the example)
   * the *expected* type of the callback return value
+
+### Optional callbacks
+
+Optional callbacks are callbacks that callback modules may implement if they want to, but are not required to. Usually, behaviour modules know if they should call those callbacks based on configuration, or they check if the callbacks are defined with `function_exported?/3` or `macro_exported?/3`.
+
+Optional callbacks can be defined through the `@optional_callbacks` module attribute, which has to be a keyword list with function or macro name as key and arity as value. For example:
+
+    defmodule MyBehaviour do
+      @callback vital_fun() :: any
+      @callback non_vital_fun() :: any
+      @macrocallback non_vital_macro(arg :: any) :: Macro.t
+      @optional_callbacks non_vital_fun: 0, non_vital_macro: 1
+    end
+
+One example of optional callback in Elixir's standard library is `c:GenServer.format_status/2`.
+
+### Implementing behaviours
+
+To specify that a module implements a given behaviour, the `@behaviour` attribute must be used:
+
+    defmodule MyBehaviour do
+      @callback my_fun(arg :: any) :: any
+    end
+
+    defmodule MyCallbackModule do
+      @behaviour MyBehaviour
+      def my_fun(arg), do: arg
+    end
+
+If a callback module that implements a given behaviour doesn't export all the functions and macros defined by that behaviour, the user will be notified through warnings during the compilation process (no errors will happen).
+
+Elixir's standard library contains a few frequently used behaviours such as `GenServer`, `Supervisor`, and `Application`.
+
+## The `string()` type
+
+Elixir discourages the use of the `string()` type. The `string()` type refers to Erlang strings, which are known as "charlists" in Elixir. They do not refer to Elixir strings, which are UTF-8 encoded binaries. To avoid confusion, if you attempt to use the type `string()`, Elixir will emit a warning. You should use `charlist()`, `binary()` or `String.t()` accordingly.
+
+Note that `String.t()` and `binary()` are equivalent to analysis tools. Although, for those reading the documentation, `String.t()` implies it is a UTF-8 encoded binary.
