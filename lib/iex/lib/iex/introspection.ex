@@ -168,7 +168,7 @@ defmodule IEx.Introspection do
          {_, specs} <- List.keyfind(all_specs, {name, arity}, 0) do
       formatted =
         Enum.map(specs, fn spec ->
-
+          Typespec.spec_to_quoted(name, spec)
         end)
   end
 
