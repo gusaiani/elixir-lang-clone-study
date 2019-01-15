@@ -90,7 +90,7 @@ defmodule IEx.Introspection do
           {:docs_v1, _, _, _, _, _, _} ->
             docs_not_found(inspect(module))
 
-          _ ->
+          _ ->
             no_docs(module)
         end
 
@@ -112,7 +112,7 @@ defmodule IEx.Introspection do
               Enum.map(docs, &extract_name_and_arity/1)
 
             function_exported?(module, :__info__, 1) ->
-              module.__info__(:functions) ++ module.__info__(:macor)
+              module.__info__(:functions) ++ module.__info__(:macros)
 
             true ->
               module.module_info(:exports)
@@ -123,8 +123,29 @@ defmodule IEx.Introspection do
               (if docs do
                  find_doc_with_content(docs, function, arity)
                else
-                 get_spec()
-              end)
+                 get_spec(module, function, arity) != []
+               end) do
+            h_mod_fun_arity(module, function, arity)
+          end
+    end
+  end
+
+  defp h_mod_fun_arity(mod, fun, arity) when is_atom(mod) do
+    docs = get_docs(mod, [:function, :macro])
+    spec = get_spec(mod, fun, arity)
+
+    cond do
+      doc_tuple = find_doc_with_content(docs, fun, arity) ->
+        print_fun(mod, doc_tuple, spec)
+        :ok
+
+      docs && has_callback?(mod, fun, arity) ->
+        :behaviour_found
+
+      docs && has_type?(mod, fun, arity) ->
+        :type_found
+
+      is_nil(docs) and spec != [] ->
     end
   end
 
@@ -169,7 +190,37 @@ defmodule IEx.Introspection do
       formatted =
         Enum.map(specs, fn spec ->
           Typespec.spec_to_quoted(name, spec)
+          |> format_typespec(:spec, 2)
         end)
+
+      [formatted, ?\n]
+    else
+      _ -> []
+    end
+  end
+
+  ## Helpers
+
+  defp format_typespec(definition, kind, nesting) do
+    "@#{kind} #{Macro.to_string(definition)}"
+    |> Code.format_string!(line_length: IEx.width() - 2 * nesting)
+    |> IO.iodata_to_binary()
+    |> color_prefix_with_line()
+    |> indent(nesting)
+  end
+
+  defp indent(content, 0) do
+    [content, ?\n]
+  end
+
+  defp indent(content, nesting) do
+    whitespace = String.duplicate(" ", nesting)
+    [whitespace, String.replace(content, "\n", "\n#{whitespace}", ?\n)]
+  end
+
+  defp color_prefix_with_line(string) do
+    [left, right] = :binary.split(string, " ")
+    IEx.color(:doc_inline_code, left) <> " " <> right
   end
 
   defp print_doc(heading, types, doc, metadata) do
