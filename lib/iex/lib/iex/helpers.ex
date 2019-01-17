@@ -246,7 +246,7 @@ defmodule IEx.Helpers do
   end
 
   @doc """
-  Opens the given module, module/function/arity or `{file, line}`.
+  Opens the given `module`, `module.function/arity`, or `{file, line}`.
 
   This function uses the `ELIXIR_EDITOR` environment variable
   and falls back to `EDITOR` if the former is not available.
@@ -295,6 +295,28 @@ defmodule IEx.Helpers do
   """
   def h() do
     IEx.Introspection.h(IEx.Helpers)
+  end
+
+  @doc """
+  Prints the documentation for the given module
+  or for the given `function/arity` pair.
+
+  ## Examples
+
+      iex> h(Enum)
+
+  It also accepts functions in the format `function/arity`
+  and `module.function/arity`, for example:
+
+      iex> h(receive/1)
+      iex> h(Enum.all?/2)
+      iex> h(Enum.all?)
+
+  """
+  defmacro h(term) do
+    quote do
+      IEx.Introspection.h(unquote(IEx.Introspection.decompose(term, __CALLER__)))
+    end
   end
 
   defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)

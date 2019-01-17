@@ -127,7 +127,70 @@ defmodule IEx.Introspection do
                end) do
             h_mod_fun_arity(module, function, arity)
           end
+
+        cond do
+          result != [] ->
+            :ok
+
+          docs && has_callback?(module, function) ->
+            behaviour_found("#{inspect(module)}.#{function}")
+
+          docs && has_type?(module, function) ->
+            type_found("#{inspect(module)}.#{function}")
+
+          is_nil(docs) ->
+            no_docs(module)
+
+          true ->
+            docs_not_found("#{inspect(module)}.#{function}")
+        end
+
+      {:error, reason} ->
+      puts_error("Could not load module #{inspect(module)}, got: #{reason}")
     end
+
+    dont_display_result()
+  end
+
+  def h({module, function, arity})
+      when is_atom(module) and is_atom(function) and is_integer(arity) do
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        case h_mod_fun_arity(module, function, arity) do
+          :ok ->
+            :ok
+
+          :behaviour_found ->
+            behaviour_found("#{inspect(module)}.#{function}/#{arity}")
+
+          :type_found ->
+            type_found("#{inspect(module)}.#{function}/#{arity}")
+
+          :no_docs ->
+            no_docs(module)
+
+          :not_found ->
+            docs_not_found("#{inspect(module)}.#{function}/#{arity}")
+        end
+
+      {:error, reason} ->
+        puts_error("Could not load module #{inspect(module)}, got: #{reason}")
+    end
+
+    dont_display_result()
+  end
+
+  def h(invalid) do
+    puts_error(
+      "The \"h\" helper expects a Module, Module.fun or Module.fun/arity, got: #{inspect(invalid)}"
+    )
+
+    puts_error(
+      "If instead of accessing documentation you would like more information about a value " <>
+        "or about the result of an expression, use the \"i\" helper instead"
+    )
+
+    dont_display_result()
   end
 
   defp h_mod_fun_arity(mod, fun, arity) when is_atom(mod) do
@@ -215,7 +278,7 @@ defmodule IEx.Introspection do
 
   defp indent(content, nesting) do
     whitespace = String.duplicate(" ", nesting)
-    [whitespace, String.replace(content, "\n", "\n#{whitespace}", ?\n)]
+    [whitespace, String.replace(content, "\n", "\n#{whitespace}"), ?\n]
   end
 
   defp color_prefix_with_line(string) do
@@ -248,6 +311,20 @@ defmodule IEx.Introspection do
   end
 
   defp docs_not_found(for), do: not_found(for, "documentation")
+
+  defp behaviour_found(for) do
+    puts_error("""
+    No documentation for function #{for} was found, but there is a callback with the same name.
+    You can view callback documentation with the b/1 helper.
+    """)
+  end
+
+  defp type_found(for) do
+    puts_error("""
+    No documentation for function #{for} was found, but there is a type with the same name.
+    You can view type documentation with the t/1 helper.
+    """)
+  end
 
   defp not_found(for, type) do
     puts_error("No #{type} for #{for} was found")
