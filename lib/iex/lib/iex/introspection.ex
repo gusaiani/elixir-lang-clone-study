@@ -67,14 +67,138 @@ defmodule IEx.Introspection do
     end)
   end
 
+  defp find_special_form(pair) when is_tuple(pair) do
+    special_form_function? = pair in Kernel.SpecialForms.__info__(:functions)
+    special_form_macro? = pair in Kernel.SpecialForms.__info__(:macros)
+
+    if special_form_function? or special_form_macro?, do: Kernel.SpecialForms
+  end
+
+  defp find_special_form(fun) do
+    special_form_function? = Keyword.has_key?(Kernel.SpecialForms.__info__(:functions), fun)
+  end
+
   @doc """
   Opens the given module, mfa, file/line, binary.
   """
   def open(module) when is_atom(module) do
     case open_mfa(module, :__info__, 1) do
       {source, nil, _} -> open(source)
-      {_, tuple, _} ->
+      {_, tuple, _} -> open(tuple)
+      :error -> puts_error("Could not open: #{inspect(module)}. Module is not available.")
     end
+
+    dont_display_result()
+  end
+
+  def open({module, function}) when is_atom(module) and is_atom(function) do
+    case open_mfa(module, function, :*) do
+      {_, _, nil} ->
+        puts_error(
+          "Could not open: #{inspect(module)}.#{function}. Function/macro is not available."
+        )
+
+      {_, _, tuple} ->
+        open(tuple)
+
+      :error ->
+        puts_error("Could not open: #{inspect(module)}.#{function}. Module is not available.")
+    end
+
+    dont_display_result()
+  end
+
+  def open({module, function, arity})
+      when is_atom(module) and is_atom(function) and is_integer(arity) do
+    case open_mfa(module, function, arity) do
+      {_, _, nil} ->
+        puts_error(
+          "Could not open: #{inspect(module)}.#{function}/#{arity}. Function/macro is not available."
+        )
+
+      {_, _, tuple} ->
+        open(tuple)
+
+      :error ->
+        puts_error(
+          "Could not open: #{inspect(module)}.#{function}/#{arity}. Module is not available."
+        )
+    end
+
+    dont_display_result()
+  end
+
+  def open({file, line}) when is_binary(file) and is_integer(line) do
+    cond do
+      not File.regular?(file) ->
+        puts_error("Could not open: #{inspect(file)}. File is not available.")
+
+      editor = System.get_env("ELIXIR_EDITOR") || System.get_env("EDITOR") ->
+        command =
+          if editor =~ "__FILE__" or editor =~ "__LINE__" do
+            editor
+            |> String.replace("__FILE__", inspect(file))
+            |> String.replace("__LINE__", Integer.to_string(line))
+          else
+            "#{editor} #{inspect(file)}:#{line}"
+          end
+
+        IO.write(IEx.color(:eval_info, :os.cmd(String.to_charlist(command))))
+
+      true ->
+        puts_error(
+          "Could not open: #{inspect(file)}. " <>
+            "Please set the ELIXIR_EDITOR or EDITOR environment variables with the " <>
+            "command line invocation of your favorite EDITOR."
+        )
+    end
+
+    dont_display_result()
+  end
+
+  def open(invalid) do
+    puts_error("Invalid arguments for open helper: #{inspect(invalid)}")
+    dont_display_result()
+  end
+
+  defp open_mfa(module, fun, arity) do
+    with {:module, _} <- Code.ensure_loaded(module),
+         source when is_list(source) <- module.module_info(:compile)[:source] do
+      source = rewrite_source(module, source)
+    else
+      _ -> :error
+    end
+  end
+
+  @elixir_apps ~w(eex elixir ex_unit iex logger mix)a
+  @otp_apps ~w(kernel stdlib)a
+  @apps @elixir_apps ++ @otp_apps
+
+  defp rewrite_source(module, source) do
+    case :application.get_application(module) do
+      {:ok, app} when app in @apps ->
+        Application.app_dir(app, rewrite_source(source))
+
+      _ ->
+        beam_path = :code.which(module)
+
+        if is_list(beam_path) and List.starts_with?(beam_path, :code.root_dir()) do
+          app_vsn = beam_path |> Path.dirname() |> Path.dirname() |> Path.basename()
+          Path.join([:code.root_dir(), "lib", app_vsn, rewrite_source(source)])
+        else
+          List.to_string(source)
+        end
+    end
+  end
+
+  defp rewrite_source(source) do
+    {in_app, [lib_or_src | _]} =
+      source
+      |> Path.split()
+      |> Enum.reverse()
+      |> Enum.split_while(&(&1 not in ["lib", "src"]))
+
+    Path.join([lib_or_src | Enum.reverse(in_app)])
   end
 
   @doc """
@@ -146,7 +270,7 @@ defmodule IEx.Introspection do
         end
 
       {:error, reason} ->
-      puts_error("Could not load module #{inspect(module)}, got: #{reason}")
+        puts_error("Could not load module #{inspect(module)}, got: #{reason}")
     end
 
     dont_display_result()
@@ -226,7 +350,12 @@ defmodule IEx.Introspection do
 
   defp find_doc_with_content(docs, function, arity) do
     doc = find_doc(docs, function, arity)
+    if doc != nil and has_content?(doc), do: doc
   end
+
+  defp has_content?({_, _, _, :hidden, _}), do: false
+  defp has_content?({{_, name, _}, _, _, :none, _}), do: hd(Atom.to_charlist(name)) != ?_
+  defp has_content?({_, _, _, _, _}), do: true
 
   defp find_doc(nil, _fun, _arity) do
     nil
