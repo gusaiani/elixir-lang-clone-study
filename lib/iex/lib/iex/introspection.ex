@@ -76,6 +76,7 @@ defmodule IEx.Introspection do
 
   defp find_special_form(fun) do
     special_form_function? = Keyword.has_key?(Kernel.SpecialForms.__info__(:functions), fun)
+    special_form_macro? = Keyword.has_key?(Kernel.)
   end
 
   @doc """
