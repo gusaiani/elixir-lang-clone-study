@@ -588,5 +588,211 @@ defmodule Kernel.SpecialForms do
       iex> import List
       iex> flatten([1, [2], 3])
       [1, 2, 3]
+
+  ## Selector
+
+  By default, Elixir imports functions and macros from the given
+  module, except the ones starting with underscore (which are
+  usually callbacks):
+
+      import List
+
+  A developer can filter to import only macros or functions via
+  the only option:
+
+      import List, only: :functions
+      import List, only: :macros
+
+  Alternatively, Elixir allows a developer to pass pairs of
+  name/arities to `:only` or `:except` as a fine grained control
+  on what to import (or not):
+
+      import List, only: [flatten: 1]
+      import String, except: [split: 2]
+
+  Notice that calling `except` is always exclusive on a previously
+  declared `import/2`. If there is no previous import, then it applies
+  to all functions and macros in the module. For example:
+
+      import List, only: [flatten: 1, keyfind: 4]
+      import List, except: [flatten: 1]
+
+  After the two import calls above, only `List.keyfind/4` will be
+  imported.
+
+  ## Underscore functions
+
+  By default functions starting with `_` are not imported. If you really want
+  to import a function starting with `_` you must explicitly include it in the
+  `:only` selector.
+
+      import File.Stream, only: [__build__: 3]
+
+  ## Lexical scope
+
+  It is important to notice that `import/2` is lexical. This means you
+  can import specific macros inside specific functions:
+
+      defmodule Math do
+        def some_function do
+          # 1) Disable "if/2" from Kernel
+          import Kernel, except: [if: 2]
+
+          # 2) Require the new "if/2" macro from MyMacros
+          import MyMacros
+
+          # 3) Use the new macro
+          if do_something, it_works
+        end
+      end
+
+  In the example above, we imported macros from `MyMacros`,
+  replacing the original `if/2` implementation by our own
+  within that specific function. All other functions in that
+  module will still be able to use the original one.
+
+  ## Warnings
+
+  If you import a module and you don't use any of the imported
+  functions or macros from this module, Elixir is going to issue
+  a warning implying the import is not being used.
+
+  In case the import is generated automatically by a macro,
+  Elixir won't emit any warnings though, since the import
+  was not explicitly defined.
+
+  Both warning behaviours could be changed by explicitly
+  setting the `:warn` option to `true` or `false`.
+
+  ## Ambiguous function/macro names
+
+  If two modules `A` and `B` are imported and they both contain
+  a `foo` function with an arity of `1`, an error is only emitted
+  if an ambiguous call to `foo/1` is actually made; that is, the
+  errors are emitted lazily, not eagerly.
+  """
+  defmacro import(module, opts), do: error!([module, opts])
+
+  @doc """
+  Returns the current environment information as a `Macro.Env` struct.
+
+  In the environment you can access the current filename,
+  line numbers, set up aliases, the current function and others.
+  """
+  defmacro __ENV__, do: error!([])
+
+  @doc """
+  Returns the current module name as an atom or `nil` otherwise.
+
+  Although the module can be accessed in the `__ENV__/0`, this macro
+  is a convenient shortcut.
+  """
+  defmacro __MODULE__, do: error!([])
+
+  @doc """
+  Returns the absolute path of the directory of the current file as a binary.
+
+  Although the directory can be accessed as `Path.dirname(__ENV__.file)`,
+  this macro is a convenient shortcut.
+  """
+  defmacro __DIR__, do: error!([])
+
+  @doc """
+  Returns the current calling environment as a `Macro.Env` struct.
+
+  In the environment you can access the filename, line numbers,
+  set up aliases, the function and others.
+  """
+  defmacro __CALLER__, do: error!([])
+
+  @doc """
+  Returns the stacktrace for the currently handled exception.
+
+  It is available only in the `catch` and `rescue` clauses of `try/1`
+  expressions.
+
+  To retrieve the stacktrace of the current process, use
+  `Process.info(self(), :current_stacktrace)` instead.
+  """
+  defmacro __STACKTRACE__, do: error!([])
+
+  @doc """
+  Accesses an already bound variable in match clauses. Also known as the pin operator.
+
+  ## Examples
+
+  Elixir allows variables to be rebound via static single assignment:
+
+      iex> x = 1
+      iex> x = x + 1
+      iex> x
+      2
+
+  However, in some situations, it is useful to match against an existing
+  value, instead of rebinding. This can be done with the `^` special form,
+  colloquially known as the pin operator:
+
+      iex> x = 1
+      iex> ^x = List.first([1])
+      iex> ^x = List.first([2])
+      ** (MatchError) no match of right hand side value: 2
+
+  Note that `^x` always refers to the value of `x` prior to the match. The
+  following example will match:
+
+      iex> x = 0
+      iex> {x, ^x} = {1, 0}
+      iex> x
+      1
+
+  """
+  defmacro ^var, do: error!([var])
+
+  @doc """
+  Matches the value on the right against the pattern on the left.
+  """
+  defmacro left = right, do: error!([left, right])
+
+  @doc """
+  Used by types and bitstrings to specify types.
+
+  This operator is used in two distinct occasions in Elixir.
+  It is used in typespecs to specify the type of a variable,
+  function or of a type itself:
+
+      @type number :: integer | float
+      @spec add(number, number) :: number
+
+  It may also be used in bit strings to specify the type
+  of a given bit segment:
+
+      <<int::integer-little, rest::bits>> = bits
+
+  Read the documentation on the `Typespec` page and
+  `<<>>/1` for more information on typespecs and
+  bitstrings respectively.
+  """
+  defmacro left :: right, do: error!([left, right])
+
+  @doc ~S"""
+  Gets the representation of any expression.
+
+  ## Examples
+
+      iex> quote do
+      ...>   sum(1, 2, 3)
+      ...> end
+      {:sum, [], [1, 2, 3]}
+
+  ## Elixir's AST (Abstract Syntax Tree)
+
+  Any Elixir code can be represented using Elixir data structures.
+  The building block of Elixir macros is a tuple with three elements,
+  for example:
+
+      {:sum, [], [1, 2, 3]}
+
+  The tuple above represents a function call to `sum` passing 1, 2 and
+  3 as arguments. The tuple elements are:
   """
 end
