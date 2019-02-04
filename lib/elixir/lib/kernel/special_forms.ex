@@ -486,7 +486,7 @@ defmodule Kernel.SpecialForms do
   defmacro unquote(:.)(left, right), do: error!([left, right])
 
   @doc """
-  `alias/2` is used to setup aliases, often useful with modules' names.
+  `alias/2` is used to set up aliases, often useful with modules' names.
 
   ## Examples
 
@@ -794,5 +794,397 @@ defmodule Kernel.SpecialForms do
 
   The tuple above represents a function call to `sum` passing 1, 2 and
   3 as arguments. The tuple elements are:
-  """
+
+    * The first element of the tuple is always an atom or
+      another tuple in the same representation.
+
+    * The second element of the tuple represents metadata.
+
+    * The third element of the tuple are the arguments for the
+      function call. The third argument may be an atom, which is
+      usually a variable (or a local call).
+
+  Besides the tuple described above, Elixir has a few literals that
+  are also part of its AST. Those literals return themselves when
+  quoted. They are:
+
+      :sum         #=> Atoms
+      1            #=> Integers
+      2.0          #=> Floats
+      [1, 2]       #=> Lists
+      "strings"    #=> Strings
+      {key, value} #=> Tuples with two elements
+
+  Any other value, such as a map or a four-element tuple, must be escaped
+  (`Macro.escape/1`) before being introduced into an AST.
+
+  ## Options
+
+    * `:unquote` - when `false`, disables unquoting. This means any `unquote`
+      call will be kept as is in the AST, instead of replaced by the `unquote`
+      arguments. For example:
+
+          iex> quote do
+          ...>   unquote("hello")
+          ...> end
+          "hello"
+
+          iex> quote unquote: false do
+          ...>   unquote("hello")
+          ...> end
+          {:unquote, [], ["hello"]}
+
+    * `:location` - when set to `:keep`, keeps the current line and file from
+      quote. Read the Stacktrace information section below for more
+      information.
+
+    * `:line` - sets the quoted expressions to have the given line.
+
+    * `:generated` - marks the given chunk as generated so it does not emit warnings.
+      Currently it only works on special forms (for example, you can annotate a `case`
+      but not an `if`).
+
+    * `:context` - sets the resolution context.
+
+    * `:bind_quoted` - passes a binding to the macro. Whenever a binding is
+      given, `unquote/1` is automatically disabled.
+
+  ## Quote and macros
+
+  `quote/2` is commonly used with macros for code generation. As an exercise,
+  let's define a macro that multiplies a number by itself (squared). In practice,
+  there is no reason to define such a macro (and it would actually be
+  seen as a bad practice), but it is simple enough that it allows us to focus
+  on the important aspects of quotes and macros:
+
+      defmodule Math do
+        defmacro squared(x) do
+          quote do
+            unquote(x) * unquote(x)
+          end
+        end
+      end
+
+  We can invoke it as:
+
+      import Math
+      IO.puts "Got #{squared(5)}"
+
+  At first, there is nothing in this example that actually reveals it is a
+  macro. But what is happening is that, at compilation time, `squared(5)`
+  becomes `5 * 5`. The argument `5` is duplicated in the produced code, we
+  can see this behaviour in practice though because our macro actually has
+  a bug:
+
+      import Math
+      my_number = fn ->
+        IO.puts "Returning 5"
+        5
+      end
+      IO.puts "Got #{squared(my_number.())}"
+
+  The example above will print:
+
+      Returning 5
+      Returning 5
+      Got 25
+
+  Notice how "Returning 5" was printed twice, instead of just once. This is
+  because a macro receives an expression and not a value (which is what we
+  would expect in a regular function). This means that:
+
+      squared(my_number.())
+
+  Actually expands to:
+
+      my_number.() * my_number.()
+
+  Which invokes the function twice, explaining why we get the printed value
+  twice! In the majority of the cases, this is actually unexpected behaviour,
+  and that's why one of the first things you need to keep in mind when it
+  comes to macros is to **not unquote the same value more than once**.
+
+  Let's fix our macro:
+
+      defmodule Math do
+        defmacro squared(x) do
+          quote do
+            x = unquote(x)
+            x * x
+          end
+        end
+      end
+
+  Now invoking `squared(my_number.())` as before will print the value just
+  once.
+
+  In fact, this pattern is so common that most of the times you will want
+  to use the `bind_quoted` option with `quote/2`:
+
+      defmodule Math do
+        defmacro squared(x) do
+          quote bind_quoted: [x: x] do
+            x * x
+          end
+        end
+      end
+
+  `:bind_quoted` will translate to the same code as the example above.
+  `:bind_quoted` can be used in many cases and is seen as good practice,
+  not only because it helps prevent us from running into common mistakes, but also
+  because it allows us to leverage other tools exposed by macros, such as
+  unquote fragments discussed in some sections below.
+
+  Before we finish this brief introduction, you will notice that, even though
+  we defined a variable `x` inside our quote:
+
+      quote do
+        x = unquote(x)
+        x * x
+      end
+
+  When we call:
+
+      import Math
+      squared(5)
+      x #=> ** (CompileError) undefined variable x or undefined function x/0
+
+  We can see that `x` did not leak to the user context. This happens
+  because Elixir macros are hygienic, a topic we will discuss at length
+  in the next sections as well.
+
+  ## Hygiene in variables
+
+  Consider the following example:
+
+      defmodule Hygiene do
+        defmacro no_interference do
+          quote do
+            a = 1
+          end
+        end
+      end
+
+      require Hygiene
+
+      a = 10
+      Hygiene.no_interference
+      a #=> 10
+
+  In the example above, `a` returns 10 even if the macro
+  is apparently setting it to 1 because variables defined
+  in the macro do not affect the context the macro is executed in.
+  If you want to set or get a variable in the caller's context, you
+  can do it with the help of the `var!` macro:
+
+      defmodule NoHygiene do
+        defmacro interference do
+          quote do
+            var!(a) = 1
+          end
+        end
+      end
+
+      require NoHygiene
+
+      a = 10
+      NoHygiene.interference
+      a #=> 1
+
+  You cannot even access variables defined in the same module unless
+  you explicitly give it a context:
+
+      defmodule Hygiene do
+        defmacro write do
+          quote do
+            a = 1
+          end
+        end
+
+        defmacro read do
+          quote do
+            a
+          end
+        end
+      end
+
+      Hygiene.write
+      Hygiene.read
+      #=> ** (RuntimeError) undefined variable a or undefined function a/0
+
+  For such, you can explicitly pass the current module scope as
+  argument:
+
+      defmodule ContextHygiene do
+        defmacro write do
+          quote do
+            var!(a, ContextHygiene) = 1
+          end
+        end
+
+        defmacro read do
+          quote do
+            var!(a, ContextHygiene)
+          end
+        end
+      end
+
+      ContextHygiene.write
+      ContextHygiene.read
+      #=> 1
+
+  ## Hygiene in aliases
+
+  Aliases inside quote are hygienic by default.
+  Consider the following example:
+
+      defmodule Hygiene do
+        alias Map, as: M
+
+        defmacro no_interference do
+          quote do
+            M.new
+          end
+        end
+      end
+
+      require Hygiene
+      Hygiene.no_interference #=> %{}
+
+  Notice that, even though the alias `M` is not available
+  in the context the macro is expanded, the code above works
+  because `M` still expands to `Map`.
+
+  Similarly, even if we defined an alias with the same name
+  before invoking a macro, it won't affect the macro's result:
+
+      defmodule Hygiene do
+        alias Map, as: M
+
+        defmacro no_interference do
+          quote do
+            M.new
+          end
+        end
+      end
+
+      require Hygiene
+      alias SomethingElse, as: M
+      Hygiene.no_interference #=> %{}
+
+  In some cases, you want to access an alias or a module defined
+  in the caller. For such, you can use the `alias!` macro:
+
+      defmodule Hygiene do
+        # This will expand to Elixir.Nested.hello
+        defmacro no_interference do
+          quote do
+            Nested.hello
+          end
+        end
+
+        # This will expand to Nested.hello for
+        # whatever is Nested in the caller
+        defmacro interference do
+          quote do
+            alias!(Nested).hello
+          end
+        end
+      end
+
+      defmodule Parent do
+        defmodule Nested do
+          def hello, do: "world"
+        end
+
+        require Hygiene
+        Hygiene.no_interference
+        #=> ** (UndefinedFunctionError) ...
+
+        Hygiene.interference
+        #=> "world"
+      end
+
+  ## Hygiene in imports
+
+  Similar to aliases, imports in Elixir are hygienic. Consider the
+  following code:
+
+      defmodule Hygiene do
+        defmacrop get_length do
+          quote do
+            length([1, 2, 3])
+          end
+        end
+
+        def return_length do
+          import Kernel, except: [length: 1]
+          get_length
+        end
+      end
+
+      Hygiene.return_length #=> 3
+
+  Notice how `Hygiene.return_length/0` returns `3` even though the `Kernel.length/1`
+  function is not imported. In fact, even if `return_length/0`
+  imported a function with the same name and arity from another
+  module, it wouldn't affect the function result:
+
+      def return_length do
+        import String, only: [length: 1]
+        get_length
+      end
+
+  Calling this new `return_length/0` will still return `3` as result.
+
+  Elixir is smart enough to delay the resolution to the latest
+  possible moment. So, if you call `length([1, 2, 3])` inside quote,
+  but no `length/1` function is available, it is then expanded in
+  the caller:
+
+      defmodule Lazy do
+        defmacrop get_length do
+          import Kernel, except: [length: 1]
+
+          quote do
+            length("hello")
+          end
+        end
+
+        def return_length do
+          import Kernel, except: [length: 1]
+          import String, only: [length: 1]
+          get_length
+        end
+      end
+
+      Lazy.return_length #=> 5
+
+  ## Stacktrace information
+
+  When defining functions via macros, developers have the option of
+  choosing if runtime errors will be reported from the caller or from
+  inside the quote. Let's see an example:
+
+      # adder.ex
+      defmodule Adder do
+        @doc "Defines a function that adds two numbers"
+        defmacro defadd do
+          quote location: :keep do
+            def add(a, b), do: a + b
+          end
+        end
+      end
+
+      # sample.ex
+      defmodule Sample do
+        import Adder
+        defadd
+      end
+
+      require Sample
+      Sample.add(:one, :two)
+      #=> ** (ArithmeticError) bad argument in arithmetic expression
+      #=>     adder.ex:5: Sample.add/2
+
 end
