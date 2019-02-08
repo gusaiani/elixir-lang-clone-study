@@ -192,7 +192,7 @@ defmodule Kernel.SpecialForms do
       iex> <<102, rest::binary>>
       "foo"
 
-  The `utf8`, `utf16`, and `utf32` types are for Unicode codepoints. They
+  The `utf8`, `utf16`, and `utf32` types are for Unicode code points. They
   can also be applied to literal strings and charlists:
 
       iex> <<"foo"::utf16>>
@@ -868,7 +868,7 @@ defmodule Kernel.SpecialForms do
   We can invoke it as:
 
       import Math
-      IO.puts "Got #{squared(5)}"
+      IO.puts("Got #{squared(5)}")
 
   At first, there is nothing in this example that actually reveals it is a
   macro. But what is happening is that, at compilation time, `squared(5)`
@@ -878,10 +878,10 @@ defmodule Kernel.SpecialForms do
 
       import Math
       my_number = fn ->
-        IO.puts "Returning 5"
+        IO.puts("Returning 5")
         5
       end
-      IO.puts "Got #{squared(my_number.())}"
+      IO.puts("Got #{squared(my_number.())}")
 
   The example above will print:
 
@@ -947,7 +947,8 @@ defmodule Kernel.SpecialForms do
 
       import Math
       squared(5)
-      x #=> ** (CompileError) undefined variable x or undefined function x/0
+      x
+      #=> ** (CompileError) undefined variable x or undefined function x/0
 
   We can see that `x` did not leak to the user context. This happens
   because Elixir macros are hygienic, a topic we will discuss at length
@@ -968,8 +969,9 @@ defmodule Kernel.SpecialForms do
       require Hygiene
 
       a = 10
-      Hygiene.no_interference
-      a #=> 10
+      Hygiene.no_interference()
+      a
+      #=> 10
 
   In the example above, `a` returns 10 even if the macro
   is apparently setting it to 1 because variables defined
@@ -988,8 +990,9 @@ defmodule Kernel.SpecialForms do
       require NoHygiene
 
       a = 10
-      NoHygiene.interference
-      a #=> 1
+      NoHygiene.interference()
+      a
+      #=> 1
 
   You cannot even access variables defined in the same module unless
   you explicitly give it a context:
@@ -1008,8 +1011,8 @@ defmodule Kernel.SpecialForms do
         end
       end
 
-      Hygiene.write
-      Hygiene.read
+      Hygiene.write()
+      Hygiene.read()
       #=> ** (RuntimeError) undefined variable a or undefined function a/0
 
   For such, you can explicitly pass the current module scope as
@@ -1029,8 +1032,8 @@ defmodule Kernel.SpecialForms do
         end
       end
 
-      ContextHygiene.write
-      ContextHygiene.read
+      ContextHygiene.write()
+      ContextHygiene.read()
       #=> 1
 
   ## Hygiene in aliases
@@ -1043,13 +1046,14 @@ defmodule Kernel.SpecialForms do
 
         defmacro no_interference do
           quote do
-            M.new
+            M.new()
           end
         end
       end
 
       require Hygiene
-      Hygiene.no_interference #=> %{}
+      Hygiene.no_interference()
+      #=> %{}
 
   Notice that, even though the alias `M` is not available
   in the context the macro is expanded, the code above works
@@ -1063,31 +1067,32 @@ defmodule Kernel.SpecialForms do
 
         defmacro no_interference do
           quote do
-            M.new
+            M.new()
           end
         end
       end
 
       require Hygiene
       alias SomethingElse, as: M
-      Hygiene.no_interference #=> %{}
+      Hygiene.no_interference()
+      #=> %{}
 
   In some cases, you want to access an alias or a module defined
   in the caller. For such, you can use the `alias!` macro:
 
       defmodule Hygiene do
-        # This will expand to Elixir.Nested.hello
+        # This will expand to Elixir.Nested.hello()
         defmacro no_interference do
           quote do
-            Nested.hello
+            Nested.hello()
           end
         end
 
-        # This will expand to Nested.hello for
+        # This will expand to Nested.hello() for
         # whatever is Nested in the caller
         defmacro interference do
           quote do
-            alias!(Nested).hello
+            alias!(Nested).hello()
           end
         end
       end
@@ -1098,10 +1103,10 @@ defmodule Kernel.SpecialForms do
         end
 
         require Hygiene
-        Hygiene.no_interference
+        Hygiene.no_interference()
         #=> ** (UndefinedFunctionError) ...
 
-        Hygiene.interference
+        Hygiene.interference()
         #=> "world"
       end
 
@@ -1123,7 +1128,8 @@ defmodule Kernel.SpecialForms do
         end
       end
 
-      Hygiene.return_length #=> 3
+      Hygiene.return_length()
+      #=> 3
 
   Notice how `Hygiene.return_length/0` returns `3` even though the `Kernel.length/1`
   function is not imported. In fact, even if `return_length/0`
@@ -1158,7 +1164,8 @@ defmodule Kernel.SpecialForms do
         end
       end
 
-      Lazy.return_length #=> 5
+      Lazy.return_length()
+      #=> 5
 
   ## Stacktrace information
 
@@ -1187,4 +1194,212 @@ defmodule Kernel.SpecialForms do
       #=> ** (ArithmeticError) bad argument in arithmetic expression
       #=>     adder.ex:5: Sample.add/2
 
+  When using `location: :keep` and invalid arguments are given to
+  `Sample.add/2`, the stacktrace information will point to the file
+  and line inside the quote. Without `location: :keep`, the error is
+  reported to where `defadd` was invoked. `location: :keep` affects
+  only definitions inside the quote.
+
+  ## Binding and unquote fragments
+
+  Elixir quote/unquote mechanisms provide a functionality called
+  unquote fragments. Unquote fragments provide an easy way to generate
+  functions on the fly. Consider this example:
+
+      kv = [foo: 1, bar: 2]
+      Enum.each(kv, fn {k, v} ->
+        def unquote(k)(), do: unquote(v)
+      end)
+
+  In the example above, we have generated the functions `foo/0` and
+  `bar/0` dynamically. Now, imagine that we want to convert this
+  functionality into a macro:
+
+      defmacro defkv(kv) do
+        Enum.map(kv, fn {k, v} ->
+          quote do
+            def unquote(k)(), do: unquote(v)
+          end
+        end)
+      end
+
+  We can invoke this macro as:
+
+      defkv [foo: 1, bar: 2]
+
+  However, we can't invoke it as follows:
+
+      kv = [foo: 1, bar: 2]
+      defkv kv
+
+  This is because the macro is expecting its arguments to be a
+  keyword list at **compilation** time. Since in the example above
+  we are passing the representation of the variable `kv`, our
+  code fails.
+
+  This is actually a common pitfall when developing macros. We are
+  assuming a particular shape in the macro. We can work around it
+  by unquoting the variable inside the quoted expression:
+
+      defmacro defkv(kv) do
+        quote do
+          Enum.each(unquote(kv), fn {k, v} ->
+            def unquote(k)(), do: unquote(v)
+          end)
+        end
+      end
+
+  If you try to run our new macro, you will notice it won't
+  even compile, complaining that the variables `k` and `v`
+  do not exist. This is because of the ambiguity: `unquote(k)`
+  can either be an unquote fragment, as previously, or a regular
+  unquote as in `unquote(kv)`.
+
+  One solution to this problem is to disable unquoting in the
+  macro, however, doing that would make it impossible to inject the
+  `kv` representation into the tree. That's when the `:bind_quoted`
+  option comes to the rescue (again!). By using `:bind_quoted`, we
+  can automatically disable unquoting while still injecting the
+  desired variables into the tree:
+
+      defmacro defkv(kv) do
+        quote bind_quoted: [kv: kv] do
+          Enum.each(kv, fn {k, v} ->
+            def unquote(k)(), do: unquote(v)
+          end)
+        end
+      end
+
+  In fact, the `:bind_quoted` option is recommended every time
+  one desires to inject a value into the quote.
+  """
+  defmacro quote(opts, block), do: error!([opts, block])
+
+  @doc """
+  Unquotes the given expression inside a quoted expression.
+
+  This function expects a valid Elixir AST, also known as
+  quoted expression, as argument. If you would like to `unquote`
+  any value, such as a map or a four-element tuple, you should
+  call `Macro.escape/1` before unquoting.
+
+  ## Examples
+
+  Imagine the situation you have a quoted expression and
+  you want to inject it inside some quote. The first attempt
+  would be:
+
+      value =
+        quote do
+          13
+        end
+
+      quote do
+        sum(1, value, 3)
+      end
+
+  Which would then return:
+
+      {:sum, [], [1, {:value, [], Elixir}, 3]}
+
+  Which is not the expected result. For this, we use `unquote`:
+
+      iex> value =
+      ...>   quote do
+      ...>     13
+      ...>   end
+      iex> quote do
+      ...>   sum(1, unquote(value), 3)
+      ...> end
+      {:sum, [], [1, 13, 3]}
+
+  If you want to unquote a value that is not a quoted expression,
+  such as a map, you need to call `Macro.escape/1` before:
+
+      iex> value = %{foo: :bar}
+      iex> quote do
+      ...>   process_map(unquote(Macro.escape(value)))
+      ...> end
+      {:process_map, [], [{:%{}, [], [foo: :bar]}]}
+
+  If you forget to escape it, Elixir will raise an error
+  when compiling the code.
+  """
+  defmacro unquote(:unquote)(expr), do: error!([expr])
+
+  @doc """
+  Unquotes the given list expanding its arguments.
+
+  Similar to `unquote/1`.
+
+  ## Examples
+
+      iex> values = [2, 3, 4]
+      iex> quote do
+      ...>   sum(1, unquote_splicing(values), 5)
+      ...> end
+      {:sum, [], [1, 2, 3, 4, 5]}
+
+  """
+  defmacro unquote(:unquote_splicing)(expr), do: error!([expr])
+
+  @doc ~S"""
+  Comprehensions allow you to quickly build a data structure from
+  an enumerable or a bitstring.
+
+  Let's start with an example:
+
+      iex> for n <- [1, 2, 3, 4], do: n * 2
+      [2, 4, 6, 8]
+
+  A comprehension accepts many generators and filters. Enumerable
+  generators are defined using `<-`:
+
+      # A list generator:
+      iex> for n <- [1, 2, 3, 4], do: n * 2
+      [2, 4, 6, 8]
+
+      # A comprehension with two generators
+      iex> for x <- [1, 2], y <- [2, 3], do: x * y
+      [2, 3, 4, 6]
+
+  Filters can also be given:
+
+      # A comprehension with a generator and a filter
+      iex> for n <- [1, 2, 3, 4, 5, 6], rem(n, 2) == 0, do: n
+      [2, 4, 6]
+
+  Generators can also be used to filter as it removes any value
+  that doesn't match the pattern on the left side of `<-`:
+
+      iex> users = [user: "john", admin: "meg", guest: "barbara"]
+      iex> for {type, name} when type != :guest <- users do
+      ...>   String.upcase(name)
+      ...> end
+      ["JOHN", "MEG"]
+
+  Bitstring generators are also supported and are very useful when you
+  need to organize bitstring streams:
+
+      iex> pixels = <<213, 45, 132, 64, 76, 32, 76, 0, 0, 234, 32, 15>>
+      iex> for <<r::8, g::8, b::8 <- pixels>>, do: {r, g, b}
+      [{213, 45, 132}, {64, 76, 32}, {76, 0, 0}, {234, 32, 15}]
+
+  Variable assignments inside the comprehension, be it in generators,
+  filters or inside the block, are not reflected outside of the
+  comprehension.
+
+  ## The `:into` and `:uniq` options
+
+  In the examples above, the result returned by the comprehension was
+  always a list. The returned result can be configured by passing an
+  `:into` option, that accepts any structure as long as it implements
+  the `Collectable` protocol.
+
+  For example, we can use bitstring generators with the `:into` option
+  to easily remove all spaces in a string:
+
+      iex> for <<c <- " hello world ">>, c != ?\s, into: "", do: <<c>>
+      "helloworld"
+  """
 end
