@@ -1494,5 +1494,190 @@ defmodule Kernel.SpecialForms do
       {:ok, "admin"}
 
   As in `for/1`, variables bound inside `with/1` won't leak.
+  Expressions without `<-` may also be used in clauses. For instance,
+  you can perform regular matches with the `=` operator:
+
+      iex> width = nil
+      iex> opts = %{width: 10, height: 15}
+      iex> with {:ok, width} <- Map.fetch(opts, :width),
+      ...>      double_width = width * 2,
+      ...>      {:ok, height} <- Map.fetch(opts, :height) do
+      ...>   {:ok, double_width * height}
+      ...> end
+      {:ok, 300}
+      iex> width
+      nil
+
+  The behaviour of any expression in a clause is the same as outside.
+  For example, `=` will raise a `MatchError` instead of returning the
+  non-matched value:
+
+      with :foo = :bar, do: :ok
+      #=> ** (MatchError) no match of right hand side value: :bar
+
+  As with any other function or macro call in Elixir, explicit parens can
+  also be used around the arguments before the `do`/`end` block:
+
+      iex> opts = %{width: 10, height: 15}
+      iex> with(
+      ...>   {:ok, width} <- Map.fetch(opts, :width),
+      ...>   {:ok, height} <- Map.fetch(opts, :height)
+      ...> ) do
+      ...>   {:ok, width * height}
+      ...> end
+      {:ok, 150}
+
+  The choice between parens and no parens is a matter of preference.
+
+  An `else` option can be given to modify what is being returned from
+  `with` in the case of a failed match:
+
+      iex> opts = %{width: 10}
+      iex> with {:ok, width} <- Map.fetch(opts, :width),
+      ...>      {:ok, height} <- Map.fetch(opts, :height) do
+      ...>   {:ok, width * height}
+      ...> else
+      ...>   :error ->
+      ...>     {:error, :wrong_data}
+      ...> end
+      {:error, :wrong_data}
+
+  If an `else` block is used and there are no matching clauses, a `WithClauseError`
+  exception is raised.
+  """
+  defmacro with(args), do: error!([args])
+
+  @doc """
+  Defines an anonymous function.
+
+  ## Examples
+
+      iex> add = fn a, b -> a + b end
+      iex> add.(1, 2)
+      3
+
+  Anonymous functions can also have multiple clauses. All clauses
+  should expect the same number of arguments:
+
+      iex> negate = fn
+      ...>   true -> false
+      ...>   false -> true
+      ...> end
+      iex> negate.(false)
+      true
+
+  """
+  defmacro unquote(:fn)(clauses), do: error!([clauses])
+
+  @doc """
+  Internal special form for block expressions.
+
+  This is the special form used whenever we have a block
+  of expressions in Elixir. This special form is private
+  and should not be invoked directly:
+
+      iex> quote do
+      ...>   1
+      ...>   2
+      ...>   3
+      ...> end
+      {:__block__, [], [1, 2, 3]}
+
+  """
+  defmacro unquote(:__block__)(args), do: error!([args])
+
+  @doc """
+  Captures or creates an anonymous function.
+
+  ## Capture
+
+  The capture operator is most commonly used to capture a
+  function with given name and arity from a module:
+
+      iex> fun = &Kernel.is_atom/1
+      iex> fun.(:atom)
+      true
+      iex> fun.("string")
+      false
+
+  In the example above, we captured `Kernel.is_atom/1` as an
+  anonymous function and then invoked it.
+
+  The capture operator can also be used to capture local functions,
+  including private ones, and imported functions by omitting the
+  module name:
+
+      &local_function/1
+
+  ## Anonymous functions
+
+  The capture operator can also be used to partially apply
+  functions, where `&1`, `&2` and so on can be used as value
+  placeholders. For example:
+
+      iex> double = &(&1 * 2)
+      iex> double.(2)
+      4
+
+  In other words, `&(&1 * 2)` is equivalent to `fn x -> x * 2 end`.
+
+  We can partially apply a remote function with placeholder:
+
+      iex> take_five = &Enum.take(&1, 5)
+      iex> take_five.(1..10)
+      [1, 2, 3, 4, 5]
+
+  Another example while using an imported or local function:
+
+      iex> first_elem = &elem(&1, 0)
+      iex> first_elem.({0, 1})
+      0
+
+  The `&` operator can be used with more complex expressions:
+
+      iex> fun = &(&1 + &2 + &3)
+      iex> fun.(1, 2, 3)
+      6
+
+  As well as with lists and tuples:
+
+      iex> fun = &{&1, &2}
+      iex> fun.(1, 2)
+      {1, 2}
+
+      iex> fun = &[&1 | &2]
+      iex> fun.(1, [2, 3])
+      [1, 2, 3]
+
+  The only restrictions when creating anonymous functions is that at
+  least one placeholder must be present, i.e. it must contain at least
+  `&1`, and that block expressions are not supported:
+
+      # No placeholder, fails to compile
+      &(:foo)
+
+      # Block expression, fails to compile
+      &(&1; &2)
+
+  """
+  defmacro unquote(:&)(expr), do: error!([expr])
+
+  @doc """
+  Internal special form to hold aliases information.
+
+  It is usually compiled to an atom:
+
+      iex> quote do
+      ...>   Foo.Bar
+      ...> end
+      {:__aliases__, [alias: false], [:Foo, :Bar]}
+
+  Elixir represents `Foo.Bar` as `__aliases__` so calls can be
+  unambiguously identified by the operator `:.`. For example:
+
+      iex> quote do
+      ...>   Foo.bar
+      ... end
+      {{:., [], [{:__aliases__, [alias: false], [:Foo]}, :bar]}, [], []}
   """
 end
