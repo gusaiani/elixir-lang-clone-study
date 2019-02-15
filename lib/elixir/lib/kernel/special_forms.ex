@@ -1653,10 +1653,10 @@ defmodule Kernel.SpecialForms do
   least one placeholder must be present, i.e. it must contain at least
   `&1`, and that block expressions are not supported:
 
-      # No placeholder, fails to compile
+      # No placeholder, fails to compile.
       &(:foo)
 
-      # Block expression, fails to compile
+      # Block expression, fails to compile.
       &(&1; &2)
 
   """
@@ -1677,7 +1677,133 @@ defmodule Kernel.SpecialForms do
 
       iex> quote do
       ...>   Foo.bar
-      ... end
+      ...> end
       {{:., [], [{:__aliases__, [alias: false], [:Foo]}, :bar]}, [], []}
+
+  Whenever an expression iterator sees a `:.` as the tuple key,
+  it can be sure that it represents a call and the second argument
+  in the list is an atom.
+
+  On the other hand, aliases hold some properties:
+
+    1. The head element of aliases can be any term that must expand to
+       an atom at compilation time.
+
+    2. The tail elements of aliases are guaranteed to always be atoms.
+
+    3. When the head element of aliases is the atom `:Elixir`, no expansion happens.
+
   """
+  defmacro unquote(:__aliases__)(args), do: error!([args])
+
+  @doc """
+  Calls the overridden function when overriding it with `Kernel.defoverridable/1`.
+
+  See `Kernel.defoverridable/1` for more information and documentation.
+  """
+  defmacro super(args), do: error!([args])
+
+  @doc ~S"""
+  Matches the given expression against the given clauses.
+
+  ## Examples
+
+      case thing do
+        {:selector, i, value} when is_integer(i) ->
+          value
+        value ->
+          value
+      end
+
+  In the example above, we match `thing` against each clause "head"
+  and execute the clause "body" corresponding to the first clause
+  that matches.
+
+  If no clause match, an error is raised.
+  For this reason, it may be necessary to add a final catch-all clause (like `_`)
+  which will always match.
+
+      x = 10
+
+      case x do
+        0 ->
+          "This clause won't match"
+        _ ->
+          "This clause would match any value (x = #{x})"
+      end
+      #=> "This clause would match any value (x = 10)"
+
+  ## Variable handling
+
+  Notice that variables bound in a clause "head" do not leak to the
+  outer context:
+
+      case data do
+        {:ok, value} -> value
+        :error -> nil
+      end
+
+      value
+      #=> unbound variable value
+
+  However, variables explicitly bound in the clause "body" are
+  accessible from the outer context:
+
+      value = 7
+
+      case lucky? do
+        false -> value = 13
+        true -> true
+      end
+
+      value
+      #=> 7 or 13
+
+  In the example above, `value` is going to be `7` or `13` depending on
+  the value of `lucky?`. In case `value` has no previous value before
+  case, clauses that do not explicitly bind a value have the variable
+  bound to `nil`.
+
+  If you want to pattern match against an existing variable,
+  you need to use the `^/1` operator:
+
+      x = 1
+
+      case 10 do
+        ^x -> "Won't match"
+        _ -> "Will match"
+      end
+      #=> "Will match"
+
+  """
+  defmacro case(condition, clauses), do: error!([condition, clauses])
+
+  @doc """
+  Evaluates the expression corresponding to the first clause that
+  evaluates to a truthy value.
+
+      cond do
+        hd([1, 2, 3]) ->
+          "1 is considered as true"
+      end
+      #=> "1 is considered as true"
+
+  Raises an error if all conditions evaluate to `nil` or `false`.
+  For this reason, it may be necessary to add a final always-truthy condition
+  (anything non-`false` and non-`nil`), which will always match.
+
+  ## Examples
+
+      cond do
+        1 + 1 == 1 ->
+          "This will never match"
+        2 * 2 != 4 ->
+          "Nor this"
+        true ->
+          "This will"
+      end
+      #=> "This will"
+
+  """
+  defmacro cond(clauses), do: error!([clauses])
 end
