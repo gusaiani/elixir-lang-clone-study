@@ -1719,7 +1719,7 @@ defmodule Kernel.SpecialForms do
   and execute the clause "body" corresponding to the first clause
   that matches.
 
-  If no clause match, an error is raised.
+  If no clause matches, an error is raised.
   For this reason, it may be necessary to add a final catch-all clause (like `_`)
   which will always match.
 
@@ -1806,4 +1806,188 @@ defmodule Kernel.SpecialForms do
 
   """
   defmacro cond(clauses), do: error!([clauses])
+
+  @doc ~S"""
+  Evaluates the given expressions and handles any error, exit,
+  or throw that may have happened.
+
+  ## Examples
+
+      try do
+        do_something_that_may_fail(some_arg)
+      rescue
+        ArgumentError ->
+          IO.puts "Invalid argument given"
+      catch
+        value ->
+          IO.puts "Caught #{inspect(value)}"
+      else
+        value ->
+          IO.puts "Success! The result was #{inspect(value)}"
+      after
+        IO.puts "This is printed regardless if it failed or succeeded"
+      end
+
+  The `rescue` clause is used to handle exceptions while the `catch`
+  clause can be used to catch thrown values and exits.
+  The `else` clause can be used to control flow based on the result of
+  the expression. `catch`, `rescue`, and `else` clauses work based on
+  pattern matching (similar to the `case` special form).
+
+  Calls inside `try/1` are not tail recursive since the VM needs to keep
+  the stacktrace in case an exception happens. To retrieve the stacktrace,
+  access `__STACKTRACE__/0` inside the `rescue` or `catch` clause.
+
+  ## `rescue` clauses
+
+  Besides relying on pattern matching, `rescue` clauses provide some
+  conveniences around exceptions that allow one to rescue an
+  exception by its name. All the following formats are valid patterns
+  in `rescue` clauses:
+
+      # Rescue a single exception without binding the exception
+      # to a variable
+      try do
+        UndefinedModule.undefined_function
+      rescue
+        UndefinedFunctionError -> nil
+      end
+
+      # Rescue any of the given exception without binding
+      try do
+        UndefinedModule.undefined_function
+      rescue
+        [UndefinedFunctionError, ArgumentError] -> nil
+      end
+
+      # Rescue and bind the exception to the variable "x"
+      try do
+        UndefinedModule.undefined_function
+      rescue
+        x in [UndefinedFunctionError] -> nil
+      end
+
+      # Rescue all kinds of exceptions and bind the rescued exception
+      # to the variable "x"
+      try do
+        UndefinedModule.undefined_function
+      rescue
+        x -> nil
+      end
+
+  ### Erlang errors
+
+  Erlang errors are transformed into Elixir ones when rescuing:
+
+      try do
+        :erlang.error(:badarg)
+      rescue
+        ArgumentError -> :ok
+      end
+      #=> :ok
+
+  The most common Erlang errors will be transformed into their
+  Elixir counterpart. Those which are not will be transformed
+  into the more generic `ErlangError`:
+
+      try do
+        :erlang.error(:unknown)
+      rescue
+        ErlangError -> :ok
+      end
+      #=> :ok
+
+  In fact, `ErlangError` can be used to rescue any error that is
+  not a proper Elixir error. For example, it can be used to rescue
+  the earlier `:badarg` error too, prior to transformation:
+
+      try do
+        :erlang.error(:badarg)
+      rescue
+        ErlangError -> :ok
+      end
+      #=> :ok
+
+  ## `catch` clauses
+
+  The `catch` clause can be used to catch thrown values, exits, and errors.
+
+  ### Catching thrown values
+
+  `catch` can be used to catch values thrown by `Kernel.throw/1`:
+
+      try do
+        throw(:some_value)
+      catch
+        thrown_value ->
+          IO.puts "A value was thrown: #{inspect(thrown_value)}"
+      end
+
+  ### Catching values of any kind
+
+  The `catch` clause also supports catching exits and errors. To do that, it
+  allows matching on both the *kind* of the caught value as well as the value
+  itself:
+
+      try do
+        exit(:shutdown)
+      catch
+        :exit, value
+          IO.puts "Exited with value #{inspect(value)}"
+      end
+
+      try do
+        exit(:shutdown)
+      catch
+        kind, value when kind in [:exit, :throw] ->
+          IO.puts "Caught exit or throw with value #{inspect(value)}"
+      end
+
+  The `catch` clause also supports `:error` alongside `:exit` and `:throw` as
+  in Erlang, although this is commonly avoided in favor of `raise`/`rescue` control
+  mechanisms. One reason for this is that when catching `:error`, the error is
+  not automatically transformed into an Elixir error:
+
+      try do
+        :erlang.error(:badarg)
+      catch
+        :error, :badarg -> :ok
+      end
+      #=> :ok
+
+  ## `after` clauses
+
+  An `after` clause allows you to define cleanup logic that will be invoked both
+  when the block of code passed to `try/1` succeeds and also when an error is raised. Note
+  that the process will exit as usual when receiving an exit signal that causes
+  it to exit abruptly and so the `after` clause is not guaranteed to be executed.
+  Luckily, most resources in Elixir (such as open files, ETS tables, ports, sockets,
+  and so on) are linked to or monitor the owning process and will automatically clean
+  themselves up if that process exits.
+
+      File.write!("tmp/story.txt", "Hello, World")
+      try do
+        do_something_with("tmp/story.txt")
+      after
+        File.rm("tmp/story.txt")
+      end
+
+  ## `else` clauses
+
+  `else` clauses allow the result of the body passed to `try/1` to be pattern
+  matched on:
+
+      x = 2
+      try do
+        1 / x
+      rescue
+        ArithmeticError ->
+          :infinity
+      else
+        y when y < 1 and y > -1 ->
+          :small
+        _ ->
+          :large
+      end
+
 end
