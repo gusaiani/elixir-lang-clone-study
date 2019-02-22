@@ -1990,4 +1990,164 @@ defmodule Kernel.SpecialForms do
           :large
       end
 
+  If an `else` clause is not present and no exceptions are raised,
+  the result of the expression will be returned:
+
+      x = 1
+      ^x =
+        try do
+          1 / x
+        rescue
+          ArithmeticError ->
+            :infinity
+        end
+
+  However, when an `else` clause is present but the result of the expression
+  does not match any of the patterns then an exception will be raised. This
+  exception will not be caught by a `catch` or `rescue` in the same `try`:
+
+      x = 1
+      try do
+        try do
+          1 / x
+        rescue
+          # The TryClauseError cannot be rescued here:
+          TryClauseError ->
+            :error_a
+        else
+          0 ->
+            :small
+        end
+      rescue
+        # The TryClauseError is rescued here:
+        TryClauseError ->
+          :error_b
+      end
+
+  Similarly, an exception inside an `else` clause is not caught or rescued
+  inside the same `try`:
+
+      try do
+        try do
+          nil
+        catch
+          # The exit(1) call below can not be caught here:
+          :exit, _ ->
+            :exit_a
+        else
+          _ ->
+            exit(1)
+        end
+      catch
+        # The exit is caught here:
+        :exit, _ ->
+          :exit_b
+      end
+
+  This means the VM no longer needs to keep the stacktrace once inside
+  an `else` clause and so tail recursion is possible when using a `try`
+  with a tail call as the final call inside an `else` clause. The same
+  is true for `rescue` and `catch` clauses.
+
+  Only the result of the tried expression falls down to the `else` clause.
+  If the `try` ends up in the `rescue` or `catch` clauses, their result
+  will not fall down to `else`:
+
+      try do
+        throw(:catch_this)
+      catch
+        :throw, :catch_this ->
+          :it_was_caught
+      else
+        # :it_was_caught will not fall down to this "else" clause.
+        other ->
+          {:else, other}
+      end
+
+  ## Variable handling
+
+  Since an expression inside `try` may not have been evaluated
+  due to an exception, any variable created inside `try` cannot
+  be accessed externally. For instance:
+
+      try do
+        x = 1
+        do_something_that_may_fail(same_arg)
+        :ok
+      catch
+        _, _ -> :failed
+      end
+
+      x
+      #=> unbound variable "x"
+
+  In the example above, `x` cannot be accessed since it was defined
+  inside the `try` clause. A common practice to address this issue
+  is to return the variables defined inside `try`:
+
+      x =
+        try do
+          x = 1
+          do_something_that_may_fail(same_arg)
+          x
+        catch
+          _, _ -> :failed
+        end
+
+  """
+  defmacro try(args), do: error!([args])
+
+  @doc """
+  Checks if there is a message matching the given clauses
+  in the current process mailbox.
+
+  In case there is no such message, the current process hangs
+  until a message arrives or waits until a given timeout value.
+
+  ## Examples
+
+      receive do
+        {:selector, number, name} when is_integer(number) ->
+          name
+        name when is_atom(name) ->
+          name
+        _ ->
+          IO.puts :stderr, "Unexpected message received"
+      end
+
+  An optional `after` clause can be given in case the message was not
+  received after the given timeout period, specified in milliseconds:
+
+      receive do
+        {:selector, number, name} when is_integer(number) ->
+          name
+        name when is_atom(name) ->
+          name
+        _ ->
+          IO.puts :stderr, "Unexpected message received"
+      after
+        5000 ->
+          IO.puts :stderr, "No message in 5 seconds"
+      end
+
+  The `after` clause can be specified even if there are no match clauses.
+  The timeout value given to `after` can be any expression evaluating to
+  one of the allowed values:
+
+    * `:infinity` - the process should wait indefinitely for a matching
+      message, this is the same as not using the after clause
+
+    * `0` - if there is no matching message in the mailbox, the timeout
+      will occur immediately
+
+    * positive integer smaller than or equal to `4_294_967_295` (`0xFFFFFFFF`
+      in hexadecimal notation) - it should be possible to represent the timeout
+      value as an unsigned 32-bit integer.
+
+  ## Variable handling
+
+  The `receive/1` special form handles variables exactly as the `case/2`
+  special macro. For more information, check the docs for `case/2`.
+  """
+  defmacro receive(args), do: error!([args])
 end
