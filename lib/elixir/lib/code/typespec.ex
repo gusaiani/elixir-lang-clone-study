@@ -21,6 +21,10 @@ defmodule Code.Typespec do
     end
   end
 
+  @doc """
+  Returns all callbacks available from the module's BEAM code.
+  """
+
   defp typespecs_abstract_code(module) do
     with {module, binary} <- get_module_and_beam(module),
          {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
@@ -103,5 +107,3 @@ defmodule Code.Typespec do
     :error
   end
 end
-
-

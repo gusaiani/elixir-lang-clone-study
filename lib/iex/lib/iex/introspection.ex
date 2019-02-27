@@ -76,7 +76,9 @@ defmodule IEx.Introspection do
 
   defp find_special_form(fun) do
     special_form_function? = Keyword.has_key?(Kernel.SpecialForms.__info__(:functions), fun)
-    special_form_macro? = Keyword.has_key?(Kernel.)
+    special_form_macro? = Keyword.has_key?(Kernel.SpecialForms.__info__(:macros), fun)
+
+    if special_form_function? or special_form_macro?, do: Kernel.SpecialForms
   end
 
   @doc """
@@ -166,8 +168,47 @@ defmodule IEx.Introspection do
     with {:module, _} <- Code.ensure_loaded(module),
          source when is_list(source) <- module.module_info(:compile)[:source] do
       source = rewrite_source(module, source)
+      open_abstract_code(module, fun, arity, source)
     else
       _ -> :error
+    end
+  end
+
+  defp open_abstract_code(module, fun, arity, source) do
+    fun = Atom.to_string(fun)
+
+    with [_ | _] = beam <- :code.which(module),
+         {:ok, {_, [abstract_code: abstract_code]}} <- :beam_lib.chunks(beam, [:abstract_code]),
+         {:raw_abstract_v1, code} <- abstract_code do
+      {_, module_pair, fa_pair} =
+        Enum.reduce(code, {source, nil, nil}, &open_abstract_code_reduce(&1, &2, fun, arity))
+
+      {source, module_pair, fa_pair}
+    else
+      _ ->
+        {source, nil, nil}
+    end
+  end
+
+  defp open_abstract_code_reduce(entry, {file, module_pair, fa_pair}, fun, arity) do
+    case entry do
+      {:attribute, ann, :module, _} ->
+        {file, {file, :erl_anno.line(ann)}, fa_pair}
+
+      {:function, ann, ann_fun, ann_arity, _} ->
+        case Atom.to_string(ann_fun) do
+          "MACRO-" <> ^fun when arity == :* or ann_arity == arity + 1 ->
+            {file, module_pair, fa_pair || {file, :erl_anno.line(ann)}}
+
+          ^fun when arity == :* or ann_arity == arity ->
+            {file, module_pair, fa_pair || {file, :erl_anno.line(ann)}}
+
+          _ ->
+            {file, module_pair, fa_pair}
+        end
+
+      _ ->
+        {file, module_pair, fa_pair}
     end
   end
 
@@ -242,6 +283,7 @@ defmodule IEx.Introspection do
             true ->
               module.module_info(:exports)
           end
+          |> Enum.sort()
 
         result =
           for {^function, arity} <- exports,
@@ -334,7 +376,20 @@ defmodule IEx.Introspection do
         :type_found
 
       is_nil(docs) and spec != [] ->
+        message = %{"en" => "Module was compiled without docs. Showing only specs."}
+        print_doc("#{inspect(mod)}.#{fun}/#{arity}", spec, message, %{})
+        :ok
+
+      is_nil(docs) ->
+        :no_docs
+
+      true ->
+        :not_found
     end
+  end
+
+  defp has_callback?(mod, fun) do
+    case get_callback_docs(mod, &match?({_, ^fun, _}, elem(&1, 0))) do
   end
 
   defp get_docs(mod, kinds) do
@@ -389,6 +444,20 @@ defmodule IEx.Introspection do
       [formatted, ?\n]
     else
       _ -> []
+    end
+  end
+
+  defp get_callback_docs(mod, filter) do
+    docs = get_docs(mod, [:callback, :macrocallback])
+
+    case Typespec.fetch_callbacks(mod) do
+      :error ->
+        :no_beam
+
+      {:ok, callbacks} ->
+        docs =
+          callbacks
+
     end
   end
 
