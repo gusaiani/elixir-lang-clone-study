@@ -4,11 +4,12 @@ defmodule Code.Typespec do
   @doc """
   Returns all specs available from the module's BEAM code.
 
-  The result is returnd as a list of tuples where the first
+  The result is returned as a list of tuples where the first
   element is spec name and arity and the second is the spec.
 
   The module must have a corresponding BEAM file which can be
-  located by the runtime system. The types will be in the Erlang   Abstract Format.
+  located by the runtime system. The types will be in the Erlang
+  Abstract Format.
   """
   @spec fetch_specs(module) :: {:ok, [tuple]} | :error
   def fetch_specs(module) when is_atom(module) or is_binary(module) do
@@ -23,7 +24,24 @@ defmodule Code.Typespec do
 
   @doc """
   Returns all callbacks available from the module's BEAM code.
+
+  The result is returned as a list of tuples where the first
+  element is spec name and arity and the second is the spec.
+
+  The module must have a corresponding BEAM file
+  which can be located by the runtime system. The types will be
+  in the Erlang Abstract Format.
   """
+  @spec fetch_callbacks(module) :: {:ok, [tuple]} | :error
+  def fetch_callbacks(module) when is_atom(module) or is_binary(module) do
+    case typespecs_abstract_code(module) do
+      {:ok, abstract_code} ->
+        {:ok, for({:attribute, _, :callback, value} <- abstract_code, do: value)}
+
+      :error ->
+        :error
+    end
+  end
 
   defp typespecs_abstract_code(module) do
     with {module, binary} <- get_module_and_beam(module),
@@ -36,7 +54,7 @@ defmodule Code.Typespec do
 
         _ ->
           case backend.debug_info(:erlang_v1, module, data, []) do
-            {:ok, abstact_code} -> {:ok, abstract_code}
+            {:ok, abstract_code} -> {:ok, abstract_code}
             _ -> :error
           end
       end
@@ -75,7 +93,7 @@ defmodule Code.Typespec do
   defp typespec_to_quoted({:type, _line, :list, [{:type, _, :union, unions} = arg]}) do
     case unpack_typespec_kw(unions, []) do
       {:ok, ast} -> ast
-      :error -> [typespect_to_quoted(arg)]
+      :error -> [typespec_to_quoted(arg)]
     end
   end
 

@@ -40,7 +40,7 @@ defmodule IEx do
   the `ERL_AFLAGS` environment variable and make sure that it is set
   accordingly on your terminal/shell configuration.
 
-  On Linux:
+  On Unix-like / Bash:
 
       export ERL_AFLAGS="-kernel shell_history enabled"
 
@@ -48,7 +48,7 @@ defmodule IEx do
 
       set ERL_AFLAGS "-kernel shell_history enabled"
 
-  On Windows10 / Powershell:
+  On Windows 10 / PowerShell:
 
       $env:ERL_AFLAGS = "-kernel shell_history enabled"
 
@@ -239,7 +239,7 @@ defmodule IEx do
   If we try to dispatch to `Hello.world`, it won't be available
   as it was defined only in the other shell:
 
-      iex(bar@HOST)1> Hello.world
+      iex(bar@HOST)1> Hello.world()
       ** (UndefinedFunctionError) undefined function Hello.world/0
 
   However, we can connect to the other shell remotely. Open up
@@ -252,7 +252,7 @@ defmodule IEx do
   Now we are connected into the remote node, as the prompt shows us,
   and we can access the information and modules defined over there:
 
-      iex(foo@HOST)1> Hello.world
+      iex(foo@HOST)1> Hello.world()
       "it works!"
 
   In fact, connecting to remote shells is so common that we provide
@@ -281,13 +281,13 @@ defmodule IEx do
   For example, take the following `.iex.exs` file:
 
       # Load another ".iex.exs" file
-      import_file "~/.iex.exs"
+      import_file("~/.iex.exs")
 
       # Import some module from lib that may not yet have been defined
-      import_if_available MyApp.Mod
+      import_if_available(MyApp.Mod)
 
       # Print something before the shell starts
-      IO.puts "hello world"
+      IO.puts("hello world")
 
       # Bind a variable that'll be accessible in the shell
       value = 13
@@ -374,11 +374,11 @@ defmodule IEx do
   IEx will also color inspected expressions using the `:syntax_colors`
   option. Such can be disabled with:
 
-      IEx.configure [colors: [syntax_colors: false]]
+      IEx.configure(colors: [syntax_colors: false])
 
   You can also configure the syntax colors, however, as desired:
 
-      IEx.configure [colors: [syntax_colors: [atom: :red]]]
+      IEx.configure(colors: [syntax_colors: [atom: :red]])
 
   Configuration for most built-in data types are supported: `:atom`,
   `:string`, `:binary`, `:list`, `:number`, `:boolean`, `:nil`, etc.
@@ -395,7 +395,7 @@ defmodule IEx do
 
   To show all entries, configure the limit to `:infinity`:
 
-      IEx.configure [inspect: [limit: :infinity]]
+      IEx.configure(inspect: [limit: :infinity])
 
   See `Inspect.Opts` for the full list of options.
 
@@ -429,6 +429,7 @@ defmodule IEx do
     * `%node`    - the name of the local node
 
   """
+  @spec configure(keyword()) :: :ok
   def configure(options) do
     IEx.Config.configure(options)
   end
@@ -436,6 +437,7 @@ defmodule IEx do
   @doc """
   Returns IEx configuration.
   """
+  @spec configuration() :: keyword()
   def configuration do
     IEx.Config.configuration()
   end
@@ -443,6 +445,7 @@ defmodule IEx do
   @doc """
   Registers a function to be invoked after the IEx process is spawned.
   """
+  @spec after_spawn(fun()) :: :ok
   def after_spawn(fun) when is_function(fun) do
     IEx.Config.after_spawn(fun)
   end
@@ -450,13 +453,15 @@ defmodule IEx do
   @doc """
   Returns registered `after_spawn` callbacks.
   """
+  @spec after_spawn() :: [fun()]
   def after_spawn do
     IEx.Config.after_spawn()
   end
 
   @doc """
-  Returns `true` if IEx was started.
+  Returns `true` if IEx was started, `false` otherwise.
   """
+  @spec started?() :: boolean()
   def started? do
     IEx.Config.started?()
   end
@@ -466,6 +471,7 @@ defmodule IEx do
 
   ANSI escapes in `string` are not processed in any way.
   """
+  @spec color(atom(), String.t()) :: String.t()
   def color(color, string) do
     case IEx.Config.color(color) do
       nil ->
@@ -477,17 +483,19 @@ defmodule IEx do
   end
 
   @doc """
-  Gets the IEx width for printing.
+  Returns the IEx width for printing.
 
   Used by helpers and it has a default maximum cap of 80 chars.
   """
+  @spec width() :: pos_integer()
   def width do
     IEx.Config.width()
   end
 
   @doc """
-  Gets the options used for inspecting.
+  Returns the options used for inspecting.
   """
+  @spec inspect_opts() :: keyword()
   def inspect_opts do
     IEx.Config.inspect_opts()
   end
@@ -665,12 +673,12 @@ defmodule IEx do
 
     * `IEx.Helpers.break!/2` - sets up a breakpoint for a given `Mod.fun/arity`
     * `IEx.Helpers.break!/4` - sets up a breakpoint for the given module, function, arity
-    * `IEx.Helpers.breaks/0` - prints all breakpoints and their ids
+    * `IEx.Helpers.breaks/0` - prints all breakpoints and their IDs
     * `IEx.Helpers.continue/0` - continues until the next breakpoint in the same shell
     * `IEx.Helpers.open/0` - opens editor on the current breakpoint
     * `IEx.Helpers.remove_breaks/0` - removes all breakpoints in all modules
     * `IEx.Helpers.remove_breaks/1` - removes all breakpoints in a given module
-    * `IEx.Helpers.reset_break/1` - sets the number of stops on the given id to zero
+    * `IEx.Helpers.reset_break/1` - sets the number of stops on the given ID to zero
     * `IEx.Helpers.reset_break/3` - sets the number of stops on the given module, function, arity to zero
     * `IEx.Helpers.respawn/0` - starts a new shell (breakpoints will ask for permission once more)
     * `IEx.Helpers.whereami/1` - shows the current location
@@ -793,14 +801,12 @@ defmodule IEx do
 
   defp set_expand_fun do
     gl = Process.group_leader()
-    glnode = node(gl)
 
     expand_fun =
-      if glnode != node() do
-        _ = ensure_module_exists(glnode, IEx.Remsh)
-        IEx.Remsh.expand(node())
+      if node(gl) != node() do
+        IEx.Autocomplete.remsh(node())
       else
-        &IEx.Autocomplete.expand(&1)
+        &IEx.Autocomplete.expand/1
       end
 
     # expand_fun is not supported by a shell variant
@@ -808,13 +814,6 @@ defmodule IEx do
     # about the result of the expand_fun one.
     _ = :io.setopts(gl, expand_fun: expand_fun)
     :io.setopts(gl, binary: true, encoding: :unicode)
-  end
-
-  defp ensure_module_exists(node, mod) do
-    unless :rpc.call(node, :code, :is_loaded, [mod]) do
-      {m, b, f} = :code.get_object_code(mod)
-      {:module, _} = :rpc.call(node, :code, :load_binary, [m, f, b])
-    end
   end
 
   defp run_after_spawn do

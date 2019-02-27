@@ -390,6 +390,9 @@ defmodule IEx.Introspection do
 
   defp has_callback?(mod, fun) do
     case get_callback_docs(mod, &match?({_, ^fun, _}, elem(&1, 0))) do
+      {:ok, [_ | _]} -> true
+      _ -> false
+    end
   end
 
   defp get_docs(mod, kinds) do
