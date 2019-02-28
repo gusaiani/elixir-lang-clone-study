@@ -395,6 +395,25 @@ defmodule IEx.Introspection do
     end
   end
 
+  defp has_callback?(mod, fun, arity) do
+    case get_callback_docs(mod, &match?({_, ^fun, ^arity}, elem(&1, 0))) do
+      {:ok, [_ | _]} -> true
+      _ -> false
+    end
+  end
+
+  defp has_type?(mod, fun) do
+    mod
+    |> get_docs([:type])
+    |> Enum.any?(&match?({_, ^fun, _}, elem(&1, 0)))
+  end
+
+  defp has_type?(mod, fun, arity) do
+    mod
+    |> get_docs([:type])
+    |> Enum.any?(&match?({_, ^fun, ^arity}, elem(&1, 0)))
+  end
+
   defp get_docs(mod, kinds) do
     case Code.fetch_docs(mod) do
       {:docs_v1, _, _, _, _, _, docs} ->
@@ -435,6 +454,29 @@ defmodule IEx.Introspection do
     end)
   end
 
+  defp print_fun(mod, {{kind, fun, arity}, _line, signature, doc, metadata}, spec) do
+    if callback_module = doc == :none and callback_module(mod, fun, arity) do
+      filter = &match?({_, ^fun, ^arity}, elem(&1, 0))
+
+      case get_callback_docs(callback_module, filter) do
+        {:ok, callback_docs} -> Enum.each(callback_docs, &print_typespec/1)
+        _ -> nil
+      end
+    else
+      print_doc("#{kind_to_def(kind)} #{Enum.join(signature, " ")}", spec, doc, metadata)
+    end
+  end
+
+  defp kind_to_def(:function), do: :def
+  defp kind_to_def(:macro), do: :defmacro
+
+  defp callback_module(mod, fun, arity) do
+    mod.module_info(:attributes)
+    |> Keyword.get_values(:behaviour)
+    |> Stream.concat()
+    |> Enum.find(&has_callback?(&1, fun, arity))
+  end
+
   defp get_spec(module, name, arity) do
     with {:ok, all_specs} <- Typespec.fetch_specs(module),
          {_, specs} <- List.keyfind(all_specs, {name, arity}, 0) do
@@ -448,6 +490,38 @@ defmodule IEx.Introspection do
     else
       _ -> []
     end
+  end
+
+  @doc """
+  Prints the list of behaviour callbacks or a given callback.
+  """
+  def b(mod) when is_atom(mod) do
+    case get_callback_docs(mod, fn _ -> true end) do
+      :no_beam ->
+        no_beam(mod)
+
+      {:ok, []} ->
+        puts_error("No callbacks for #{inspect(mod)} were found")
+
+      {:ok, docs} ->
+        docs
+        |> add_optional_callback_docs(mod)
+        |> Enum.each(fn {definition, _, _} -> IO.puts(definition) end)
+    end
+
+    dont_display_result()
+  end
+
+  def b({mod, fun}) when is_atom(mod) and is_atom(fun) do
+    filter = &match?({_, ^fun, _}, elem(&1, 0))
+
+    case get_callback_docs(mod, filter) do
+      :no_beam -> no_beam(mod)
+      {:ok, []} -> docs_not_found("#{inspect(mod)}.#{fun}")
+      {:ok, docs} -> Enum.each(docs, &print_typespec/1)
+    end
+
+    dont_display_result()
   end
 
   defp get_callback_docs(mod, filter) do
@@ -504,9 +578,34 @@ defmodule IEx.Introspection do
     end
   end
 
+  defp print_typespec({types, doc, metadata}) do
+    IO.puts(types)
+    doc = translate_doc(doc)
+
+    if opts = IEx.Config.ansi_docs() do
+      IO.ANSI.Docs.print_metadata(metadata, opts)
+      doc && IO.ANSI.Docs.print(doc, opts)
+    else
+      IO.ANSI.Docs.print_metadata(metadata, enabled: false)
+      doc && IO.puts(doc)
+    end
+  end
+
   defp translate_doc(:none), do: nil
   defp translate_doc(:hidden), do: nil
   defp translate_doc(%{"en" => doc}), do: doc
+
+  defp no_beam(module) do
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        puts_error(
+          "Beam code not available for #{inspect(module)} or debug info is missing, cannot load typespecs"
+        )
+
+      {:error, reason} ->
+        puts_error("Could not load module #{inspect(module)}, got: #{reason}")
+    end
+  end
 
   defp no_docs(module) do
     puts_error("#{inspect(module)} was not compiled with docs")
