@@ -524,6 +524,23 @@ defmodule IEx.Introspection do
     dont_display_result()
   end
 
+  def b({mod, fun, arity}) when is_atom(mod) and is_atom(fun) and is_integer(arity) do
+    filter = &match?({_, ^fun, ^arity}, elem(&1, 0))
+
+    case get_callback_docs(mod, filter) do
+      :no_beam -> no_beam(mod)
+      {:ok, []} -> docs_not_found("#{inspect(mod)}.#{fun}/#{arity}")
+      {:ok, docs} -> Enum.each(docs, &print_typespec/1)
+    end
+
+    dont_display_result()
+  end
+
+  def b(invalid) do
+    puts_error("Invalid arguments for b helper: #{inspect(invalid)}")
+    dont_display_result()
+  end
+
   defp get_callback_docs(mod, filter) do
     docs = get_docs(mod, [:callback, :macrocallback])
 
@@ -534,9 +551,86 @@ defmodule IEx.Introspection do
       {:ok, callbacks} ->
         docs =
           callbacks
+          |> Enum.map(&translate_callback/1)
+          |> Enum.filter(filter)
+          |> Enum.sort()
+          |> Enum.flat_map(fn {{_, function, arity}, _specs} = callback ->
+            case find_doc(docs, function, arity) do
+              nil -> [{format_callback(callback), :none, %{}}]
+              {_, _, _, :hidden, _} -> []
+              {_, _, _, doc, metadata} -> [{format_callback(callback), doc, metadata}]
+            end
+          end)
 
+        {:ok, docs}
     end
   end
+
+  defp translate_callback({name_arity, specs}) do
+    case translate_callback_name_arity(name_arity) do
+      {:macrocallback, _, _} = kind_name_arity ->
+        # The typespec of a macrocallback differs from the one expressed
+        # via @macrocallback:
+        #
+        #   * The function name is prefixed with "MACRO-"
+        #   * The arguments contain an additional first argument: the caller
+        #   * The arity is increased by 1
+        #
+        specs =
+          Enum.map(specs, fn {:type, line1, :fun, [{:type, line2, :product, [_ | args]}, spec]} ->
+            {:type, line1, :fun, [{:type, line2, :product, args}, spec]}
+          end)
+
+        {kind_name_arity, specs}
+
+      kind_name_arity ->
+        {kind_name_arity, specs}
+    end
+  end
+
+  defp translate_callback_name_arity({name, arity}) do
+    case Atom.to_string(name) do
+      "MACRO-" <> macro_name -> {:macrocallback, String.to_atom(macro_name), arity - 1}
+      _ -> {:callback, name, arity}
+    end
+  end
+
+  defp format_callback({{kind, name, _arity}, specs}) do
+    Enum.map(specs, fn spec ->
+      Typespec.spec_to_quoted(name, spec)
+      |> Macro.prewalk(&drop_macro_env/1)
+      |> format_typespec(kind, 0)
+    end)
+  end
+
+  defp add_optional_callback_docs(docs, mod) do
+    optional_callbacks =
+      if Code.ensure_loaded?(mod) and function_exported?(mod, :behaviour_info, 1) do
+        mod.behaviour_info(:optional_callbacks)
+        |> Enum.map(fn name_arity ->
+          {_kind, name, arity} = translate_callback_name_arity(name_arity)
+          {name, arity}
+        end)
+        |> Enum.sort()
+      else
+        []
+      end
+
+    if optional_callbacks == [] do
+      docs
+    else
+      docs ++ [{format_optional_callbacks(optional_callbacks), "", %{}}]
+    end
+  end
+
+  defp format_optional_callbacks(callbacks) do
+    format_typespec(callbacks, :optional_callbacks, 0)
+  end
+
+  defp drop_macro_env({name, meta, [{:::, _, [_, {{:., _, [Macro.Env, :t]}, _, _}]} | args]}),
+    do: {name, meta, args}
+
+  defp drop_macro_env(other), do: other
 
   ## Helpers
 
