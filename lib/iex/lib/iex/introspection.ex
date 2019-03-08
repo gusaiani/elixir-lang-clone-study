@@ -632,6 +632,91 @@ defmodule IEx.Introspection do
 
   defp drop_macro_env(other), do: other
 
+  @doc """
+  Prints the types for the given module and type documentation.
+  """
+  def t(module) when is_atom(module) do
+    case Typespec.fetch_types(module) do
+      :error ->
+        no_beam(module)
+
+      {:ok, []} ->
+        types_not_found(inspect(module))
+
+      {:ok, types} ->
+        Enum.each(types, &(&1 |> format_type() |> IO.puts()))
+    end
+
+    dont_display_result()
+  end
+
+  def t({module, type}) when is_atom(module) and is_atom(type) do
+    case Typespec.fetch_types(module) do
+      :error ->
+        no_beam(module)
+
+      {:ok, types} ->
+        printed =
+          for {kind, {^type, _, args}} = typespec <- types,
+              kind != :typep do
+            type_doc(module, type, length(args), typespec)
+            |> print_typespec()
+          end
+
+        if printed == [] do
+          types_not_found_or_private("#{inspect(module)}.#{type}")
+        end
+    end
+
+    dont_display_result()
+  end
+
+  def t({module, type, arity}) when is_atom(module) and is_atom(type) and is_integer(arity) do
+    case Typespec.fetch_types(module) do
+      :error ->
+        no_beam(module)
+
+      {:ok, types} ->
+        printed =
+          for {kind, {^type, _, args}} = typespec <- types,
+              kind != :typep,
+              length(args) == arity do
+            type_doc(module, type, arity, typespec)
+            |> print_typespec()
+          end
+
+        if printed == [] do
+          types_not_found_or_private("#{inspect(module)}.#{type}")
+        end
+    end
+
+    dont_display_result()
+  end
+
+  def t(invalid) do
+    puts_error("Invalid arguments for t helper: #{inspect(invalid)}")
+    dont_display_result()
+  end
+
+  defp type_doc(module, type, arity, typespec) do
+    if docs = get_docs(module, [:type]) do
+      {_, _, _, content, metadata} = Enum.find(docs, &match?({:type, ^type, ^arity}, elem(&1, 0)))
+      {format_type(typespec), content, metadata}
+    else
+      {format_type(typespec), :none, %{}}
+    end
+  end
+
+  defp format_type({:opaque, type}) do
+    {:::, _, [ast, _]} = Typespec.type_to_quoted(type)
+    format_typespec(ast, :opaque, 0)
+  end
+
+  defp format_type({kind, type}) do
+    ast = Typespec.type_to_quoted(type)
+    format_typespec(ast, kind, 0)
+  end
+
   ## Helpers
 
   defp format_typespec(definition, kind, nesting) do
@@ -705,7 +790,12 @@ defmodule IEx.Introspection do
     puts_error("#{inspect(module)} was not compiled with docs")
   end
 
+  defp types_not_found(for), do: not_found(for, "type information")
   defp docs_not_found(for), do: not_found(for, "documentation")
+
+  defp types_not_found_or_private(for) do
+    puts_error("No type information for #{for} was found or #{for} is private")
+  end
 
   defp behaviour_found(for) do
     puts_error("""
