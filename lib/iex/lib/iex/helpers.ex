@@ -319,6 +319,50 @@ defmodule IEx.Helpers do
     end
   end
 
+  @doc """
+  Prints the documentation for the given callback function.
+
+  It also accepts single module argument to list
+  all available behaviour callbacks.
+
+  ## Examples
+
+      iex> b(Mix.Task.run/1)
+      iex> b(Mix.Task.run)
+      iex> b(GenServer)
+
+  """
+  defmacro b(term) do
+    quote do
+      IEx.Introspection.b(unquote(IEx.Introspection.decompose(term, __CALLER__)))
+    end
+  end
+
+  @doc """
+  Prints the types for the given module or for the given function/arity pair.
+
+  ## Examples
+
+      iex> t(Enum)
+      @type t() :: Enumerable.t()
+      @type acc() :: any()
+      @type element() :: any()
+      @type index() :: integer()
+      @type default() :: any()
+
+      iex> t(Enum.t/0)
+      @type t() :: Enumerable.t()
+
+      iex> t(Enum.t)
+      @type t() :: Enumerable.t()
+
+  """
+  defmacro t(term) do
+    quote do
+      IEx.Introspection.t(unquote(IEx.Introspection.decompose(term, __CALLER__)))
+    end
+  end
+
   defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)
 
   # Compiles and loads an Erlang source file, returns {module, binary}
