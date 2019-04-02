@@ -248,7 +248,7 @@ defmodule IEx.Pry do
   end
 
   @doc """
-  Resets the breaks on a given breakpoint id.
+  Resets the breaks on a given breakpoint ID.
   """
   @spec reset_break(id) :: :ok | :not_found
   def reset_break(id) when is_integer(id) do
@@ -269,6 +269,18 @@ defmodule IEx.Pry do
 
   ## Callbacks
 
+  @doc false
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, :ok, name: @server)
+  end
+
+  @impl true
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    :ets.new(@table, [:named_table, :public, write_concurrency: true])
+    {:ok, @initial_counter}
+  end
+
   @impl true
   def handle_call({:break, module, fa, condition, breaks}, _from, counter) do
     # If there is a match for the given module and fa, we
@@ -278,5 +290,55 @@ defmodule IEx.Pry do
         [{ref, _, _, _, _}] -> {ref, counter}
         [] -> {counter, counter + 1}
       end
+
+    case fetch_elixir_debug_info_with_fa_check(module, fa) do
+      {:ok, beam, backend, elixir} ->
+        true = :ets.insert(@table, {ref, module, fa, condition, breaks})
+        entries = :ets.match_object(@table, {:_, module, :_, :_, :_})
+        {:reply, instrument(beam, backend, elixir, ref, entries), counter}
+    end
+  end
+
+  def fetch_elixir_debug_info_with_fa_check(module, fa) do
+    case :code.which(module) do
+      [_ | _] = beam ->
+        case :beam_lib.chunks(beam, [:debug_info]) do
+          {:ok, {_, [debug_info: {:debug_info_v1, backend, {:elixir_v1, map, _} = elixir}]}} ->
+            case List.keyfind(map.definitions, fa, 0) do
+              {_, _, _, _} -> {:ok, beam, backend, elixir}
+              nil -> {:error, :uknown_function_arity}
+            end
+
+          {:ok, {_, [debug_info: {:debug_info_v1, _, _}]}} ->
+            {:error, :non_elixir_module}
+
+          {:error, :beam_lib, {:missing_chunk, _, _}} ->
+            {:error, :missing_debug_info}
+
+          _ ->
+            {:error, :outdated_debug_info}
+        end
+
+      _ ->
+        {:error, :no_beam_file}
+    end
+  end
+
+  defp instrument(beam, backend, {:elixir_v1, map, specs}, counter, entries) do
+    %{attributes: attributes, definitions: definitions, module: module} = map
+
+    attributes = [{:iex_pry, true} | attributes]
+    definitions = Enum.map(definitions, &instrument_definition(&1, map, entries))
+    map = %{map | attributes: attributes, definitions: definitions}
+
+    with {:ok, forms} <- backend.debug_info(:erlang_v1, module, {:elixir_v1, map, specs}, []),
+         {:ok, _, binary} <- :compile.noenv_forms(forms, [:return | map.compile_opts]) do
+      :code.purge(module)
+      {:module, _} = :code.load_binary(module, beam, binary)
+      {:ok, counter}
+    else
+      _error ->
+        {:error, :recompilation_failed}
+    end
   end
 end

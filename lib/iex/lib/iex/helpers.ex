@@ -363,6 +363,21 @@ defmodule IEx.Helpers do
     end
   end
 
+  @doc """
+  Sets the number of pending stops in the breakpoint
+  with the given `id` to zero.
+
+
+  Returns `:ok` if there is such breakpoint ID. `:not_found`
+  otherwise.
+
+  Note the module remains "instrumented" on reset. If you would
+  like to effectively remove all breakpoints and instrumentation
+  code from a module, use `remove_breaks/1` instead.
+  """
+  @doc since: "1.5.0"
+  defdelegate reset_break(id), to: IEX.Pry
+
   defp compile_elixir(exs, :in_memory), do: Kernel.ParallelCompiler.compile(exs)
 
   # Compiles and loads an Erlang source file, returns {module, binary}
