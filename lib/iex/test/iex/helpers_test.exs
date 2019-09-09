@@ -57,6 +57,48 @@ defmodule IEx.HelpersTest do
       assert reset_break(1) == :ok
       assert IEx.Pry.breaks() == [{1, URI, {:decode_query, 2}, 0}]
     end
+
+    test "resets breaks on the given module" do
+      assert break!(URI, :decode_query, 2) == 1
+      assert reset_break(URI, :decode_query, 2) == :ok
+      assert IEx.Pry.breaks() == [{1, URI, {:decode_query, 2}, 0}]
+    end
+
+    test "removes breaks in the given module" do
+      assert break!(URI.decode_query() / 2) == 1
+      assert remove_breaks(URI) == :ok
+      assert IEx.Pry.breaks() == []
+    end
+
+    test "removes breaks on all modules" do
+      assert break!(URI.decode_query() / 2) == 1
+      assert remove_breaks() == :ok
+      assert IEx.Pry.breaks() == []
+    end
+
+    test "errors when setting up a breakpoint with invalid guard" do
+      assert_raise CompileError, ~r"cannot find or invoke local is_whatever/1", fn ->
+        break!(URI.decode_query(_, map) when is_whatever(map))
+      end
+    end
+
+    test "errors when setting up a break with no beam" do
+      assert_raise RuntimeError,
+                   "could not set breakpoint, could not find .beam file for IEx.HelpersTest",
+                   fn -> break!(__MODULE__, :setup, 1) end
+    end
+
+    test "errors when setting up a break for unknown function" do
+      assert_raise RuntimeError,
+                   "could not set breakpoint, unknown function/macro URI.unknown/2",
+                   fn -> break!(URI, :unknown, 2) end
+    end
+
+    test "errors for non-Elixir modules" do
+      assert_raise RuntimeError,
+                   "could not set breakpoint, module :elixir was not written in Elixir",
+                   fn -> break!(:elixir, :unknown, 2) end
+    end
   end
 
   test "resets breaks on the given module" do
