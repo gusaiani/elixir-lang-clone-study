@@ -30,4 +30,8 @@ defmodule TaskTest do
     Process.sleep(number)
     number
   end
+
+  test "can be supervised directly" do
+    assert {:ok, _} = Supervisor.start_link([{Task, fn -> :ok end}], strategy: :one_for_one)
+  end
 end
