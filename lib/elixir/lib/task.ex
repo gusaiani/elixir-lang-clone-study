@@ -153,4 +153,155 @@ defmodule Task do
       |> Task.await()
 
   Finally, check `Task.Supervisor` for other supported operations.
+
+  ## Distributed tasks
+
+  Since Elixir provides a `Task.Supervisor`, it is easy to use one
+  to dynamically start tasks across nodes:
+
+      # On the remote node
+      Task.Supervisor.start_link(name: MyApp.DistSupervisor)
+
+      # On the client
+      supervisor = {MyApp.DistSupervisor, :remote@local}
+      Task.Supervisor.async(supervisor, MyMod, :my_fun, [arg1, arg2, arg3])
+
+  Note that, when working with distributed tasks, one should use the `Task.Supervisor.async/4` function
+  that expects explicit module, function and arguments, instead of `Task.Supervisor.async/2` that
+  works with anonymous functions. That's because anonymous functions expect
+  the same module version to exist on all involved nodes. Check the `Agent` module
+  documentation for more information on distributed processes as the limitations
+  described there apply to the whole ecosystem.
+
+  ## Ancestor and Caller Tracking
+
+  Whenever you start a new process, Elixir annotates the parent of that process
+  through the `$ancestors` key in the process dictionary. This is often used to
+  track the hierarchy inside a supervision tree.
+
+  For example, we recommend developers to always start tasks under a supervisor.
+  This provides more visibility and allows you to control how those tasks are
+  terminated when a node shuts down. That might look something like
+  `Task.Supervisor.start_child(MySupervisor, task_specification)`. This means
+  that, although your code is the one who invokes the task, the actual ancestor of
+  the task is the supervisor, as the supervisor is the one effectively starting it.
+
+  To track the relationship between your code and the task, we use the `$callers`
+  key in the process dictionary. Therefore, assuming the `Task.Supervisor` call
+  above, we have:
+
+      [your code] -- calls --> [supervisor] ---- spawns --> [task]
+
+  Which means we store the following relationships:
+
+      [your code]              [supervisor] <-- ancestor -- [task]
+          ^                                                  |
+          |--------------------- caller ---------------------|
+
+  The list of callers of the current process can be retrieved from the Process
+  dictionary with `Process.get(:"$callers")`. This will return either `nil` or
+  a list `[pid_n, ..., pid2, pid1]` with at least one entry where `pid_n` is
+  the PID that called the current process, `pid2` called `pid_n`, and `pid2` was
+  called by `pid1`.
+  """
+
+  @doc """
+  The Task struct.
+
+  It contains these fields:
+
+    * `:pid` - the PID of the task process; `nil` if the task does
+      not use a task process
+
+    * `:ref` - the task monitor reference
+
+    * `:owner` - the PID of the process that started the task
+
+  """
+  @enforce_keys [:pid, :ref, :owner]
+  defstruct pid: nil, ref: nil, owner: nil
+
+  @typedoc """
+  The Task type.
+
+  See `%Task{}` for information about each field of the structure.
+  """
+  @type t :: %__MODULE__{
+          pid: pid() | nil,
+          ref: reference() | nil,
+          owner: pid() | nil
+        }
+
+  defguardp is_timeout(timeout)
+            when timeout == :infinity or (is_integer(timeout) and timeout >= 0)
+
+  @doc """
+  Returns a specification to start a task under a supervisor.
+
+  `arg` is passed as the argument to `Task.start_link/1` in the `:start` field
+  of the spec.
+
+  For more information, see the `Supervisor` module,
+  the `Supervisor.child_spec/2` function and the `t:Supervisor.child_spec/0` type.
+  """
+  @doc since: "1.5.0"
+  @spec child_spec(term) :: Supervisor.child_spec()
+  def child_spec(arg) do
+    %{
+      id: Task,
+      start: {Task, :start_link, [arg]},
+      restart: :temporary
+    }
+  end
+
+  @doc false
+  defmacro __using__(opts) do
+    quote location: :keep, bind_quoted: [opts: opts] do
+      unless Module.has_attribute?(__MODULE__, :doc) do
+        @doc """
+        Returns a specification to start this module under a supervisor.
+
+        `arg` is passed as the argument to `Task.start_link/1` in the `:start` field
+        of the spec.
+
+        For more information, see the `Supervisor` module,
+        the `Supervisor.child_spec/2` function and the `t:Supervisor.child_spec/0` type.
+        """
+      end
+
+      def child_spec(arg) do
+        default = %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [arg]},
+          restart: :temporary
+        }
+
+        Supervisor.child_spec(default, unquote(Macro.escape(opts)))
+      end
+
+      defoverridable child_spec: 1
+    end
+  end
+
+  @doc """
+  Starts a process linked to the current process.
+
+  `fun` must be a zero-arity anonymous function.
+
+  This is often used to start the process as part of a supervision tree.
+  """
+  @spec start_link((() -> any)) :: {:ok, pid}
+  def start_link(fun) when is_function(fun, 0) do
+    start_link(:erlang, :apply, [fun, []])
+  end
+
+  @doc """
+  Starts a task as part of a supervision tree.
+  """
+  @spec start_link(module, atom, [term]) :: {:ok, pid}
+  def start_link(module, function_name, args)
+      when is_atom(module) and is_atom(function_name) and is_list(args) do
+    mfa = {module, function_name, args}
+    Task.Supervised.start_link(get_owner(self()), get_callers(self()), mfa)
+  end
 end
