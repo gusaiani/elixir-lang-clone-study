@@ -286,6 +286,150 @@ defmodule Process do
   defdelegate send(dest, msg, options), to: :erlang
 
   @doc """
+  Sends `msg` to `dest` after `time` milliseconds.
+
+  If `dest` is a PID, it must be the PID of a local process, dead or alive.
+  If `dest` is an atom, it must be the name of a registered process
+  which is looked up at the time of delivery. No error is produced if the name does
+  not refer to a process.
+
+  The message is not sent immediately. Therefore, `dest` can receive other messages
+  in-between even when `time` is `0`.
+
+  This function returns a timer reference, which can be read with `read_timer/1`
+  or canceled with `cancel_timer/1`.
+
+  The timer will be automatically canceled if the given `dest` is a PID
+  which is not alive or when the given PID exits. Note that timers will not be
+  automatically canceled when `dest` is an atom (as the atom resolution is done
+  on delivery).
+
+  Inlined by the compiler.
+
+  ## Options
+
+    * `:abs` - (boolean) when `false`, `time` is treated as relative to the
+    current monotonic time. When `true`, `time` is the absolute value of the
+    Erlang monotonic time at which `msg` should be delivered to `dest`.
+    To read more about Erlang monotonic time and other time-related concepts,
+    look at the documentation for the `System` module. Defaults to `false`.
+
+  ## Examples
+
+      timer_ref = Process.send_after(pid, :hi, 1000)
+
+  """
+  @spec send_after(pid | atom, term, non_neg_integer, [option]) :: reference
+        when option: {:abs, boolean}
+  def send_after(dest, msg, time, opts \\ []) do
+    :erlang.send_after(time, dest, msg, opts)
+  end
+
+  @doc """
+  Cancels a timer returned by `send_after/3`.
+
+  When the result is an integer, it represents the time in milliseconds
+  left until the timer would have expired.
+
+  When the result is `false`, a timer corresponding to `timer_ref` could not be
+  found. This can happen either because the timer expired, because it has
+  already been canceled, or because `timer_ref` never corresponded to a timer.
+
+  Even if the timer had expired and the message was sent, this function does not
+  tell you if the timeout message has arrived at its destination yet.
+
+  Inlined by the compiler.
+
+  ## Options
+
+    * `:async` - (boolean) when `false`, the request for cancellation is
+      synchronous. When `true`, the request for cancellation is asynchronous,
+      meaning that the request to cancel the timer is issued and `:ok` is
+      returned right away. Defaults to `false`.
+
+    * `:info` - (boolean) whether to return information about the timer being
+      cancelled. When the `:async` option is `false` and `:info` is `true`, then
+      either an integer or `false` (like described above) is returned. If
+      `:async` is `false` and `:info` is `false`, `:ok` is returned. If `:async`
+      is `true` and `:info` is `true`, a message in the form `{:cancel_timer,
+      timer_ref, result}` (where `result` is an integer or `false` like
+      described above) is sent to the caller of this function when the
+      cancellation has been performed. If `:async` is `true` and `:info` is
+      `false`, no message is sent. Defaults to `true`.
+
+  """
+  @spec cancel_timer(reference, options) :: non_neg_integer | false | :ok
+        when options: [async: boolean, info: boolean]
+  defdelegate cancel_timer(timer_ref, options \\ []), to: :erlang
+
+  @doc """
+  Reads a timer created by `send_after/3`.
+
+  When the result is an integer, it represents the time in milliseconds
+  left until the timer will expire.
+
+  When the result is `false`, a timer corresponding to `timer_ref` could not be
+  found. This can be either because the timer expired, because it has already
+  been canceled, or because `timer_ref` never corresponded to a timer.
+
+  Even if the timer had expired and the message was sent, this function does not
+  tell you if the timeout message has arrived at its destination yet.
+
+  Inlined by the compiler.
+  """
+  @spec read_timer(reference) :: non_neg_integer | false
+  defdelegate read_timer(timer_ref), to: :erlang
+
+  @type spawn_opt ::
+          :link
+          | :monitor
+          | {:priority, :low | :normal | :high}
+          | {:fullsweep_after, non_neg_integer}
+          | {:min_heap_size, non_neg_integer}
+          | {:min_bin_vheap_size, non_neg_integer}
+  @type spawn_opts :: [spawn_opt]
+
+  @doc """
+  Spawns the given function according to the given options.
+
+  The result depends on the given options. In particular,
+  if `:monitor` is given as an option, it will return a tuple
+  containing the PID and the monitoring reference, otherwise
+  just the spawned process PID.
+
+  More options are available; for the comprehensive list of available options
+  check `:erlang.spawn_opt/4`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      Process.spawn(fn -> 1 + 2 end, [:monitor])
+      #=> {#PID<0.93.0>, #Reference<0.18808174.1939079169.202418>}
+      Process.spawn(fn -> 1 + 2 end, [:link])
+      #=> #PID<0.95.0>
+
+  """
+  @spec spawn((()-> any), spawn_opts) :: pid | {pid, reference}
+  defdelegate spawn(fun, opts), to: :erlang, as: :spawn_opt
+
+  @doc """
+  Spawns the given function `fun` from module `mod`, passing the given `args`
+  according to the given options.
+
+  The result depends on the given options. In particular,
+  if `:monitor` is given as an option, it will return a tuple
+  containing the PID and the monitoring reference, otherwise
+  just the spawned process PID.
+
+  It also accepts extra options, for the list of available options
+  check `:erlang.spawn_opt/4`.
+
+  Inlined by the compiler.
+  """
+  @spec spawn(module, atom, list, spawn_opts) :: pid | {pid, reference}
+  defdelegate spawn(mod, fun, args, opts), to: :erlang, as: :spawn_opt
+
   Returns the PID of the group leader for the calling process.
 
   Inlined by the compiler.
