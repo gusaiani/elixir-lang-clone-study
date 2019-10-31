@@ -410,7 +410,7 @@ defmodule Process do
       #=> #PID<0.95.0>
 
   """
-  @spec spawn((()-> any), spawn_opts) :: pid | {pid, reference}
+  @spec spawn((() -> any), spawn_opts) :: pid | {pid, reference}
   defdelegate spawn(fun, opts), to: :erlang, as: :spawn_opt
 
   @doc """
@@ -429,6 +429,180 @@ defmodule Process do
   """
   @spec spawn(module, atom, list, spawn_opts) :: pid | {pid, reference}
   defdelegate spawn(mod, fun, args, opts), to: :erlang, as: :spawn_opt
+
+  @doc """
+  Starts monitoring the given `item` from the calling process.
+
+  Once the monitored process dies, a message is delivered to the
+  monitoring process in the shape of:
+
+      {:DOWN, ref, :process, object, reason}
+
+  where:
+
+    * `ref` is a monitor reference returned by this function;
+    * `object` is either a `pid` of the monitored process (if monitoring
+      a PID) or `{name, node}` (if monitoring a remote or local name);
+    * `reason` is the exit reason.
+
+  If the process is already dead when calling `Process.monitor/1`, a
+  `:DOWN` message is delivered immediately.
+
+  See [the need for monitoring](https://elixir-lang.org/getting-started/mix-otp/genserver.html#the-need-for-monitoring)
+  for an example. See `:erlang.monitor/2` for more information.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      pid = spawn(fn -> 1 + 2 end)
+      #=> #PID<0.118.0>
+      Process.monitor(pid)
+      #=> #Reference<0.906660723.3006791681.40191>
+      Process.exit(pid, :kill)
+      #=> true
+      receive do
+        msg -> msg
+      end
+      #=> {:DOWN, #Reference<0.906660723.3006791681.40191>, :process, #PID<0.118.0>, :noproc}
+
+  """
+  @spec monitor(pid | {name, node} | name) :: reference when name: atom
+  def monitor(item) do
+    :erlang.monitor(:process, item)
+  end
+
+  @doc """
+  Demonitors the monitor identified by the given `reference`.
+
+  If `monitor_ref` is a reference which the calling process
+  obtained by calling `monitor/1`, that monitoring is turned off.
+  If the monitoring is already turned off, nothing happens.
+
+  See `:erlang.demonitor/2` for more information.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      pid = spawn(fn -> 1 + 2 end)
+      ref = Process.monitor(pid)
+      Process.demonitor(ref)
+      #=> true
+
+  """
+  @spec demonitor(reference, options :: [:flush | :info]) :: boolean
+  defdelegate demonitor(monitor_ref, options \\ []), to: :erlang
+
+  @doc """
+  Returns a list of PIDs corresponding to all the
+  processes currently existing on the local node.
+
+  Note that if a process is exiting, it is considered to exist but not be
+  alive. This means that for such process, `alive?/1` will return `false` but
+  its PID will be part of the list of PIDs returned by this function.
+
+  See `:erlang.processes/0` for more information.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      Process.list()
+      #=> [#PID<0.0.0>, #PID<0.1.0>, #PID<0.2.0>, #PID<0.3.0>, ...]
+
+  """
+  @spec list() :: [pid]
+  defdelegate list(), to: :erlang, as: :processes
+
+  @doc """
+  Creates a link between the calling process and the given item (process or
+  port).
+
+  Links are bidirectional. Linked processes can be unlinked by using `unlink/1`.
+
+  If such a link exists already, this function does nothing since there can only
+  be one link between two given processes. If a process tries to create a link
+  to itself, nothing will happen.
+
+  When two processes are linked, each one receives exit signals from the other
+  (see also `exit/2`). Let's assume `pid1` and `pid2` are linked. If `pid2`
+  exits with a reason other than `:normal` (which is also the exit reason used
+  when a process finishes its job) and `pid1` is not trapping exits (see
+  `flag/2`), then `pid1` will exit with the same reason as `pid2` and in turn
+  emit an exit signal to all its other linked processes. The behaviour when
+  `pid1` is trapping exits is described in `exit/2`.
+
+  See `:erlang.link/1` for more information.
+
+  Inlined by the compiler.
+  """
+  @spec link(pid | port) :: true
+  defdelegate link(pid_or_port), to: :erlang
+
+  @doc """
+  Removes the link between the calling process and the given item (process or
+  port).
+
+  If there is no such link, this function does nothing. If `pid_or_port` does
+  not exist, this function does not produce any errors and simply does nothing.
+
+  The return value of this function is always `true`.
+
+  See `:erlang.unlink/1` for more information.
+
+  Inlined by the compiler.
+  """
+  @spec unlink(pid | port) :: true
+  defdelegate unlink(pid_or_port), to: :erlang
+
+  @doc """
+  Registers the given `pid_or_port` under the given `name`.
+
+  `name` must be an atom and can then be used instead of the
+  PID/port identifier when sending messages with `Kernel.send/2`.
+
+  `register/2` will fail with `ArgumentError` in any of the following cases:
+
+    * the PID/Port is not existing locally and alive
+    * the name is already registered
+    * the `pid_or_port` is already registered under a different `name`
+
+  The following names are reserved and cannot be assigned to
+  processes nor ports:
+
+    * `nil`
+    * `false`
+    * `true`
+    * `:undefined`
+
+  ## Examples
+
+      Process.register(self(), :test)
+      #=> true
+      send(:test, :hello)
+      #=> :hello
+      send(:wrong_name, :hello)
+      #=> ** (ArgumentError) argument error
+
+  """
+  @spec register(pid | port, atom) :: true
+  def register(pid_or_port, name)
+      when is_atom(name) and name not in [nil, false, true, :undefined] do
+    :erlang.register(name, pid_or_port)
+  catch
+    :error, :badarg when node(pid_or_port) != node() ->
+      message = "could not register #{inspect(pid_or_port)} because it belongs to another node"
+      :erlang.error(ArgumentError.exception(message), [pid_or_port, name])
+
+    :error, :badarg ->
+      message =
+        "could not register #{inspect(pid_or_port)} with " <>
+          "name #{inspect(name)} because it is not alive, the name is already " <>
+          "taken, or it has already been given another name"
+
+      :erlang.error(ArgumentError.exception(message), [pid_or_port, name])
+  end
 
   Returns the PID of the group leader for the calling process.
 
