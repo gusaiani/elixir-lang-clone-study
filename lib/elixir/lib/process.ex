@@ -583,7 +583,7 @@ defmodule Process do
       send(:test, :hello)
       #=> :hello
       send(:wrong_name, :hello)
-      #=> ** (ArgumentError) argument error
+      ** (ArgumentError) argument error
 
   """
   @spec register(pid | port, atom) :: true
@@ -604,6 +604,49 @@ defmodule Process do
       :erlang.error(ArgumentError.exception(message), [pid_or_port, name])
   end
 
+  @doc """
+  Removes the registered `name`, associated with a PID
+  or a port identifier.
+
+  Fails with `ArgumentError` if the name is not registered
+  to any PID or port.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      #=> true
+      Process.unregister(:test)
+      #=> true
+      Process.unregister(:wrong_name)
+      ** (ArgumentError) argument error
+
+  """
+  @spec unregister(atom) :: true
+  defdelegate unregister(name), to: :erlang
+
+  @doc """
+  Returns the PID or port identifier registered under `name` or `nil` if the
+  name is not registered.
+
+  See `:erlang.whereis/1` for more information.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      Process.whereis(:test)
+      #=> #PID<0.84.0>
+      Process.whereis(:wrong_name)
+      #=> nil
+
+  """
+  @spec whereis(atom) :: pid | port | nil
+  def whereis(name) do
+    nillify(:erlang.whereis(name))
+  end
+
+  @doc """
   Returns the PID of the group leader for the calling process.
 
   Inlined by the compiler.
@@ -629,6 +672,113 @@ defmodule Process do
   def group_leader(pid, leader) do
     :erlang.group_leader(leader, pid)
   end
+
+  @doc """
+  Returns a list of names which have been registered using `register/2`.
+
+  Inlined by the compiler.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      Process.registered()
+      #=> [:test, :elixir_config, :inet_db, ...]
+
+  """
+  @spec registered() :: [atom]
+  defdelegate registered(), to: :erlang
+
+  @typep heap_size ::
+           non_neg_integer
+           | %{size: non_neg_integer, kill: boolean, error_logger: boolean}
+
+  @typep priority_level :: :low | :normal | :high | :max
+
+  @doc """
+  Sets the given `flag` to `value` for the calling process.
+
+  Returns the old value of `flag`.
+
+  See `:erlang.process_flag/2` for more information.
+
+  Inlined by the compiler.
+  """
+  @spec flag(:error_handler, module) :: module
+  @spec flag(:max_heap_size, heap_size) :: heap_size
+  @spec flag(:message_queue_data, :erlang.message_queue_data()) :: :erlang.message_queue_data()
+  @spec flag(:min_bin_vheap_size, non_neg_integer) :: non_neg_integer
+  @spec flag(:min_heap_size, non_neg_integer) :: non_neg_integer
+  @spec flag(:priority, priority_level) :: priority_level
+  @spec flag(:save_calls, 0..10000) :: 0..10000
+  @spec flag(:sensitive, boolean) :: boolean
+  @spec flag(:trap_exit, boolean) :: boolean
+  defdelegate flag(flag, value), to: :erlang, as: :process_flag
+
+  @doc """
+  Sets the given `flag` to `value` for the given process `pid`.
+
+  Returns the old value of `flag`.
+
+  It raises `ArgumentError` if `pid` is not a local process.
+
+  The allowed values for `flag` are only a subset of those allowed in `flag/2`,
+  namely `:save_calls`.
+
+  See `:erlang.process_flag/3` for more information.
+
+  Inlined by the compiler.
+  """
+  @spec flag(pid, :save_calls, 0..10000) :: 0..10000
+  defdelegate flag(pid, flag, value), to: :erlang, as: :process_flag
+
+  @doc """
+  Returns information about the process identified by `pid`, or returns `nil` if the process
+  is not alive.
+
+  Use this only for debugging information.
+
+  See `:erlang.process_info/1` for more information.
+  """
+  @spec info(pid) :: keyword | nil
+  def info(pid) do
+    nillify(:erlang.process_info(pid))
+  end
+
+  @doc """
+  Returns information about the process identified by `pid`,
+  or returns `nil` if the process is not alive.
+
+  See `:erlang.process_info/2` for more information.
+  """
+  @spec info(pid, atom | [atom]) :: {atom, term} | [{atom, term}] | nil
+  def info(pid, spec)
+
+  def info(pid, :registered_name) do
+    case :erlang.process_info(pid, :registered_name) do
+      :undefined -> nil
+      [] -> {:registered_name, []}
+      other -> other
+    end
+  end
+
+  def info(pid, spec) when is_atom(spec) or is_list(spec) do
+    nillify(:erlang.process_info(pid, spec))
+  end
+
+  @doc """
+  Puts the calling process into a "hibernation" state.
+
+  The calling process is put into a waiting state
+  where its memory allocation has been reduced as much as possible,
+  which is useful if the process does not expect to receive any messages
+  in the near future.
+
+  See `:erlang.hibernate/3` for more information.
+
+  Inlined by the compiler.
+  """
+  @spec hibernate(module, atom, list) :: no_return
+  defdelegate hibernate(mod, fun_name, args), to: :erlang
 
   @compile {:inline, nillify: 1}
   defp nillify(:undefined), do: nil
