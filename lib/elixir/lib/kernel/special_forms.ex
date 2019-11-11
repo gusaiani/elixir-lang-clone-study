@@ -3,14 +3,20 @@ defmodule Kernel.SpecialForms do
   Special forms are the basic building blocks of Elixir, and therefore
   cannot be overridden by the developer.
 
-  We define them in this module. Some of these forms are lexical (like
+  The `Kernel.SpecialForms` module consists solely of macros that can be
+  invoked anywhere in Elixir code without the use of the
+  `Kernel.SpecialForms.` prefix. This is possible because they all have
+  been automatically imported, in the same fashion as the functions and
+  macros from the `Kernel` module.
+
+  These building blocks are defined in this module. Some of these special forms are lexical (like
   `alias/2`, `case/2`, etc.). The macros `{}/1` and `<<>>/1` are also special
   forms used to define tuple and binary data structures respectively.
 
   This module also documents macros that return information about Elixir's
   compilation environment, such as (`__ENV__/0`, `__MODULE__/0`, `__DIR__/0` and `__CALLER__/0`).
 
-  Finally, it also documents two special forms, `__block__/1` and
+  Additionally, it documents two special forms, `__block__/1` and
   `__aliases__/1`, which are not intended to be called directly by the
   developer but they appear in quoted contents since they are essential
   in Elixir's constructs.
@@ -37,7 +43,7 @@ defmodule Kernel.SpecialForms do
 
   ## AST representation
 
-  Only two-item tuples are considered literals in Elixir and return themselves
+  Only two-element tuples are considered literals in Elixir and return themselves
   when quoted. Therefore, all other tuples are represented in the AST as calls to
   the `:{}` special form.
 
@@ -344,8 +350,8 @@ defmodule Kernel.SpecialForms do
                          13::size(8), 10::size(8), 26::size(8), 10::size(8)>>
         @jpg_signature <<255::size(8), 216::size(8)>>
 
-        def type(<<@png_signature, rest::binary>>), do: :png
-        def type(<<@jpg_signature, rest::binary>>), do: :jpg
+        def type(<<@png_signature, _rest::binary>>), do: :png
+        def type(<<@jpg_signature, _rest::binary>>), do: :jpg
         def type(_), do: :unknown
       end
 
@@ -798,7 +804,7 @@ defmodule Kernel.SpecialForms do
     * The first element of the tuple is always an atom or
       another tuple in the same representation.
 
-    * The second element of the tuple represents metadata.
+    * The second element of the tuple represents [metadata](t:Macro.metadata/0).
 
     * The third element of the tuple are the arguments for the
       function call. The third argument may be an atom, which is
@@ -820,6 +826,20 @@ defmodule Kernel.SpecialForms do
 
   ## Options
 
+    * `:bind_quoted` - passes a binding to the macro. Whenever a binding is
+      given, `unquote/1` is automatically disabled.
+
+    * `:context` - sets the resolution context.
+
+    * `:generated` - marks the given chunk as generated so it does not emit warnings.
+      Currently it only works on special forms (for example, you can annotate a `case`
+      but not an `if`).
+
+    * `:line` - sets the quoted expressions to have the given line.
+
+    * `:location` - when set to `:keep`, keeps the current line and file from
+      quote. Read the "Stacktrace information" section below for more information.
+
     * `:unquote` - when `false`, disables unquoting. This means any `unquote`
       call will be kept as is in the AST, instead of replaced by the `unquote`
       arguments. For example:
@@ -833,21 +853,6 @@ defmodule Kernel.SpecialForms do
           ...>   unquote("hello")
           ...> end
           {:unquote, [], ["hello"]}
-
-    * `:location` - when set to `:keep`, keeps the current line and file from
-      quote. Read the Stacktrace information section below for more
-      information.
-
-    * `:line` - sets the quoted expressions to have the given line.
-
-    * `:generated` - marks the given chunk as generated so it does not emit warnings.
-      Currently it only works on special forms (for example, you can annotate a `case`
-      but not an `if`).
-
-    * `:context` - sets the resolution context.
-
-    * `:bind_quoted` - passes a binding to the macro. Whenever a binding is
-      given, `unquote/1` is automatically disabled.
 
   ## Quote and macros
 
@@ -948,7 +953,7 @@ defmodule Kernel.SpecialForms do
       import Math
       squared(5)
       x
-      #=> ** (CompileError) undefined variable x or undefined function x/0
+      ** (CompileError) undefined variable x or undefined function x/0
 
   We can see that `x` did not leak to the user context. This happens
   because Elixir macros are hygienic, a topic we will discuss at length
@@ -1013,7 +1018,7 @@ defmodule Kernel.SpecialForms do
 
       Hygiene.write()
       Hygiene.read()
-      #=> ** (RuntimeError) undefined variable a or undefined function a/0
+      ** (RuntimeError) undefined variable a or undefined function a/0
 
   For such, you can explicitly pass the current module scope as
   argument:
@@ -1104,7 +1109,7 @@ defmodule Kernel.SpecialForms do
 
         require Hygiene
         Hygiene.no_interference()
-        #=> ** (UndefinedFunctionError) ...
+        ** (UndefinedFunctionError) ...
 
         Hygiene.interference()
         #=> "world"
@@ -1191,8 +1196,8 @@ defmodule Kernel.SpecialForms do
 
       require Sample
       Sample.add(:one, :two)
-      #=> ** (ArithmeticError) bad argument in arithmetic expression
-      #=>     adder.ex:5: Sample.add/2
+      ** (ArithmeticError) bad argument in arithmetic expression
+          adder.ex:5: Sample.add/2
 
   When using `location: :keep` and invalid arguments are given to
   `Sample.add/2`, the stacktrace information will point to the file
@@ -1513,7 +1518,7 @@ defmodule Kernel.SpecialForms do
   non-matched value:
 
       with :foo = :bar, do: :ok
-      #=> ** (MatchError) no match of right hand side value: :bar
+      ** (MatchError) no match of right hand side value: :bar
 
   As with any other function or macro call in Elixir, explicit parens can
   also be used around the arguments before the `do`/`end` block:
@@ -1609,6 +1614,8 @@ defmodule Kernel.SpecialForms do
 
       &local_function/1
 
+  See also `Function.capture/3`.
+
   ## Anonymous functions
 
   The capture operator can also be used to partially apply
@@ -1676,7 +1683,7 @@ defmodule Kernel.SpecialForms do
   unambiguously identified by the operator `:.`. For example:
 
       iex> quote do
-      ...>   Foo.bar
+      ...>   Foo.bar()
       ...> end
       {{:., [], [{:__aliases__, [alias: false], [:Foo]}, :bar]}, [], []}
 
@@ -1735,8 +1742,7 @@ defmodule Kernel.SpecialForms do
 
   ## Variable handling
 
-  Notice that variables bound in a clause "head" do not leak to the
-  outer context:
+  Notice that variables bound in a clause do not leak to the outer context:
 
       case data do
         {:ok, value} -> value
@@ -1746,8 +1752,8 @@ defmodule Kernel.SpecialForms do
       value
       #=> unbound variable value
 
-  However, variables explicitly bound in the clause "body" are
-  accessible from the outer context:
+  When binding variables with the same names as variables in the outer context,
+  the variables in the outer context are not affected.
 
       value = 7
 
@@ -1757,12 +1763,11 @@ defmodule Kernel.SpecialForms do
       end
 
       value
-      #=> 7 or 13
+      #=> 7
 
-  In the example above, `value` is going to be `7` or `13` depending on
-  the value of `lucky?`. In case `value` has no previous value before
-  case, clauses that do not explicitly bind a value have the variable
-  bound to `nil`.
+  In the example above, `value` is going to be `7` regardless of the value of
+  `lucky?`. The variable `value` bound in the clause and the variable `value`
+  bound in the outer context are two entirely separate variables.
 
   If you want to pattern match against an existing variable,
   you need to use the `^/1` operator:
@@ -1817,15 +1822,15 @@ defmodule Kernel.SpecialForms do
         do_something_that_may_fail(some_arg)
       rescue
         ArgumentError ->
-          IO.puts "Invalid argument given"
+          IO.puts("Invalid argument given")
       catch
         value ->
-          IO.puts "Caught #{inspect(value)}"
+          IO.puts("Caught #{inspect(value)}")
       else
         value ->
-          IO.puts "Success! The result was #{inspect(value)}"
+          IO.puts("Success! The result was #{inspect(value)}")
       after
-        IO.puts "This is printed regardless if it failed or succeeded"
+        IO.puts("This is printed regardless if it failed or succeeded")
       end
 
   The `rescue` clause is used to handle exceptions while the `catch`
@@ -1920,7 +1925,7 @@ defmodule Kernel.SpecialForms do
         throw(:some_value)
       catch
         thrown_value ->
-          IO.puts "A value was thrown: #{inspect(thrown_value)}"
+          IO.puts("A value was thrown: #{inspect(thrown_value)}")
       end
 
   ### Catching values of any kind
@@ -1932,15 +1937,15 @@ defmodule Kernel.SpecialForms do
       try do
         exit(:shutdown)
       catch
-        :exit, value
-          IO.puts "Exited with value #{inspect(value)}"
+        :exit, value ->
+          IO.puts("Exited with value #{inspect(value)}")
       end
 
       try do
         exit(:shutdown)
       catch
         kind, value when kind in [:exit, :throw] ->
-          IO.puts "Caught exit or throw with value #{inspect(value)}"
+          IO.puts("Caught exit or throw with value #{inspect(value)}")
       end
 
   The `catch` clause also supports `:error` alongside `:exit` and `:throw` as
@@ -2112,7 +2117,7 @@ defmodule Kernel.SpecialForms do
         name when is_atom(name) ->
           name
         _ ->
-          IO.puts :stderr, "Unexpected message received"
+          IO.puts(:stderr, "Unexpected message received")
       end
 
   An optional `after` clause can be given in case the message was not
@@ -2124,10 +2129,10 @@ defmodule Kernel.SpecialForms do
         name when is_atom(name) ->
           name
         _ ->
-          IO.puts :stderr, "Unexpected message received"
+          IO.puts(:stderr, "Unexpected message received")
       after
         5000 ->
-          IO.puts :stderr, "No message in 5 seconds"
+          IO.puts(:stderr, "No message in 5 seconds")
       end
 
   The `after` clause can be specified even if there are no match clauses.
