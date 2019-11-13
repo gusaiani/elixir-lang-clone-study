@@ -1,6 +1,6 @@
 # Typespecs
 
-Elixir comes with a notation for declaring types and specifications. Elixir is a dynamically typed language, and as such, type specifications are never used by the compiler to optimize or modify code. Still, using type specifications is useful because
+Elixir comes with a notation for declaring types and specifications. Elixir is a dynamically typed language, and as such, type specifications are never used by the compiler to optimize or modify code. Still, using type specifications is useful because:
 
   * they provide documentation (for example, tools such as [ExDoc](https://github.com/elixir-lang/ex_doc) show type specifications in the documentation)
   * they're used by tools such as [Dialyzer](http://www.erlang.org/doc/man/dialyzer.html), that can analyze code with typespec to find type inconsistencies and possible bugs
@@ -50,7 +50,6 @@ The notation to represent the union of types is the pipe `|`. For example, the t
           | pid()                   # process identifier
           | port()                  # port identifier
           | reference()
-          | struct()                # any struct
           | tuple()                 # tuple of any size
 
                                     ## Numbers
@@ -125,7 +124,7 @@ Built-in type           | Defined as
 `as_boolean(t)`         | `t`
 `binary()`              | `<<_::_*8>>`
 `bitstring()`           | `<<_::_*1>>`
-`boolean()`             | `false` \| `true`
+`boolean()`             | `true` \| `false`
 `byte()`                | `0..255`
 `char()`                | `0..0x10FFFF`
 `charlist()`            | `[char()]`
@@ -258,8 +257,21 @@ If a callback module that implements a given behaviour doesn't export all the fu
 
 Elixir's standard library contains a few frequently used behaviours such as `GenServer`, `Supervisor`, and `Application`.
 
+### Inspecting behaviours
+
+The `@callback` and `@optional_callback` attributes are used to create a `behaviour_info/1` function available on the defining module. This function can be used to retrieve the callbacks and optional callbacks defined by that module.
+
+For example, for the `MyBehaviour` module defined in "Optional callbacks" above:
+
+    MyBehaviour.behaviour_info(:callbacks)
+    #=> [vital_fun: 0, "MACRO-non_vital_macro": 2, non_vital_fun: 0]
+    MyBehaviour.behaviour_info(:optional_callbacks)
+    #=> ["MACRO-non_vital_macro": 2, non_vital_fun: 0]
+
+When using `iex`, the `IEx.Helpers.b/1` helper is also available.
+
 ## The `string()` type
 
-Elixir discourages the use of the `string()` type. The `string()` type refers to Erlang strings, which are known as "charlists" in Elixir. They do not refer to Elixir strings, which are UTF-8 encoded binaries. To avoid confusion, if you attempt to use the type `string()`, Elixir will emit a warning. You should use `charlist()`, `binary()` or `String.t()` accordingly.
+Elixir discourages the use of the `string()` type. The `string()` type refers to Erlang strings, which are known as "charlists" in Elixir. They do not refer to Elixir strings, which are UTF-8 encoded binaries. To avoid confusion, if you attempt to use the type `string()`, Elixir will emit a warning. You should use `charlist()`, `nonempty_charlist()`, `binary()` or `String.t()` accordingly, or any of the several literal representations for these types.
 
 Note that `String.t()` and `binary()` are equivalent to analysis tools. Although, for those reading the documentation, `String.t()` implies it is a UTF-8 encoded binary.
