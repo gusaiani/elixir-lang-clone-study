@@ -8,7 +8,8 @@ defmodule Module do
   After a module is compiled, using many of the functions in
   this module will raise errors, since it is out of their scope
   to inspect runtime data. Most of the runtime data can be inspected
-  via the `__info__/1` function attached to each compiled module.
+  via the [`__info__/1`](`c:Module.__info__/1`) function attached to
+  each compiled module.
 
   ## Module attributes
 
@@ -27,7 +28,9 @@ defmodule Module do
   Accepts a module or a `{module, function_or_macro_name}` tuple.
   See the "Compile callbacks" section below.
 
-  ### `@behaviour` (notice the British spelling)
+  ### `@behaviour`
+
+  Note the British spelling!
 
   Behaviours can be referenced by modules to ensure they implement
   required specific function signatures defined by `@callback`.
@@ -39,7 +42,7 @@ defmodule Module do
         @callback default_port() :: integer
 
         @doc "Parses the given URL"
-        @callback parse(uri_info :: URI.t) :: URI.t
+        @callback parse(uri_info :: URI.t()) :: URI.t()
       end
 
   And then a module may use it as:
@@ -53,19 +56,33 @@ defmodule Module do
   If the behaviour changes or `URI.HTTP` does not implement
   one of the callbacks, a warning will be raised.
 
+  For detailed documentation, see the
+  [behaviour typespec documentation](typespecs.html#behaviours).
+
   ### `@impl`
 
   To aid in the correct implementation of behaviours, you may optionally declare
   `@impl` for implemented callbacks of a behaviour. This makes callbacks
-  explicit and can help you to catch errors in your code (the compiler will warn
-  you if you mark a function as `@impl` when in fact it is not a callback, and
-  vice versa). It also helps with maintainability by making it clear to other
-  developers that the function's purpose is to implement a callback.
+  explicit and can help you to catch errors in your code. The compiler will warn
+  in these cases:
 
-  Using `@impl` the example above can be rewritten as:
+    * if you mark a function with `@impl` when that function is not a callback.
+
+    * if you don't mark a function with `@impl` when other functions are marked
+      with `@impl`. If you mark one function with `@impl`, you must mark all
+      other callbacks for that behaviour as `@impl`.
+
+  `@impl` works on a per-context basis. If you generate a function through a macro
+  and mark it with `@impl`, that won't affect the module where that function is
+  generated in.
+
+  `@impl` also helps with maintainability by making it clear to other developers
+  that the function is implementing a callback.
+
+  Using `@impl`, the example above can be rewritten as:
 
       defmodule URI.HTTP do
-        @behaviour URI.parser
+        @behaviour URI.Parser
 
         @impl true
         def default_port(), do: 80
@@ -80,12 +97,19 @@ defmodule Module do
         @behaviour Bar
         @behaviour Baz
 
-        @impl true # will warn if neither Bar nor Baz specify a callback named bar/0
+        # Will warn if neither Bar nor Baz specify a callback named bar/0.
+        @impl true
         def bar(), do: :ok
 
-        @impl Baz # will warn if Baz does not specify a callback named baz/0
+        # Will warn if Baz does not specify a callback named baz/0.
+        @impl Baz
         def baz(), do: :ok
       end
+
+  The code is now more readable, as it is now clear which functions are
+  part of your API and which ones are callback implementations. To reinforce this
+  idea, `@impl true` automatically marks the function as `@doc false`, disabling
+  documentation unless `@doc` is explicitly set.
 
   ### `@compile`
 
@@ -104,18 +128,65 @@ defmodule Module do
   Multiple uses of `@compile` will accumulate instead of overriding
   previous ones. See the "Compile options" section below.
 
-  ### `@doc` (and `@since`)
+  ### `@deprecated`
 
-  Provides documentation for the function or macro that follows the
-  attribute.
+  Provides the depracation reason for a function. For example:
+
+      defmodule Keyword do
+        @deprecated "Use Kernel.length/1 instead"
+        def size(keyword) do
+          length(keyword)
+        end
+      end
+
+  The Mix compiler automatically looks for calls to deprecated modules
+  and emit warnings during compilation.
+
+  Using the `@deprecated` attribute will also be reflected in the
+  documentation of the given function and macro. You can choose between
+  the `@deprecated` attribute and the documentation metadata to provide
+  hard-deprecations (with warnings) and soft-deprecations (without warnings):
+
+  This is a soft-deprecation as it simply annotates the documentation
+  as deprecated:
+
+      @doc deprecated: "Use Kernel.length/1 instead"
+      def size(keyword)
+
+  This is a hard-deprecation as it emits warnings and annotates the
+  documentation as deprecated:
+
+      @deprecated "Use Kernel.length/1 instead"
+      def size(keyword)
+
+  Currently `@deprecated` only supports functions and macros. However
+  you can use the `:deprecated` key in the annotation metadata to
+  annotate the docs of modules, types and callbacks too.
+
+  We recommend using this feature with care, especially library authors.
+  Deprecating code always pushes the burden towards library users. We
+  also recommend for deprecated functionality to be maintained for long
+  periods of time, even after deprecation, giving developers plenty of
+  time to update (except for cases where keeping the deprecated API is
+  undesired, such as in the presence of security issues).
+
+  ### `@doc` and `@typedoc`
+
+  Provides documentation for the entity that follows the attribute.
+  `@doc` is to be used with a function, macro, callback, or
+  macrocallback, while `@typedoc` with a type (public or opaque).
 
   Accepts a string (often a heredoc) or `false` where `@doc false` will
-  make the function/macro invisible to documentation extraction tools
-  like ExDoc. For example:
+  make the entity invisible to documentation extraction tools like
+  [`ExDoc`](https://hexdocs.pm/ex_doc/). For example:
 
       defmodule MyModule do
+        @typedoc "This type"
+        @typedoc since: "1.1.0"
+        @type t :: term
+
         @doc "Hello world"
-        @since "1.1.0"
+        @doc since: "1.1.0"
         def hello do
           "world"
         end
@@ -128,8 +199,25 @@ defmodule Module do
         end
       end
 
-  `@since` is an optional attribute that annotates which version the
+  As can be seen in the example above, `@doc` and `@typedoc` also accept
+  a keyword list that serves as a way to provide arbitrary metadata
+  about the entity. Tools like [`ExDoc`](https://hexdocs.pm/ex_doc/) and
+  `IEx` may use this information to display annotations. A common use
+  case is `since` that may be used to annotate in which version the
   function was introduced.
+
+  As illustrated in the example, it is possible to use these attributes
+  more than once before an entity. However, the compiler will warn if
+  used twice with binaries as that replaces the documentation text from
+  the preceding use. Multiple uses with keyword lists will merge the
+  lists into one.
+
+  Note that since the compiler also defines some additional metadata,
+  there are a few reserved keys that will be ignored and warned if used.
+  Currently these are: `:opaque` and `:defaults`.
+
+  Once this module is compiled, this information becomes available via
+  the `Code.fetch_docs/1` function.
 
   ### `@dialyzer`
 
@@ -184,11 +272,19 @@ defmodule Module do
         @moduledoc """
         A very useful module.
         """
+        @moduledoc authors: ["Alice", "Bob"]
       end
 
-  Accepts a string (often a heredoc) or `false` where
-  `@moduledoc false` will make the module invisible to
-  documentation extraction tools like ExDoc.
+  Accepts a string (often a heredoc) or `false` where `@moduledoc false`
+  will make the module invisible to documentation extraction tools like
+  [`ExDoc`](https://hexdocs.pm/ex_doc/).
+
+  Similarly to `@doc` also accepts a keyword list to provide metadata
+  about the module. For more details, see the documentation of `@doc`
+  above.
+
+  Once this module is compiled, this information becomes available via
+  the `Code.fetch_docs/1` function.
 
   ### `@on_definition`
 
@@ -204,9 +300,9 @@ defmodule Module do
 
   Accepts the function name (as an atom) of a function in the current module or
   `{function_name, 0}` tuple where `function_name` is the name of a function in
-  the current module. The function must have arity 0 (no arguments) and has to
-  return `:ok`, otherwise the loading of the module will be aborted. For
-  example:
+  the current module. The function must be public and have an arity of 0 (no
+  arguments). If the function does not return `:ok`, the loading of the module
+  will be aborted. For example:
 
       defmodule MyModule do
         @on_load :load_check
@@ -236,7 +332,7 @@ defmodule Module do
 
   ### Typespec attributes
 
-  The following attributes are part of typespecs and are also reserved by
+  The following attributes are part of typespecs and are also built-in in
   Elixir:
 
     * `@type` - defines a type to be used in `@spec`
