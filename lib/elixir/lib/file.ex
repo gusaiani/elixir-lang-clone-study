@@ -6,7 +6,7 @@ defmodule File do
   to interact with files or IO devices, like `open/2`,
   `copy/3` and others. This module also provides higher
   level functions that work with filenames and have their naming
-  based on UNIX variants. For example, one can copy a file
+  based on Unix variants. For example, one can copy a file
   via `cp/3` and remove files and directories recursively
   via `rm_rf/1`.
 
@@ -30,7 +30,7 @@ defmodule File do
   always treated as UTF-8. In particular, we expect that the
   shell and the operating system are configured to use UTF-8
   encoding. Binary filenames are considered raw and passed
-  to the OS as is.
+  to the operating system as is.
 
   ## API
 
@@ -114,6 +114,12 @@ defmodule File do
           | {:read_ahead, pos_integer | false}
           | {:delayed_write, non_neg_integer, non_neg_integer}
 
+  @type erlang_time ::
+          {{year :: non_neg_integer(), month :: 1..12, day :: 1..31},
+           {hour :: 0..23, minute :: 0..59, second :: 0..59}}
+
+  @type posix_time :: integer()
+
   @doc """
   Returns `true` if the path is a regular file.
 
@@ -179,7 +185,7 @@ defmodule File do
   @doc """
   Returns `true` if the given path exists.
 
-  It can be a regular file, directory, socket, symbolic link, named pipe or device file.
+  It can be a regular file, directory, socket, symbolic link, named pipe, or device file.
   Returns `false` for symbolic links pointing to non-existing targets.
 
   ## Options
@@ -231,6 +237,88 @@ defmodule File do
   end
 
   @doc """
+  Same as `mkdir/1`, but raises a `File.Error` exception in case of failure.
+  Otherwise `:ok`.
+  """
+  @spec mkdir!(Path.t()) :: :ok
+  def mkdir!(path) do
+    case mkdir(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise File.Error,
+          reason: reason,
+          action: "make directory",
+          path: IO.chardata_to_string(path)
+    end
+  end
+
+  @doc """
+  Tries to create the directory `path`.
+
+  Missing parent directories are created. Returns `:ok` if successful, or
+  `{:error, reason}` if an error occurs.
+
+  Typical error reasons are:
+
+    * `:eacces`  - missing search or write permissions for the parent
+      directories of `path`
+    * `:enospc`  - there is no space left on the device
+    * `:enotdir` - a component of `path` is not a directory
+
+  """
+  @spec mkdir_p(Path.t()) :: :ok | {:error, posix}
+  def mkdir_p(path) do
+    do_mkdir_p(IO.chardata_to_string(path))
+  end
+
+  defp do_mkdir_p("/") do
+    :ok
+  end
+
+  defp do_mkdir_p(path) do
+    if dir?(path) do
+      :ok
+    else
+      parent = Path.dirname(path)
+
+      if parent == path do
+        # Protect against infinite loop
+        {:error, :einval}
+      else
+        _ = do_mkdir_p(parent)
+
+        case :file.make_dir(path) do
+          {:error, :eexist} = error ->
+            if dir?(path), do: :ok, else: error
+
+          other ->
+            other
+        end
+      end
+    end
+  end
+
+  @doc """
+  Same as `mkdir_p/1`, but raises a `File.Error` exception in case of failure.
+  Otherwise `:ok`.
+  """
+  @spec mkdir_p!(Path.t()) :: :ok
+  def mkdir_p!(path) do
+    case mkdir_p(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise File.Error,
+          reason: reason,
+          action: "make directory (with -p)",
+          path: IO.chardata_to_string(path)
+    end
+  end
+
+  @doc """
   Returns `{:ok, binary}`, where `binary` is a binary data object that contains the contents
   of `path`, or `{:error, reason}` if an error occurs.
 
@@ -241,7 +329,7 @@ defmodule File do
       or for searching one of the parent directories
     * `:eisdir`  - the named file is a directory
     * `:enotdir` - a component of the file name is not a directory;
-      on some platforms, `:enonent` is returned instead
+      on some platforms, `:enoent` is returned instead
     * `:enomem`  - there is not enough memory for the contents of the file
 
   You can use `:file.format_error/1` to get a descriptive string of the error.
@@ -252,8 +340,8 @@ defmodule File do
   end
 
   @doc """
-  Returns a binary with the content of the given filename or raises
-  `File.Error` if an error occurs.
+  Returns a binary with the contents of the given filename,
+  or raises a `File.Error` exception if an error occurs.
   """
   @spec read!(Path.t()) :: binary
   def read!(path) do
@@ -263,6 +351,59 @@ defmodule File do
 
       {:error, reason} ->
         raise File.Error, reason: reason, action: "read file", path: IO.chardata_to_string(path)
+    end
+  end
+
+  @doc """
+  Returns information about the `path`. If it exists, it
+  returns a `{:ok, :info}` tuple, where info is a
+  `File.Stat` struct. Returns `{:error, reason}` with
+  the same reasons as `read/1` if a failure occurs.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:time` - configures how the file timestamps are returned
+
+  The values for `:time` can be:
+
+    * `:universal` - returns a `{date, time}` tuple in UTC (default)
+    * `:local` - returns a `{date, time}` tuple using the same time zone as the
+      machine
+    * `:posix` - retunrs the time as integer seconds since epoch
+
+  Note: Since file times are stored in POSIX time format on most operating systems,
+  it is faster to retrieve file information with the `time: :posix` option.
+  """
+  @spec stat(Path.t(), stat_options) :: {:ok, File.Stat.t()} | {:error, posix}
+  def stat(path, opts \\ []) do
+    opts = Keyword.put_new(opts, :time, :universal)
+
+    case :file.read_file_info(IO.chardata_to_string(path), opts) do
+      {:ok, fileinfo} ->
+        {:ok, File.Stat.from_record(fileinfo)}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Same as `stat/2` but returns the `File.Stat` directly,
+  or raises a `File.Error` exception if an error is returned.
+  """
+  @spec stat!(Path.t(), stat_options) :: File.Stat.t()
+  def stat!(path, opts \\ []) do
+    case stat(path, opts) do
+      {:ok, info} ->
+        info
+
+      {:error, reason} ->
+        raise File.Error,
+          reason: reason,
+          action: "read file stats",
+          path: IO.chardata_to_string(path)
     end
   end
 end
