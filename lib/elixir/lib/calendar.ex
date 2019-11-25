@@ -23,6 +23,11 @@ defmodule Calendar do
   @type day_of_week :: non_neg_integer
   @type era :: non_neg_integer
 
+  @typedoc """
+  A tuple representing the `day` and the `era`.
+  """
+  @type day_of_era :: {day :: non_neg_integer(), era}
+
   @type hour :: non_neg_integer
   @type minute :: non_neg_integer
   @type second :: non_neg_integer
@@ -52,15 +57,15 @@ defmodule Calendar do
   representing the microseconds to external format. If the precision is 0,
   it means microseconds must be skipped.
   """
-  @type microsecond :: {0..999_999, 0..6}
+  @type microsecond :: {non_neg_integer, non_neg_integer}
 
   @typedoc "A calendar implementation"
   @type calendar :: module
 
-  @typedoc "The time zone ID according to the IANA tz database (e.g. Europe/Zurich)"
+  @typedoc "The time zone ID according to the IANA tz database (for example, Europe/Zurich)"
   @type time_zone :: String.t()
 
-  @typedoc "The time zone abbreviation (e.g. CET or CEST or BST etc.)"
+  @typedoc "The time zone abbreviation (for example, CET or CEST or BST etc.)"
   @type zone_abbr :: String.t()
 
   @typedoc "The time zone UTC offset in seconds"
@@ -175,7 +180,7 @@ defmodule Calendar do
   @doc """
   Calculates the day and era from the given `year`, `month`, and `day`.
   """
-  @callback day_of_era(year, month, day) :: {non_neg_integer(), era}
+  @callback day_of_era(year, month, day) :: day_of_era()
 
   @doc """
   Converts the date into a string according to the calendar.
