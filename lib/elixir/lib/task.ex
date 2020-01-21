@@ -200,7 +200,7 @@ defmodule Task do
 
   The list of callers of the current process can be retrieved from the Process
   dictionary with `Process.get(:"$callers")`. This will return either `nil` or
-  a list `[pid_n, ..., pid2, pid1]` with at least one entry where `pid_n` is
+  a list `[pid_n, ..., pid2, pid1]` with at least one entry Where `pid_n` is
   the PID that called the current process, `pid2` called `pid_n`, and `pid2` was
   called by `pid1`.
   """
@@ -303,5 +303,117 @@ defmodule Task do
       when is_atom(module) and is_atom(function_name) and is_list(args) do
     mfa = {module, function_name, args}
     Task.Supervised.start_link(get_owner(self()), get_callers(self()), mfa)
+  end
+
+  @doc """
+  Starts a task that must be awaited on.
+
+  `fun` must be a zero-arity anonymous function.
+  This function spawns a process that is linked to and monitored
+  by the caller process. A `Task` struct is returned containing
+  the relevant information.
+
+  Read the `Task` module documentation for more information about the
+  general usage of `async/1` and `async/3`.
+
+  See also `async/3`.
+  """
+  @spec async((() -> any)) :: t
+  def async(fun) when is_function(fun, 0) do
+    async(:erlang, :apply, [fun, []])
+  end
+
+  @doc """
+  Starts a task that must be awaited on.
+
+  A `Task` struct is returned containing the relevant information.
+  Developers must eventually call `Task.await/2` or `Task.yield/2`
+  followed by `Task.shutdown/2` on the returned task.
+
+  Read the `Task` module documentation for more information about
+  the general usage of `async/1` and `async/3`.
+
+  ## Linking
+
+  This function spawns a process that is linked to and monitored
+  by the caller process. The linking part is important because it
+  aborts the task if the parent process dies. It also guarantees
+  the code before async/await has the same properties after you
+  add the async call. For example, imagine you have this:
+
+      x = heavy_fun()
+      y = some_fun()
+      x + y
+
+  Now you want to make the `heavy_fun()` async:
+
+      x = Task.async(&heavy_fun/0)
+      y = some_fun()
+      Task.await(x) + y
+
+  As before, if `heavy_fun/0` fails, the whole computation will
+  fail, including the parent process. If you don't want the task
+  to fail then you must change the `heavy_fun/0` code in the
+  same way you would achieve it if you didn't have the async call.
+  For example, to either return `{:ok, val} | :error` results or,
+  in more extreme cases, by using `try/rescue`. In other words,
+  an asynchronous task should be thought of as an extension of a
+  process rather than a mechanism to isolate it from all errors.
+
+  If you don't want to link the caller to the task, then you
+  must use a supervised task with `Task.Supervisor` and call
+  `Task.Supervisor.async_nolink/2`.
+
+  In any case, avoid any of the following:
+
+    * Setting `:trap_exit` to `true` - trapping exits should be
+      used only in special circumstances as it would make your
+      process immune to not only exits from the task but from
+      any other processes.
+
+      Moreover, even when trapping exits, calling `await` will
+      still exit if the task has terminated without sending its
+      result back.
+
+    * Unlinking the task process started with `async`/`await`.
+      If you unlink the processes and the task does not belong
+      to any supervisor, you may leave dangling tasks in case
+      the parent dies.
+
+  ## Message format
+
+  The reply sent by the task will be in the format `{ref, result}`,
+  where `ref` is the monitor reference held by the task struct
+  and `result` is the return value of the task function.
+  """
+  @spec async(module, atom, [term]) :: t
+  def async(module, function_name, args)
+      when is_atom(module) and is_atom(function_name) and is_list(args) do
+    mfa = {module, function_name, args}
+    owner = self()
+    {:ok, pid} = Task.Supervised.start_link(get_owner(owner), get_callers(owner), :nomonitor, mfa)
+    ref = Process.monitor(pid)
+    send(pid, {owner, ref})
+    %Task{pid: pid, ref: ref, owner: owner}
+  end
+
+  # Returns a tuple with the node where this is executed and either the
+  # registered name of the given PID or the PID of where this is executed. Used
+  # when exiting from tasks to print out from where the task was started.
+  defp get_owner(pid) do
+    self_or_name =
+      case Process.info(pid, :registered_name) do
+        {:registered_name, name} when is_atom(name) -> name
+        _ -> pid
+      end
+
+    {node(), self_or_name, pid}
+  end
+
+  defp get_callers(owner) do
+    case :erlang.get(:"$callers") do
+      [_ | _] = list -> [owner | list]
+      _ -> owner
+    end
   end
 end

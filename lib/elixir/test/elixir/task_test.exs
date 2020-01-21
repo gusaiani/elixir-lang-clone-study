@@ -71,5 +71,49 @@ defmodule TaskTest do
     # Assert the link
     {:links, links} = Process.info(self(), :links)
     assert task.pid in links
+
+    receive do: (:ready -> :ok)
+
+    # Assert the initial call
+    {:name, fun_name} = Function.info(fun, :name)
+    assert {__MODULE__, fun_name, 0} === :proc_lib.translate_initial_call(task.pid)
+
+    # Run the task
+    send(task.pid, true)
+
+    # Assert response and monitoring messages
+    ref = task.ref
+    assert_receive {^ref, :done}
+    assert_receive {:DOWN, ^ref, _, _, :normal}
+  end
+
+  test "async/3" do
+    task = Task.async(__MODULE__, :wait_and_send, [self(), :done])
+    assert task.__struct__ == Task
+
+    {:links, links} = Process.info(self(), :links)
+    assert task.pid in links
+
+    receive do: (:ready -> :ok)
+    assert {__MODULE__, :wait_and_send, 2} === :proc_lib.translate_initial_call(task.pid)
+
+    send(task.pid, true)
+    assert Task.await(task) === :done
+    assert_receive :done
+  end
+
+  test "async with $callers" do
+    grandparent = self()
+
+    Task.async(fn ->
+      parent = self()
+      assert Process.get(:"$callers") == [grandparent]
+
+      Task.async(fn ->
+        assert Process.get(:"$callers") == [parent, grandparent]
+      end)
+      |> Task.await()
+    end)
+    |> Task.await()
   end
 end
