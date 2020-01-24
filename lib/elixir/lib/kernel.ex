@@ -1,45 +1,46 @@
 # Use elixir_bootstrap module to be able to bootstrap Kernel.
 # The bootstrap module provides simpler implementations of the
 # functions removed, simple enough to bootstrap.
-import Kernel, except: [@: 1, defmodule: 2, def: 1, def: 2, defp: 2,
-                        defmacro: 1, defmacro: 2, defmacrop: 2]
+import Kernel,
+  except: [@: 1, defmodule: 2, def: 1, def: 2, defp: 2, defmacro: 1, defmacro: 2, defmacrop: 2]
+
 import :elixir_bootstrap
 
 defmodule Kernel do
   @moduledoc """
-  This module is the entry point of the Elixir programming language.
+  `Kernel` is Elixir's default environment.
 
-  It provides the default functions and macros Elixir imports into your
-  environment. Those can be directly invoked in your code without the
-  module name:
+  It mainly consists of:
+
+    * basic language primitives, such as arithmetic operators, spawning of processes,
+      data type handling, and others
+    * macros for control-flow and defining new functionality (modules, functions, and the like)
+    * guard checks for augmenting pattern matching
+
+  You can invoke `Kernel` functions and macros anywhere in Elixir code
+  without the use of the `Kernel.` prefix since they have all been
+  automatically imported. For example, in IEx, you can call:
 
       iex> is_number(13)
       true
 
-  These functions and macros can be skipped or cherry-picked via the
-  `Kernel.SpecialForms.import/2` macro. For instance, if you want to tell
-  Elixir not to import the `if/2` macro, you can do:
+  If you don't want to import a function or macro from `Kernel`, use the `:except`
+  option and then list the function/macro by arity:
 
-      import Kernel, except: [if: 2]
+      import Kernel, except: [if: 2, unless: 2]
+
+  See `Kernel.SpecialForms.import/2` for more information on importing.
 
   Elixir also has special forms that are always imported and
   cannot be skipped. These are described in `Kernel.SpecialForms`.
-
-  This module provides a variety of code definition, flow-control
-  and data-type functionality. For example, new processes can be
-  created with `spawn/1`, modules can be defined with `defmodule/2`,
-  short-circuit operators are found in `&&/2` and `||/2`, numbers
-  can be added with `+/2`, and more. This module also contains all
-  built-in guards, which are a set of functions that augment pattern
-  matching with complex checks. More information about guards can be
-  found in the [Guards page](guards.html).
 
   ## The standard library
 
   `Kernel` provides the basic capabilities the Elixir standard library
   is built on top of. It is recommended to explore the standard library
   for advanced functionality. Here are the main groups of modules in the
-  standard library (this list is not a complete reference).
+  standard library (this list is not a complete reference, see the
+  documentation sidebar for all entries).
 
   ### Built-in types
 
@@ -47,44 +48,42 @@ defmodule Kernel do
 
     * `Atom` - literal constants with a name (`true`, `false`, and `nil` are atoms)
     * `Float` - numbers with floating point precision
+    * `Function` - a reference to code chunk, created with the `fn/1` special form
     * `Integer` - whole numbers (not fractions)
-    * `List` - collections of a variable amount of elements (linked lists)
+    * `List` - collections of a variable number of elements (linked lists)
     * `Map` - collections of key-value pairs
     * `Process` - light-weight threads of execution
     * `Port` - mechanisms to interact with the external world
-    * `Tuple` - collections of fixed amount of elements
+    * `Tuple` - collections of a fixed number of elements
 
-  There are three data-types without an accompanying module:
+  There are two data types without an accompanying module:
 
-    * Bitstrings - a sequence of bits, created with `Kernel.SpecialForms.<<>>/1`.
+    * Bitstring - a sequence of bits, created with `Kernel.SpecialForms.<<>>/1`.
       When the number of bits is divisible by 8, they are called binaries and can
-      be manipulated with the Erlang
-      [`:binary` module](http://erlang.org/doc/man/binary.html)
-    * Function - a reference to code chunk, created with the `Kernel.SpecialForms.fn/2`
-      special form
+      be manipulated with Erlang's `:binary` module
     * Reference - a unique value in the runtime system, created with `make_ref/0`
 
-  ### Data-types
+  ### Data types
 
-  Elixir also provides other data-types that are built on top of the types
-  listed above.
+  Elixir also provides other data types that are built on top of the types
+  listed above. Some of them are:
 
     * `Date` - `year-month-day` structs in a given calendar
-    * `Time` - `hour:minute:second` structs in a given calendar
-    * `DateTime` - date and time with timezone in a given calendar
+    * `DateTime` - date and time with time zone in a given calendar
     * `Exception` - data raised from errors and unexpected scenarios
     * `MapSet` - unordered collections of unique elements
-    * `NaiveDateTime` - date and time without timezone in a given calendar
+    * `NaiveDateTime` - date and time without time zone in a given calendar
     * `Keyword` - lists of two-element tuples, often representing optional values
     * `Range` - inclusive ranges between two integers
     * `Regex` - regular expressions
     * `String` - UTF-8 encoded binaries representing characters
+    * `Time` - `hour:minute:second` structs in a given calendar
     * `URI` - representation of URIs that identify resources
     * `Version` - representation of versions and requirements
 
   ### System modules
 
-  Modules that interface with the underlying system:
+  Modules that interface with the underlying system, such as:
 
     * `IO` - handles input and output
     * `File` - interacts with the underlying file system
@@ -94,31 +93,45 @@ defmodule Kernel do
   ### Protocols
 
   Protocols add polymorphic dispatch to Elixir. They are contracts
-  implementable by data-types. See `defprotocol/2` for more information on
+  implementable by data types. See `defprotocol/2` for more information on
   protocols. Elixir provides the following protocols in the standard library:
 
     * `Collectable` - collects data into a data type
     * `Enumerable` - handles collections in Elixir. The `Enum` module
       provides eager functions for working with collections, the `Stream`
       module provides lazy functions
-    * `Inspect` - converts data-types into their programming language
+    * `Inspect` - converts data types into their programming language
       representation
-    * `List.Chars` - converts data-types to their outside world
-      representation as char lists (non-programming based)
-    * `String.Chars` - converts data-types to their outside world
+    * `List.Chars` - converts data types to their outside world
+      representation as charlists (non-programming based)
+    * `String.Chars` - converts data types to their outside world
       representation as strings (non-programming based)
 
-  ### Process-based functionality
+  ### Process-based and application-centric functionality
 
   The following modules build on top of processes to provide concurrency,
   fault-tolerance, and more.
 
     * `Agent` - a process that encapsulates mutable state
+    * `Application` - functions for starting, stopping and configuring
+      applications
     * `GenServer` - a generic client-server API
     * `Registry` - a key-value process-based storage
     * `Supervisor` - a process that is responsible for starting,
       supervising and shutting down other processes
     * `Task` - a process that performs computations
+    * `Task.Supervisor` - a supervisor for managing tasks exclusively
+
+  ### Supporting documents
+
+  Elixir documentation also includes supporting documents under the
+  "Pages" section. Those are:
+
+    * [Compatibility and Deprecations](compatibility-and-deprecations.html) - lists
+      compatibility between every Elixir version and Erlang/OTP, release schema;
+      lists all deprecated functions, when they were deprecated and alternatives
+    * [Library Guidelines](library-guidelines.html) - general guidelines, anti-patterns,
+      and rules for those writing libraries
 
   ## Inlining
 
