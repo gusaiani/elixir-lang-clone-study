@@ -2,7 +2,61 @@ import Kernel, except: [length: 1]
 
 defmodule String do
   @moduledoc ~S"""
-  A String in Elixir is a UTF-8 encoded binary.
+  Strings in Elixir are UTF-8 encoded binaries.
+
+  Strings in Elixir are a sequence of Unicode characters,
+  typically written between double quoted strings, such
+  as `"hello"` and `"héllò"`.
+
+  In case a string must have a double-quote in itself,
+  the double quotes must be escaped with a backslash,
+  for example: `"this is a string with \"double quotes\""`.
+
+  You can concatenate two strings with the `<>/2` operator:
+
+      iex> "hello" <> " " <> "world"
+      "hello world"
+
+  ## Interpolation
+
+  Strings in Elixir also support interpolation. This allows
+  you to place some value in the middle of a string by using
+  the `#{}` syntax:
+
+      iex> name = "joe"
+      iex> "hello #{name}"
+      "hello joe"
+
+  Any Elixir expression is valid inside the interpolation.
+  If a string is given, the string is interpolated as is.
+  If any other value is given, Elixir will attempt to convert
+  it to a string using the `String.Chars` protocol. This
+  allows, for example, to output an integer from the interpolation:
+
+      iex> "2 + 2 = #{2 + 2}"
+      "2 + 2 = 4"
+
+  In case the value you want to interpolate cannot be
+  converted to a string, because it doesn't have an human
+  textual representation, a protocol error will be raised.
+
+  ## Escape characters
+
+  Besides allowing double-quotes to be escaped with a backslash,
+  strings also support the following escape characters:
+
+    * `\a` - Bell
+    * `\b` - Backspace
+    * `\t` - Horizontal tab
+    * `\n` - Line feed (New lines)
+    * `\v` - Vertical tab
+    * `\f` - Form feed
+    * `\r` - Carriage return
+    * `\e` - Command Escape
+    * `\#` - Returns the `#` character itself, skipping interpolation
+    * `\xNN` - A byte represented by the hexadecimal `NN`
+    * `\uNNNN` - A Unicode code point represented by `NNNN`
+
 
   ## Codepoints and grapheme cluster
 
