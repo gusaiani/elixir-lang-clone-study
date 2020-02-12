@@ -9,8 +9,8 @@ defmodule Kernel.SpecialForms do
   been automatically imported, in the same fashion as the functions and
   macros from the `Kernel` module.
 
-  These building blocks are defined in this module. Some of these special forms are lexical (like
-  `alias/2`, `case/2`, etc.). The macros `{}/1` and `<<>>/1` are also special
+  These building blocks are defined in this module. Some of these special forms are lexical (such as
+  `alias/2` and `case/2`). The macros `{}/1` and `<<>>/1` are also special
   forms used to define tuple and binary data structures respectively.
 
   This module also documents macros that return information about Elixir's
@@ -720,6 +720,7 @@ defmodule Kernel.SpecialForms do
   To retrieve the stacktrace of the current process, use
   `Process.info(self(), :current_stacktrace)` instead.
   """
+  @doc since: "1.7.0"
   defmacro __STACKTRACE__, do: error!([])
 
   @doc """
@@ -834,6 +835,8 @@ defmodule Kernel.SpecialForms do
     * `:generated` - marks the given chunk as generated so it does not emit warnings.
       Currently it only works on special forms (for example, you can annotate a `case`
       but not an `if`).
+
+    * `:file` - sets the quoted expressions to have the given file.
 
     * `:line` - sets the quoted expressions to have the given line.
 
