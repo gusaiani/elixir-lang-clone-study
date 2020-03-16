@@ -1,8 +1,46 @@
 defmodule Atom do
   @moduledoc """
-  Convenience functions for working with atoms.
+  Atoms are constants whose values are their own name.
 
-  See also `Kernel.is_atom/1`.
+  They are often useful to enumerate over distinct values, such as:
+
+      iex> :apple
+      :apple
+      iex> :orange
+      :orange
+      iex> :watermelon
+      :watermelon
+
+  Atoms are equal if their names are equal.
+
+      iex> :apple == :apple
+      true
+      iex> :apple == :orange
+      false
+
+  Often they are used to express the state of an operation, by using
+  values such as `:ok` and `:error`.
+
+  The booleans `true` and `false` are also atoms:
+
+      iex> true == :true
+      true
+      iex> is_atom(false)
+      true
+      iex> is_boolean(:false)
+      true
+
+  Elixir allows you to skip the leading `:` for the atoms `false`, `true`,
+  and `nil`.
+
+  Atoms must be composed of Unicode characters such as letters, numbers,
+  underscore, and `@`. If the keyword has a character that does not
+  belong to the category above, such as spaces, you can wrap it in
+  quotes:
+
+      iex> :"this is an atom with spaces"
+      :"this is an atom with spaces"
+
   """
 
   @doc """
@@ -16,7 +54,7 @@ defmodule Atom do
       "foo"
 
   """
-  @spec to_string(atom) :: String.t
+  @spec to_string(atom) :: String.t()
   def to_string(atom) do
     :erlang.atom_to_binary(atom, :utf8)
   end
@@ -37,9 +75,8 @@ defmodule Atom do
     :erlang.atom_to_list(atom)
   end
 
-  # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
   @doc false
+  @deprecated "Use Atom.to_charlist/1 instead"
   @spec to_char_list(atom) :: charlist
   def to_char_list(atom), do: Atom.to_charlist(atom)
 end
