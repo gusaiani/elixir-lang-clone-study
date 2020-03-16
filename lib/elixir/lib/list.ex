@@ -1,6 +1,6 @@
 defmodule List do
   @moduledoc """
-  Functions that work on (linked) lists.
+  Linked lists hold zero, one, or more elements in the choosen order.
 
   Lists in Elixir are specified between square brackets:
 
