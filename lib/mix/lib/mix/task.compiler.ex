@@ -4,7 +4,7 @@ defmodule Mix.Task.Compiler do
 
   A Mix compiler task can be defined by simply using `Mix.Task.Compiler`
   in a module whose name starts with `Mix.Tasks.Compile.` and defining
-  the `run/1` function:
+  the [`run/1`](`c:run/1`) function:
 
       defmodule Mix.Tasks.Compile.MyLanguage do
         use Mix.Task.Compiler
@@ -14,7 +14,7 @@ defmodule Mix.Task.Compiler do
         end
       end
 
-  The `run/1` function returns an atom indicating the status of the
+  The [`run/1`](`c:run/1`) function returns an atom indicating the status of the
   compilation, and optionally can also return a list of "diagnostics"
   such as warnings or compilation errors. Doing this enables code
   editors to display issues inline without having to analyze the
@@ -64,7 +64,7 @@ defmodule Mix.Task.Compiler do
     a range specified as `{start_line, start_col, end_line, end_col}`,
     or `nil` if unknown.
 
-    Line numbers are 1-based, and column numbers in a range are 0-based and refer
+    Line numbers are one-based, and column numbers in a range are zero-based and refer
     to the cursor position at the start of the character at that index. For example,
     to indicate that a diagnostic applies to the first `n` characters of the
     first line, the range would be `{1, 0, 1, n}`.
@@ -78,15 +78,14 @@ defmodule Mix.Task.Compiler do
     defstruct [:file, :severity, :message, :position, :compiler_name, :details]
   end
 
+  @type status :: :ok | :noop | :error
+
   @doc """
   Receives command-line arguments and performs compilation. If it
   produces errors, warnings, or any other diagnostic information,
   it should return a tuple with the status and a list of diagnostics.
   """
-  @callback run([binary]) ::
-              :ok
-              | :noop
-              | {:ok | :noop | :error, [Diagnostic.t()]}
+  @callback run([binary]) :: status | {status, [Diagnostic.t()]}
 
   @doc """
   Lists manifest files for the compiler.
@@ -99,6 +98,20 @@ defmodule Mix.Task.Compiler do
   @callback clean() :: any
 
   @optional_callbacks clean: 0, manifests: 0
+
+  @doc """
+  Adds a callback that runs after a given compiler.
+
+  The callback is invoked after the compiler runs and
+  it receives a tuple with current status and the list
+  of diagnostic. It must return the updated status and
+  diagnostics.
+  """
+  @doc since: "1.10.0"
+  @spec after_compiler(atom, ({status, [Diagnostic.t()]} -> {status, [Diagnostic.t()]})) :: :ok
+  def after_compiler(name, fun) when is_atom(name) and is_function(fun, 1) do
+    Mix.ProjectStack.prepend_after_compiler(name, fun)
+  end
 
   @doc false
   defmacro __using__(_opts) do
