@@ -1,4 +1,4 @@
-Code.require_file "test_helper.exs", __DIR__
+Code.require_file("test_helper.exs", __DIR__)
 
 defmodule URITest do
   use ExUnit.Case, async: true
@@ -7,8 +7,9 @@ defmodule URITest do
 
   test "encode/1,2" do
     assert URI.encode("4_test.is-s~") == "4_test.is-s~"
+
     assert URI.encode("\r\n&<%>\" ゆ", &URI.char_unreserved?/1) ==
-           "%0D%0A%26%3C%25%3E%22%20%E3%82%86"
+             "%0D%0A%26%3C%25%3E%22%20%E3%82%86"
   end
 
   test "encode_www_form/1" do
@@ -35,26 +36,24 @@ defmodule URITest do
     assert URI.decode_query("", %{}) == %{}
 
     assert URI.decode_query("safe=off", %{"cookie" => "foo"}) ==
-           %{"safe" => "off", "cookie" => "foo"}
+             %{"safe" => "off", "cookie" => "foo"}
 
     assert URI.decode_query("q=search%20query&cookie=ab%26cd&block+buster=") ==
-           %{"block buster" => "", "cookie" => "ab&cd", "q" => "search query"}
+             %{"block buster" => "", "cookie" => "ab&cd", "q" => "search query"}
 
-    assert URI.decode_query("something=weird%3Dhappening") ==
-           %{"something" => "weird=happening"}
+    assert URI.decode_query("something=weird%3Dhappening") == %{"something" => "weird=happening"}
 
-    assert URI.decode_query("garbage") ==
-           %{"garbage" => nil}
-    assert URI.decode_query("=value") ==
-           %{"" => "value"}
-    assert URI.decode_query("something=weird=happening") ==
-           %{"something" => "weird=happening"}
+    assert URI.decode_query("=") == %{"" => ""}
+    assert URI.decode_query("key") == %{"key" => ""}
+    assert URI.decode_query("key=") == %{"key" => ""}
+    assert URI.decode_query("=value") == %{"" => "value"}
+    assert URI.decode_query("something=weird=happening") == %{"something" => "weird=happening"}
   end
 
   test "query_decoder/1" do
-    decoder  = URI.query_decoder("q=search%20query&cookie=ab%26cd&block%20buster=")
+    decoder = URI.query_decoder("q=search%20query&cookie=ab%26cd&block%20buster=")
     expected = [{"q", "search query"}, {"cookie", "ab&cd"}, {"block buster", ""}]
-    assert Enum.map(decoder, &(&1)) == expected
+    assert Enum.map(decoder, & &1) == expected
   end
 
   test "decode/1" do
@@ -65,6 +64,7 @@ defmodule URITest do
     assert_raise ArgumentError, ~R/malformed URI/, fn ->
       URI.decode("% invalid")
     end
+
     assert_raise ArgumentError, ~R/malformed URI/, fn ->
       URI.decode("invalid%")
     end
@@ -85,30 +85,65 @@ defmodule URITest do
     end
 
     test "works with HTTP scheme" do
-      assert %URI{scheme: "http", host: "foo.com", path: "/path/to/something",
-                  query: "foo=bar&bar=foo", fragment: "fragment", port: 80,
-                  authority: "foo.com", userinfo: nil} ==
-             URI.parse("http://foo.com/path/to/something?foo=bar&bar=foo#fragment")
+      expected_uri = %URI{
+        scheme: "http",
+        host: "foo.com",
+        path: "/path/to/something",
+        query: "foo=bar&bar=foo",
+        fragment: "fragment",
+        port: 80,
+        authority: "foo.com",
+        userinfo: nil
+      }
+
+      assert URI.parse("http://foo.com/path/to/something?foo=bar&bar=foo#fragment") ==
+               expected_uri
     end
 
     test "works with HTTPS scheme" do
-      assert %URI{scheme: "https", host: "foo.com", authority: "foo.com",
-                  query: nil, fragment: nil, port: 443, path: nil, userinfo: nil} ==
-             URI.parse("https://foo.com")
+      expected_uri = %URI{
+        scheme: "https",
+        host: "foo.com",
+        authority: "foo.com",
+        query: nil,
+        fragment: nil,
+        port: 443,
+        path: nil,
+        userinfo: nil
+      }
+
+      assert URI.parse("https://foo.com") == expected_uri
     end
 
     test "works with \"file\" scheme" do
-      assert %URI{scheme: "file", host: nil, path: "/foo/bar/baz", userinfo: nil,
-                  query: nil, fragment: nil, port: nil, authority: nil} ==
-             URI.parse("file:///foo/bar/baz")
+      expected_uri = %URI{
+        scheme: "file",
+        host: "",
+        path: "/foo/bar/baz",
+        userinfo: nil,
+        query: nil,
+        fragment: nil,
+        port: nil,
+        authority: ""
+      }
+
+      assert URI.parse("file:///foo/bar/baz") == expected_uri
     end
 
     test "works with FTP scheme" do
-      assert %URI{scheme: "ftp", host: "private.ftp-server.example.com",
-                  userinfo: "user001:password", authority: "user001:password@private.ftp-server.example.com",
-                  path: "/my_directory/my_file.txt", query: nil, fragment: nil,
-                  port: 21} ==
-             URI.parse("ftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt")
+      expected_uri = %URI{
+        scheme: "ftp",
+        host: "private.ftp-server.example.com",
+        userinfo: "user001:password",
+        authority: "user001:password@private.ftp-server.example.com",
+        path: "/my_directory/my_file.txt",
+        query: nil,
+        fragment: nil,
+        port: 21
+      }
+
+      ftp = "ftp://user001:password@private.ftp-server.example.com/my_directory/my_file.txt"
+      assert URI.parse(ftp) == expected_uri
     end
 
     test "works with SFTP scheme" do

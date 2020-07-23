@@ -3,29 +3,37 @@ defmodule URI do
   Utilities for working with URIs.
 
   This module provides functions for working with URIs (for example, parsing
-  URIs or encoding query strings). For reference, most of the functions in this
-  module refer to [RFC 3986](https://tools.ietf.org/html/rfc3986).
+  URIs or encoding query strings). The functions in this module are implemented
+  according to [RFC 3986](https://tools.ietf.org/html/rfc3986).
   """
 
-  defstruct scheme: nil, path: nil, query: nil,
-            fragment: nil, authority: nil,
-            userinfo: nil, host: nil, port: nil
+  defstruct scheme: nil,
+            path: nil,
+            query: nil,
+            fragment: nil,
+            authority: nil,
+            userinfo: nil,
+            host: nil,
+            port: nil
 
   @type t :: %__MODULE__{
-    scheme: nil | binary,
-    path: nil | binary,
-    query: nil | binary,
-    fragment: nil | binary,
-    authority: nil | binary,
-    userinfo: nil | binary,
-    host: nil | binary,
-    port: nil | :inet.port_number,
-  }
+          scheme: nil | binary,
+          path: nil | binary,
+          query: nil | binary,
+          fragment: nil | binary,
+          authority: nil | binary,
+          userinfo: nil | binary,
+          host: nil | binary,
+          port: nil | :inet.port_number()
+        }
 
   import Bitwise
 
+  @reserved_characters ':/?#[]@!$&\'()*+,;='
+  @formatted_reserved_characters Enum.map_join(@reserved_characters, ", ", &<<?`, &1, ?`>>)
+
   @doc """
-  Returns the default port for a given scheme.
+  Returns the default port for a given `scheme`.
 
   If the scheme is unknown to the `URI` module, this function returns
   `nil`. The default port for any scheme can be configured globally
