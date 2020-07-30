@@ -1,17 +1,23 @@
-Code.require_file "test_helper.exs", __DIR__
+Code.require_file("test_helper.exs", __DIR__)
 
 defmodule ApplicationTest do
   use ExUnit.Case, async: true
 
   import PathHelpers
+  import ExUnit.CaptureIO
 
   test "application environment" do
+    assert_raise ArgumentError, ~r/because the application was not loaded nor configured/, fn ->
+      Application.fetch_env!(:unknown, :unknown)
+    end
+
+    assert_raise ArgumentError, ~r/because configuration at :unknown was not set/, fn ->
+      Application.fetch_env!(:elixir, :unknown)
+    end
+
     assert Application.get_env(:elixir, :unknown) == nil
     assert Application.get_env(:elixir, :unknown, :default) == :default
     assert Application.fetch_env(:elixir, :unknown) == :error
-    assert_raise ArgumentError, fn ->
-      Application.fetch_env!(:elixir, :unknown)
-    end
 
     assert Application.put_env(:elixir, :unknown, :known) == :ok
     assert Application.fetch_env(:elixir, :unknown) == {:ok, :known}
@@ -21,6 +27,8 @@ defmodule ApplicationTest do
 
     assert Application.delete_env(:elixir, :unknown) == :ok
     assert Application.get_env(:elixir, :unknown, :default) == :default
+  after
+    Application.delete_env(:elixir, :unknown)
   end
 
   test "loaded and started applications" do

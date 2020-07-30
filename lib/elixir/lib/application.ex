@@ -483,23 +483,21 @@ defmodule Application do
         value
 
       :error ->
-        vsn = :application.get_key(app, :vsn)
-        app = inspect(app)
-        key = inspect(key)
+        raise ArgumentError,
+              "could not fetch application environment #{inspect(key)} for application " <>
+                "#{inspect(app)} #{fetch_env_failed_reason(app, key)}"
+    end
+  end
 
-        case vsn do
-          {:ok, _} ->
-            raise ArgumentError,
-                  "could not fetch application environment #{key} for application #{app} " <>
-                    "because configuration #{key} was not set"
+  defp fetch_env_failed_reason(app, key) do
+    vsn = :application.get_key(app, :vsn)
 
-          :undefined ->
-            raise ArgumentError,
-                  "could not fetch application environment #{key} for application #{app} " <>
-                    "because the application was not loaded/started. If your application " <>
-                    "depends on #{app} at runtime, make sure to load/start it or list it " <>
-                    "under :extra_applications in your mix.exs file"
-        end
+    case vsn do
+      {:ok, _} ->
+        "because configuration #{inspect(key)} was not set"
+
+      :undefined ->
+        "because the application was not loaded nor configured"
     end
   end
 
