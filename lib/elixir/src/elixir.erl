@@ -3,14 +3,14 @@
 -module(elixir).
 -behaviour(application).
 -export([start_cli/0,
-  string_to_tokens/4, tokens_to_quoted/3, 'string_to_quoted!'/4,
-  env_for_eval/1, env_for_eval/2, quoted_to_erl/2, quoted_to_erl/3,
-  eval/2, eval/3, eval_forms/3, eval_forms/4, eval_quoted/3]).
+  string_to_tokens/5, tokens_to_quoted/3, 'string_to_quoted!'/5,
+  env_for_eval/1, env_for_eval/2, quoted_to_erl/2,
+  eval_forms/3, eval_quoted/3]).
 -include("elixir.hrl").
 -define(system, 'Elixir.System').
 
 %% Top level types
-%% TODO: Remove char_list type by 2.0
+%% TODO: Remove char_list type on v2.0
 -export_type([charlist/0, char_list/0, nonempty_charlist/0, struct/0, as_boolean/1, keyword/0, keyword/1]).
 -type charlist() :: string().
 -type char_list() :: string().
@@ -25,13 +25,15 @@
 -export([start/2, stop/1, config_change/3]).
 
 start(_Type, _Args) ->
-  OTPRelease = parse_otp_release(),
-  Encoding = file:native_name_encoding(),
-
+  _ = parse_otp_release(),
   preload_common_modules(),
   set_stdio_and_stderr_to_binary_and_maybe_utf8(),
-  check_file_encoding(Encoding),
-  check_endianness(),
+  check_file_encoding(file:native_name_encoding()),
+
+  case application:get_env(elixir, check_endianness, true) of
+    true  -> check_endianness();
+    false -> ok
+  end,
 
   %% TODO: Remove OTPRelease check once we support OTP 20+.
   Tokenizer = case code:ensure_loaded('Elixir.String.Tokenizer') of
@@ -169,11 +171,7 @@ start_cli() ->
 %% EVAL HOOKS
 
 env_for_eval(Opts) ->
-  env_for_eval((elixir_env:new())#{
-    requires := elixir_dispatch:default_requires(),
-    functions := elixir_dispatch:default_functions(),
-    macros := elixir_dispatch:default_macros()
-  }, Opts).
+  env_for_eval(elixir_env:new(), Opts).
 
 env_for_eval(Env, Opts) ->
   Line = case lists:keyfind(line, 1, Opts) of
@@ -290,8 +288,9 @@ merge_stacktrace([StackItem | Stacktrace], CurrentStack) ->
 
 %% Converts a quoted expression to Erlang abstract format
 
-quoted_to_erl(Quoted, Env) ->
-  quoted_to_erl(Quoted, Env, elixir_env:env_to_scope(Env)).
+quoted_to_erl(Quoted, E) ->
+  {_, S} = elixir_env:env_to_scope(E),
+  quoted_to_erl(Quoted, E, S).
 
 quoted_to_erl(Quoted, Env, Scope) ->
   {Expanded, NewEnv} = elixir_expand:expand(Quoted, Env),
@@ -300,14 +299,16 @@ quoted_to_erl(Quoted, Env, Scope) ->
 
 %% Converts a given string (charlist) into quote expression
 
-string_to_tokens(String, StartLine, File, Opts) when is_integer(StartLine), is_binary(File) ->
-  case elixir_tokenizer:tokenize(String, StartLine, [{file, File} | Opts]) of
+string_to_tokens(String, StartLine, StartColumn, File, Opts) when is_integer(StartLine), is_binary(File) ->
+  case elixir_tokenizer:tokenize(String, StartLine, StartColumn, [{file, File} | Opts]) of
     {ok, _Tokens} = Ok ->
       Ok;
-    {error, {Line, {ErrorPrefix, ErrorSuffix}, Token}, _Rest, _SoFar} ->
-      {error, {Line, {to_binary(ErrorPrefix), to_binary(ErrorSuffix)}, to_binary(Token)}};
-    {error, {Line, Error, Token}, _Rest, _SoFar} ->
-      {error, {Line, to_binary(Error), to_binary(Token)}}
+    {error, {Line, Column, {ErrorPrefix, ErrorSuffix}, Token}, _Rest, _SoFar} ->
+      Location = [{line, Line}, {column, Column}],
+      {error, {Location, {to_binary(ErrorPrefix), to_binary(ErrorSuffix)}, to_binary(Token)}};
+    {error, {Line, Column, Error, Token}, _Rest, _SoFar} ->
+      Location = [{line, Line}, {column, Column}],
+      {error, {Location, to_binary(Error), to_binary(Token)}}
   end.
 
 tokens_to_quoted(Tokens, File, Opts) ->
@@ -325,8 +326,8 @@ tokens_to_quoted(Tokens, File, Opts) ->
     erase(elixir_formatter_metadata)
   end.
 
-'string_to_quoted!'(String, StartLine, File, Opts) ->
-  case string_to_tokens(String, StartLine, File, Opts) of
+'string_to_quoted!'(String, StartLine, StartColumn, File, Opts) ->
+  case string_to_tokens(String, StartLine, StartColumn, File, Opts) of
     {ok, Tokens} ->
       case tokens_to_quoted(Tokens, File, Opts) of
         {ok, Forms} ->
