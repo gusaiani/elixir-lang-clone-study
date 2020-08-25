@@ -35,9 +35,8 @@ start(_Type, _Args) ->
     false -> ok
   end,
 
-  %% TODO: Remove OTPRelease check once we support OTP 20+.
   Tokenizer = case code:ensure_loaded('Elixir.String.Tokenizer') of
-    {module, Mod} when OTPRelease >= 20 -> Mod;
+    {module, Mod} -> Mod;
     _ -> elixir_tokenizer
   end,
 
@@ -50,23 +49,25 @@ start(_Type, _Args) ->
     {{uri, <<"ldap">>}, 389}
   ],
 
-  CompilerOpts = #{
-    docs => true,
-    ignore_module_conflict => false,
-    debug_info => true,
-    warnings_as_errors => false,
-    relative_paths => true
-  },
-
-  {ok, [[Home] | _]} = init:get_argument(home),
-
   Config = [
+    %% ARGV options
     {at_exit, []},
     {argv, []},
+    {no_halt, false},
+
+    %% Static options
     {bootstrap, false},
-    {compiler_options, CompilerOpts},
-    {home, unicode:characters_to_binary(Home, Encoding, Encoding)},
-    {identifier_tokenizer, Tokenizer}
+    {identifier_tokenizer, Tokenizer},
+
+    %% Compiler options
+    {docs, true},
+    {ignore_module_conflict, false},
+    {parser_options, []},
+    {debug_info, true},
+    {warnings_as_errors, false},
+    {relative_paths, true},
+    {no_warn_undefined, []},
+    {tracers, []}
     | URIConfig
   ],
 
@@ -105,21 +106,15 @@ preload_common_modules() ->
   %% the codebase we can avoid code:ensure_loaded/1 checks.
   _ = code:ensure_loaded('Elixir.Kernel'),
   _ = code:ensure_loaded('Elixir.Macro.Env'),
-
-  %% We need to make sure the re module is preloaded to make
-  %% function_exported checks inside Regex.version is fast.
-  %% TODO: Remove this once we support OTP 20+.
-  _ = code:ensure_loaded(re),
-
   ok.
 
 parse_otp_release() ->
-  %% Whenever we change this check, we should also change escript.build and Makefile.
+  %% Whenever we change this check, we should also change Makefile.
   case string:to_integer(erlang:system_info(otp_release)) of
-    {Num, _} when Num >= 19 ->
+    {Num, _} when Num >= 21 ->
       Num;
     _ ->
-      io:format(standard_error, "unsupported Erlang version, expected Erlang 19+~n", []),
+      io:format(standard_error, "ERROR! Unsupported Erlang/OTP version, expected Erlang/OTP 21+~n", []),
       erlang:halt(1)
   end.
 
@@ -209,6 +204,23 @@ env_for_eval(Env, Opts) ->
     false -> nil
   end,
 
+  Tracers = case lists:keyfind(tracers, 1, Opts) of
+    {tracers, TracersOpt} when is_list(TracersOpt) -> TracersOpt;
+    false -> []
+  end,
+
+  LexicalTracker = case lists:keyfind(lexical_tracker, 1, Opts) of
+    {lexical_tracker, Pid} when is_pid(Pid) ->
+      case is_process_alive(Pid) of
+        true -> Pid;
+        false -> nil
+      end;
+    {lexical_tracker, nil} ->
+      nil;
+    false ->
+      nil
+  end,
+
   FA = case lists:keyfind(function, 1, Opts) of
     {function, {Function, Arity}} when is_atom(Function), is_integer(Arity) -> {Function, Arity};
     {function, nil} -> nil;
@@ -216,8 +228,8 @@ env_for_eval(Env, Opts) ->
   end,
 
   Env#{
-    file := File, module := Module, function := FA,
-    macros := Macros, functions := Functions,
+    file := File, module := Module, function := FA, tracers := Tracers,
+    macros := Macros, functions := Functions, lexical_tracker := LexicalTracker,
     requires := Requires, aliases := Aliases, line := Line
   }.
 
