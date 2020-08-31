@@ -233,48 +233,44 @@ env_for_eval(Env, Opts) ->
     requires := Requires, aliases := Aliases, line := Line
   }.
 
-%% String evaluation
-
-eval(String, Binding) ->
-  eval(String, Binding, []).
-
-eval(String, Binding, Opts) when is_list(Opts) ->
-  eval(String, Binding, env_for_eval(Opts));
-eval(String, Binding, #{line := Line, file := File} = E) when
-    is_list(String), is_list(Binding), is_integer(Line), is_binary(File) ->
-  Forms = 'string_to_quoted!'(String, Line, File, []),
-  eval_forms(Forms, Binding, E).
-
 %% Quoted evaluation
 
 eval_quoted(Tree, Binding, Opts) when is_list(Opts) ->
   eval_quoted(Tree, Binding, env_for_eval(Opts));
 eval_quoted(Tree, Binding, #{line := Line} = E) ->
-  eval_forms(elixir_quote:linify(Line, Tree), Binding, E).
-
-%% Handle forms evaluation. The main difference to
-%% eval_quoted is that it does not linify the given
-%% args.
+  eval_forms(elixir_quote:linify(Line, line, Tree), Binding, E).
 
 eval_forms(Tree, Binding, Opts) when is_list(Opts) ->
   eval_forms(Tree, Binding, env_for_eval(Opts));
-eval_forms(Tree, Binding, E) ->
-  eval_forms(Tree, Binding, E, elixir_env:env_to_scope(E)).
-eval_forms(Tree, Binding, Env, Scope) ->
-  {ParsedBinding, ParsedVars, ParsedScope} = elixir_erl_var:load_binding(Binding, Scope),
-  ParsedEnv = elixir_env:with_vars(Env, ParsedVars),
-  {Erl, NewEnv, NewScope} = quoted_to_erl(Tree, ParsedEnv, ParsedScope),
+eval_forms(Tree, RawBinding, OE) ->
+  {Vars, Binding} = normalize_binding(RawBinding, [], []),
+  E = elixir_env:with_vars(OE, Vars),
+  {_, S} = elixir_env:env_to_scope(E),
+  {Erl, NewE, NewS} = quoted_to_erl(Tree, E, S),
 
   case Erl of
     {atom, _, Atom} ->
-      {Atom, Binding, NewEnv, NewScope};
+      {Atom, Binding, NewE};
+
     _  ->
-      % Below must be all one line for locations to be the same
-      % when the stacktrace is extended to the full stacktrace.
-      {value, Value, NewBinding} =
+      Exprs =
+        case Erl of
+          {block, _, BlockExpr} -> BlockExprs;
+          _ -> [Erl]
+        end,
+
+      ErlBinding = elixir_erl_var:load_binding(Binding, E, S),
+      {value, Value, NewBinding} = recur_eval(Exprs, ErlBinding, NewE),
         try erl_eval:expr(Erl, ParsedBinding, none, none, none) catch Class:Exception -> erlang:raise(Class, Exception, get_stacktrace(erlang:get_stacktrace())) end,
       {Value, elixir_erl_var:dump_binding(NewBinding, NewScope), NewEnv, NewScope}
   end.
+
+normalize_binding([{Key, Value} | Binding], Vars, Acc) when is_atom(Key) ->
+  normalize_binding(Binding, [{Key, nil} | Vars], [{{Key, nil}, Value} | Acc]);
+normalize_binding([{Pair, Value} | Binding], Vars, Acc) ->
+  normalize_binding(Binding, [Pair | Vars], [{Pair, Value} | Acc]);
+normalize_binding([], Vars, Acc) ->
+  {Vars, Acc}.
 
 get_stacktrace(Stacktrace) ->
   % eval_eval and eval_bits can call :erlang.raise/3 without the full
