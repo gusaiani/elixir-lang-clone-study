@@ -255,14 +255,13 @@ eval_forms(Tree, RawBinding, OE) ->
     _  ->
       Exprs =
         case Erl of
-          {block, _, BlockExpr} -> BlockExprs;
+          {block, _, BlockExprs} -> BlockExprs;
           _ -> [Erl]
         end,
 
       ErlBinding = elixir_erl_var:load_binding(Binding, E, S),
       {value, Value, NewBinding} = recur_eval(Exprs, ErlBinding, NewE),
-        try erl_eval:expr(Erl, ParsedBinding, none, none, none) catch Class:Exception -> erlang:raise(Class, Exception, get_stacktrace(erlang:get_stacktrace())) end,
-      {Value, elixir_erl_var:dump_binding(NewBinding, NewScope), NewEnv, NewScope}
+      {Value, elixir_erl_var:dump_binding(NewBinding, NewE, NewS), NewE}
   end.
 
 normalize_binding([{Key, Value} | Binding], Vars, Acc) when is_atom(Key) ->
@@ -271,6 +270,34 @@ normalize_binding([{Pair, Value} | Binding], Vars, Acc) ->
   normalize_binding(Binding, [Pair | Vars], [{Pair, Value} | Acc]);
 normalize_binding([], Vars, Acc) ->
   {Vars, Acc}.
+
+recur_eval([Expr | Exprs], Binding, Env) ->
+  {value, Value, NewBinding} =
+    % Below must be all one line for locations to be the same
+    % when the stacktrace is extended to the full stacktrace.
+    try erl_eval:expr(Expr, Binding, none, none, none) catch Class:Exception:Stacktrace -> erlang:raise(Class, rewrite_exception(Exception, Stacktrace, Expr, Env), rewrite_stacktrace(Stacktrace)) end,
+
+  case Exprs of
+    [] -> {value, Value, NewBinding};
+    _ -> recur_eval(Exprs, NewBinding, Env)
+  end.
+
+rewrite_exception(badarg, [{Mod, _, _, _} | _], Erl, #{file := File}) when Mod == erl_eval; Mod == eval_bits ->
+  {Min, Max} =
+    erl_parse:fold_anno(fun(Anno, {Min, Max}) ->
+      case erl_anno:line(Anno) of
+        Line when Line > 0 -> {min(Min, Line), max(Max, Line)};
+        _ -> {Min, Max}
+      end
+    end, {999999, -999999}, Erl),
+
+  'Elixir.ArgumentError':exception(
+    erlang:iolist_to_binary(
+      ["argument error while evaluating", badarg_file(File), badarg_line(Min, Max)]
+    )
+  );
+rewrite_exception(Other, _, _, _) ->
+  Other.
 
 get_stacktrace(Stacktrace) ->
   % eval_eval and eval_bits can call :erlang.raise/3 without the full
