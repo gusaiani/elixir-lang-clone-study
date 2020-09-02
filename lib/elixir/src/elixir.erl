@@ -299,18 +299,19 @@ rewrite_exception(badarg, [{Mod, _, _, _} | _], Erl, #{file := File}) when Mod =
 rewrite_exception(Other, _, _, _) ->
   Other.
 
-get_stacktrace(Stacktrace) ->
+badarg_file(<<"nofile">>) -> "";
+badarg_file(Path) -> [$\s, 'Elixir.Path':relative_to_cwd(Path)].
+
+badarg_line(999999, -999999) -> [];
+badarg_line(Line, Line) -> [" at line ", integer_to_binary(Line)];
+badarg_line(Min, Max) -> [" between lines ", integer_to_binary(Min), " and ", integer_to_binary(Max)].
+
+rewrite_stacktrace(Stacktrace) ->
   % eval_eval and eval_bits can call :erlang.raise/3 without the full
   % stacktrace. When this occurs re-add the current stacktrace so that no
   % stack information is lost.
-  try
-    throw(stack)
-  catch
-    throw:stack ->
-      % Ignore stack item for current function.
-      [_ | CurrentStack] = erlang:get_stacktrace(),
-      merge_stacktrace(Stacktrace, CurrentStack)
-  end.
+  {current_stacktrace, CurrentStack} = erlang:process_info(self(), current_stacktrace),
+  merge_stacktrace(Stacktrace, tl(CurrentStack)).
 
 % The stacktrace did not include the current stack, re-add it.
 merge_stacktrace([], CurrentStack) ->
