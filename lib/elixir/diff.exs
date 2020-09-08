@@ -102,4 +102,55 @@ defmodule Diff do
         file_diff(file1, file2)
     end
   end
+
+  defp file_diff(file1, file2) do
+    {diff, _} = System.cmd("diff", [file1, file2])
+    diff
+  end
+
+  defp relative_paths(dir) do
+    dir
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.map(&Path.relative_to(&1, dir))
+  end
+
+  defp assert_dir!(dir) do
+    unless File.dir?(dir) do
+      raise ArgumentError, "#{inspect(dir)} is not a directory"
+    end
+  end
+
+  defp write_tmp(content) do
+    filename = generate_tmp_filename()
+    File.mkdir_p!("tmp")
+    File.write!(Path.join("tmp", filename), content)
+    Path.join("tmp", filename)
+  end
+
+  defp generate_tmp_filename do
+    sec = :os.system_time(:second)
+    rand = :rand.uniform(999_999_999)
+    scheduler_id = :erlang.system_info(:scheduler_id)
+    "tmp-#{sec}-#{rand}-#{scheduler_id}"
+  end
+end
+
+case System.argv() do
+  [dir1, dir2] ->
+    case Diff.compare_dirs(dir1, dir2) do
+      {[], [], []} ->
+        IO.puts("#{inspect(dir1)} and #{inspect(dir2)} are equal")
+
+      {only1, only2, diff} ->
+        for path <- only1, do: IO.puts("Only in #{dir1}: #{path}")
+        for path <- only2, do: IO.puts("Only in #{dir2}: #{path}")
+        for {path, diff} <- diff, do: IO.puts("Diff #{path}:\n#{diff}")
+
+        System.halt(1)
+    end
+
+  _ ->
+    IO.puts("Please, provide two directories as arguments")
+    System.halt(1)
 end
