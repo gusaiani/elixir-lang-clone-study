@@ -1,6 +1,10 @@
 # Returns config for Elixir docs
 [
-  extras: Path.wildcard("lib/elixir/pages/*.md"),
+  extras: Path.wildcard("lib/elixir/pages/*.md") ++ ["CHANGELOG.md"],
+  groups_for_functions: [
+    Guards: & &1[:guard] == true
+  ],
+  skip_undefined_reference_warnings_on: ["lib/elixir/pages/compatibility-and-deprecations.md"],
   groups_for_modules: [
     # [Kernel, Kernel.SpecialForms],
 
@@ -8,13 +12,13 @@
       Atom,
       Base,
       Bitwise,
-      Calendar,
-      Calendar.ISO,
       Date,
       DateTime,
       Exception,
       Float,
+      Function,
       Integer,
+      Module,
       NaiveDateTime,
       Record,
       Regex,
@@ -23,8 +27,8 @@
       Tuple,
       URI,
       Version,
+      Version.Requirement
     ],
-
     "Collections & Enumerables": [
       Access,
       Date.Range,
@@ -34,9 +38,8 @@
       Map,
       MapSet,
       Range,
-      Stream,
+      Stream
     ],
-
     "IO & System": [
       File,
       File.Stat,
@@ -48,20 +51,20 @@
       Path,
       Port,
       StringIO,
-      System,
+      System
     ],
-
-    "Modules & Code": [
-      Code,
-      Kernel.ParallelCompiler,
-      Macro,
-      Macro.Env,
-      Module,
+    "Calendar": [
+      Calendar,
+      Calendar.ISO,
+      Calendar.TimeZoneDatabase,
+      Calendar.UTCOnlyTimeZoneDatabase
     ],
-
     "Processes & Applications": [
       Agent,
       Application,
+      Config,
+      Config.Provider,
+      Config.Reader,
       DynamicSupervisor,
       GenServer,
       Node,
@@ -69,10 +72,9 @@
       Registry,
       Supervisor,
       Task,
-      Task.Supervisor,
+      Task.Supervisor
     ],
-
-    "Protocols": [
+    Protocols: [
       Collectable,
       Enumerable,
       Inspect,
@@ -80,17 +82,25 @@
       Inspect.Opts,
       List.Chars,
       Protocol,
-      String.Chars,
+      String.Chars
     ],
+    "Code & Macros": [
+      Code,
+      Kernel.ParallelCompiler,
+      Macro,
+      Macro.Env
+    ]
 
-    "Deprecated": [
-      Behaviour,
-      Dict,
-      GenEvent,
-      HashDict,
-      HashSet,
-      Set,
-      Supervisor.Spec
-    ],
+    ## Automatically detected groups
+
+    # Deprecated: [
+    #   Behaviour,
+    #   Dict,
+    #   GenEvent,
+    #   HashDict,
+    #   HashSet,
+    #   Set,
+    #   Supervisor.Spec
+    # ]
   ]
 ]
