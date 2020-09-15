@@ -58,7 +58,7 @@ validate_runtime(Key, Value) ->
     false ->
       erlang:error(
         'Elixir.ArgumentError':exception(
-          <<"invalid runtime value for option ", (erlang:atom_to_binary(Key, utf8))/binary,
+          <<"invalid runtime value for option :", (erlang:atom_to_binary(Key, utf8))/binary,
             " in quote, got: ", ('Elixir.Kernel':inspect(Value))/binary>>
         )
       )
@@ -92,8 +92,61 @@ do_linify(LinifyMeta, {quote, Meta, [_ | _] = Args}, {Receiver, Counter} = Var)
     end,
   do_tuple_linify(LinifyMeta, NewMeta, quote, Args, Var);
 
+do_linify(LinifyMeta, {Left, Meta, Receiver}, {Receiver, Counter} = Var)
+    when is_atom(Left), is_list(Meta), Left /= '_' ->
+  do_tuple_linify(LinifyMeta, keynew(counter, Meta, Counter), Left, Receiver, Var);
+
+do_linify(LinifyMeta, {Lexical, Meta, [_ | _] = Args}, {_, Counter} = Var)
+    when ?lexical(Lexical); Lexical == '__aliases__' ->
+  do_tuple_linify(LinifyMeta, keynew(counter, Meta, Counter), Lexical, Args, Var);
+
+do_linify(LinifyMeta, {Left, Meta, Right}, Var) when is_list(Meta) ->
+  do_tuple_linify(LinifyMeta, Meta, Left, Right, Var);
+
+do_linify(LinifyMeta, {Left, Right}, Var) ->
+  {do_linify(LinifyMeta, Left, Var), do_linify(LinifyMeta, Right, Var)};
+
+do_linify(LinifyMeta, List, Var) when is_list(List) ->
+  [do_linify(LinifyMeta, X, Var) || X <- List];
+
+do_linify(_, Else, _) -> Else.
+
 do_tuple_linify(LinifyMeta, Meta, Left, Right, Var) ->
   {do_linify(LinifyMeta, Left, Var), LinifyMeta(Meta), do_linify(LinifyMeta, Right, Var)}.
+
+linify_meta(0, line) -> fun(Meta) -> Meta end;
+linify_meta(Line, line) -> fun(Meta) -> keynew(line, Meta, Line) end;
+linify_meta(Line, keep) ->
+  fun(Meta) ->
+    case lists:keytake(keep, 1, Meta) of
+      {value, {keep, {_, Int}}, MetaNoFile} ->
+        [{line, Int} | keydelete(line, MetaNoFile)];
+      _ ->
+        keynew(line, Meta, Line)
+    end
+  end.
+
+%% Some expressions cannot be unquoted at compilation time.
+%% This function is responsible for doing runtime unquoting.
+dot(Meta, Left, Right, Args, Context) ->
+  annotate()
+
+%% Annotates the AST with context and other info.
+%%
+%% Note we need to delete the counter because linify
+%% adds the counter recursively, even inside quoted
+%% expressions, so we need to clean up the forms to
+%% allow them to get a new counter on the next expansion.
+
+annotate({Def, Meta, [{H, M, A} | T]}, Context) when ?defs(Def) ->
+  {Def, Meta, [{H, keystore(context, M, Context), A} | T]};
+annotate({{'.', _, [_, Def]} = Target, Meta, [{H, M, A} | T]}, Context) when ?defs(Def) ->
+  {Target, Meta, [{H, keystore(context, M, Context), A} | T]};
+
+annotate({Lexical, Meta, [_ | _] = Args}, Context) when ?lexical(Lexical) ->
+  NewMeta = keystore(context, keydelete(counter, Meta), Context),
+  {Lexical, NewMeta, Args};
+annotate(Tree, _Context) -> Tree.
 
 keynew(Key, Meta, Value) ->
   case lists:keymember(Key, 1, Meta) of
