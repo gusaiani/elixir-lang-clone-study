@@ -129,7 +129,18 @@ linify_meta(Line, keep) ->
 %% Some expressions cannot be unquoted at compilation time.
 %% This function is responsible for doing runtime unquoting.
 dot(Meta, Left, Right, Args, Context) ->
-  annotate()
+  annotate(dot(Meta, Left, Right, Args), Context).
+
+dot(Meta, Left, {'__aliases__', _, Args}, nil) ->
+  {'__aliases__', Meta, [Left | Args]};
+
+dot(Meta, Left, Right, nil) when is_atom(Right) ->
+  case atom_to_list(Right) of
+    "Elixir." ++ ->
+      {'__aliases__', Meta, [Left, Right]};
+    _ ->
+      {{'.', Meta, [Left, Right]}, [{no_parens, true} | Meta], []}
+  end.
 
 %% Annotates the AST with context and other info.
 %%
