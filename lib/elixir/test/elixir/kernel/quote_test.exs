@@ -62,5 +62,56 @@ defmodule Kernel.QuoteTest do
 
   test "operator precedence" do
     assert {:+, _, [{:+, _, [1, _]}, 1]} = quote(do: 1 + Foo.l() + 1)
+    assert {:+, _, [1, {_, _, [{:+, _, [1]}]}]} = quote(do: 1 + Foo.l(+1))
+  end
+
+  test "generated" do
+    assert quote(generated: true, do: bar(1)) == {:bar, [generated: true], [1]}
+  end
+
+  test "unquote call" do
+    assert quote(do: foo(bar)[unquote(:baz)]) == quote(do: foo(bar)[:baz])
+    assert quote(do: unquote(:bar)()) == quote(do: bar())
+
+    assert (quote do
+              unquote(:bar)(1) do
+                2 + 3
+              end
+            end) ==
+             (quote do
+                bar 1 do
+                  2 + 3
+                end
+              end)
+
+    assert quote(do: foo.unquote(:bar)) == quote(do: foo.bar)
+    assert quote(do: foo.unquote(:bar)()) == quote(do: foo.bar())
+    assert quote(do: foo.unquote(:bar)(1)) == quote(do: foo.bar(1))
+
+    assert (quote do
+              foo.unquote(:bar)(1) do
+                2 + 3
+              end
+            end) ==
+             (quote do
+                foo.bar 1 do
+                  2 + 3
+                end
+              end)
+
+    assert quote(do: foo.unquote({:bar, [], nil})) == quote(do: foo.bar)
+    assert quote(do: foo.unquote({:bar, [], nil})()) == quote(do: foo.bar())
+    assert quote(do: foo.unquote({:bar, [], [1, 2]})) == quote(do: foo.bar(1, 2))
+
+    assert Code.eval_quoted(quote(do: Foo.unquote(Bar))) == {Elixir.Foo.Bar, []}
+    assert Code.eval_quoted(quote(do: Foo.unquote(quote(do: Bar)))) == {Elixir.Foo.Bar, []}
+
+    assert_raise ArgumentError, fn ->
+      quote(do: foo.unquote(1))
+    end
+  end
+
+  test "nested quote" do
+    assert {:quote, _, [[do: {:unquote, _, _}]]} = quote(do: quote(do: unquote(x)))
   end
 end
