@@ -114,4 +114,89 @@ defmodule Kernel.QuoteTest do
   test "nested quote" do
     assert {:quote, _, [[do: {:unquote, _, _}]]} = quote(do: quote(do: unquote(x)))
   end
+
+  defmacrop nested_quote_in_macro do
+    x = 1
+
+    quote do
+      x = unquote(x)
+
+      quote do
+        unquote(x)
+      end
+    end
+  end
+
+  test "nested quote in macro" do
+    assert nested_quote_in_macro() == 1
+  end
+
+  defmodule Dyn do
+    for {k, v} <- [foo: 1, bar: 2, baz: 3] do
+      # Local call unquote
+      def unquote(k)(), do: unquote(v)
+
+      # Remote call unquote
+      def unquote(k)(arg), do: __MODULE__.unquote(k)() + arg
+    end
+  end
+
+  test "dynamic definition with unquote" do
+    assert Dyn.foo() == 1
+    assert Dyn.bar() == 2
+    assert Dyn.baz() == 3
+
+    assert Dyn.foo(1) == 2
+    assert Dyn.bar(2) == 4
+    assert Dyn.baz(3) == 6
+  end
+
+  test "splice on root" do
+    contents = [1, 2, 3]
+
+    assert quote(do: (unquote_splicing(contents))) ==
+             (quote do
+                1
+                2
+                3
+              end)
+  end
+
+  test "splice with tail" do
+    contents = [1, 2, 3]
+
+    assert quote(do: [unquote_splicing(contents) | [1, 2, 3]]) == [1, 2, 3, 1, 2, 3]
+
+    assert quote(do: [unquote_splicing(contents) | val]) == quote(do: [1, 2, 3 | val])
+
+    assert quote(do: [unquote_splicing(contents) | unquote([4])]) == quote(do: [1, 2, 3, 4])
+  end
+
+  test "splice on stab" do
+    {fun, []} = Code.eval_quoted(quote(do: fn unquote_splicing([1, 2, 3]) -> :ok end), [])
+    assert fun.(1, 2, 3) == :ok
+
+    {fun, []} = Code.eval_quoted(quote(do: fn 1, unquote_splicing([2, 3]) -> :ok end), [])
+    assert fun.(1, 2, 3) == :ok
+  end
+
+  test "splice on definition" do
+    defmodule Hello do
+      def world([unquote_splicing(["foo", "bar"]) | rest]) do
+        rest
+      end
+    end
+
+    assert Hello.world(["foo", "bar", "baz"]) == ["baz"]
+  end
+
+  test "splice on map" do
+    assert %{unquote_splicing(foo: :bar)} == %{foo: :bar}
+    assert %{unquote_splicing(foo: :bar), baz: :bat} == %{foo: :bar, baz: :bat}
+    assert %{unquote_splicing(foo: :bar), :baz => :bat} == %{foo: :bar, baz: :bat}
+    assert %{:baz => :bat, unquote_splicing(foo: :bar)} == %{foo: :bar, baz: :bat}
+
+    map = %{foo: :default}
+    assert %{map | unquote_splicing(foo: :bar)} == %{foo: :bar}
+  end
 end
