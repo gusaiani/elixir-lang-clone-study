@@ -199,4 +199,113 @@ defmodule Kernel.QuoteTest do
     map = %{foo: :default}
     assert %{map | unquote_splicing(foo: :bar)} == %{foo: :bar}
   end
+
+  test "when" do
+    assert [{:->, _, [[{:when, _, [1, 2, 3, 4]}], 5]}] = quote(do: (1, 2, 3 when 4 -> 5))
+
+    assert [{:->, _, [[{:when, _, [1, 2, 3, {:when, _, [4, 5]}]}], 6]}] =
+             quote(do: (1, 2, 3 when 4 when 5 -> 6))
+  end
+
+  test "stab" do
+    assert [{:->, _, [[], 1]}] =
+             (quote do
+                () -> 1
+              end)
+
+    assert [{:->, _, [[], 1]}] = quote(do: (() -> 1))
+  end
+
+  test "empty block" do
+    # Since ; is allowed by itself, it must also be allowed inside ()
+    # The exception to this rule is an empty (). While empty expressions
+    # are allowed, an empty () is ambiguous. We also can't use quote here,
+    # since the formatter will rewrite (;) to something else.
+    assert {:ok, {:__block__, [line: 1], []}} = Code.string_to_quoted("(;)")
+  end
+
+  test "bind quoted" do
+    args = [
+      {:=, [], [{:foo, [line: __ENV__.line + 4], Kernel.QuoteTest}, 3]},
+      {:foo, [], Kernel.QuoteTest}
+    ]
+
+    quoted = quote(bind_quoted: [foo: 1 + 2], do: foo)
+    assert quoted == {:__block__, [], args}
+  end
+
+  test "literals" do
+    assert quote(do: []) == []
+    assert quote(do: nil) == nil
+
+    assert (quote do
+              []
+            end) == []
+
+    assert (quote do
+              nil
+            end) == nil
+  end
+
+  defmacrop dynamic_opts do
+    [line: 3]
+  end
+
+  test "with dynamic opts" do
+    assert quote(dynamic_opts(), do: bar(1, 2, 3)) == {:bar, [line: 3], [1, 2, 3]}
+  end
+
+  test "unary with integer precedence" do
+    assert quote(do: +1.foo) == quote(do: +1.foo)
+    assert quote(do: (@1).foo) == quote(do: (@1).foo)
+    assert quote(do: &1.foo) == quote(do: &1.foo)
+  end
+
+  test "pipe precedence" do
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             quote(do: foo |> bar |> baz)
+
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             (quote do
+                foo do
+                end
+                |> bar
+                |> baz
+              end)
+
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             (quote do
+                foo
+                |> bar do
+                end
+                |> baz
+              end)
+
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             (quote do
+                foo
+                |> bar
+                |> baz do
+                end
+              end)
+
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             (quote do
+                foo do
+                end
+                |> bar
+                |> baz do
+                end
+              end)
+
+    assert {:|>, _, [{:|>, _, [{:foo, _, _}, {:bar, _, _}]}, {:baz, _, _}]} =
+             (quote do
+                foo do
+                end
+                |> bar do
+                end
+                |> baz do
+                end
+              end)
+  end
 end
