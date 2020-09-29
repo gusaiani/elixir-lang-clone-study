@@ -309,3 +309,113 @@ defmodule Kernel.QuoteTest do
               end)
   end
 end
+
+# DO NOT MOVE THIS LINE
+defmodule Kernel.QuoteTest.Errors do
+  def line: do: __ENV__.line + 4
+
+  defmacro defraise do
+    quote location: :keep do
+      def will_raise(_a, _b), do: raise("oops")
+    end
+  end
+
+  defmacro will_raise do
+    quote(location: :keep, do: raise("oops"))
+  end
+end
+
+defmodule Kernel.QuoteTest.ErrorsTest do
+  use ExUnit.Case, async: true
+  import Kernel.QuoteTest.Errors
+
+  # Defines the add function
+  defraise()
+
+  @line line()
+  test "inside function error" do
+    try do
+      will_raise(:a, :b)
+    rescue
+      RuntimeError ->
+        mod = Kernel.QuoteTest.ErrorsTest
+        file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
+        assert [{^mod, :will_raise, 2, [file: ^file, line: @line]} | _] == __STACKTRACE__
+    else
+      _ -> flunk("expected failure")
+    end
+  end
+
+  @line __ENV__.line + 3
+  test "outside function error" do
+    try do
+      will_raise()
+    rescue
+      RuntimeError ->
+        mod = Kernel.QuoteTest.ErrorsTest
+        file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
+        assert [{^mod, _, _, [file: ^file, line: @line]} | _] = __STACKTRACE__
+    else
+      _ -> flunk("expected failure")
+    end
+  end
+end
+
+defmodule Kernel.QuoteTest.VarHygiene do
+  defmacro no_interference do
+    quote(do: a = 1)
+  end
+
+  defmacro write_interference do
+    quote(do: var!(a) = 1)
+  end
+
+  defmacro read_interference do
+    quote(do: 10 = var!(a))
+  end
+
+  defmacro cross_module_interference do
+    quote(do: var!(a, Kernel.QuoteTest.VarHygieneTest) = 1)
+  end
+end
+
+defmodule Kernel.QuoteTest.VarHygieneTest do
+  use ExUnit.Case, async: true
+  import Kernel.QuoteTest.VarHygiene
+
+  defmacrop cross_module_no_interference do
+    quote(do: a = 10)
+  end
+
+  defmacrop read_cross_module do
+    quote(do: var!(a, __MODULE__))
+  end
+
+  defmacrop nested(var, do: block) do
+    quote do
+      var = unquote(var)
+      unquote(block)
+      var
+    end
+  end
+
+  defmacrop hat do
+    quote do
+      var = 1
+      ^var = 1
+      var
+    end
+  end
+
+  test "no interference" do
+    a = 10
+    no_interference()
+    assert a == 10
+  end
+
+  test "cross module interference" do
+    cross_module_no_interference()
+    cross_module_interference()
+    assert read_cross_module() == 1
+  end
+end
