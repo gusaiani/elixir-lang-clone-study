@@ -485,3 +485,67 @@ defmodule Kernel.QuoteTest.VarHygieneTest do
     assert UseNestedBindQuoted.test() == "foofoo"
   end
 end
+
+defmodule Kernel.QuoteTest.AliasHygiene do
+  alias Dict, as: SuperDict
+
+  defmacro dict do
+    quote(do: Dict.Bar)
+  end
+
+  defmacro super_dict do
+    quote(do: SuperDict.Bar)
+  end
+end
+
+defmodule Kernel.QuoteTest.AliasHygieneTest do
+  use ExUnit.Case, async: true
+
+  alias Dict, as: SuperDict
+
+  test "annotate aliases" do
+    assert {:__aliases__, [alias: false], [:Foo, :Bar]} = quote(do: Foo.Bar)
+    assert {:__aliases__, [alias: false], [:Dict, :Bar]} = quote(do: Dict.Bar)
+    assert {:__aliases__, [alias: Dict.Bar], [:SuperDict, :Bar]} = quote(do: SuperDict.Bar)
+  end
+
+  test "expand aliases" do
+    assert Code.eval_quoted(quote(do: SuperDict.Bar)) == {Elixir.Dict.Bar, []}
+    assert Code.eval_quoted(quote(do: alias!(SuperDict.Bar))) == {Elixir.SuperDict.Bar, []}
+  end
+
+  test "expand aliases without macro" do
+    alias HashDict, as: SuperDict
+    assert SuperDict.Bar == Elixir.HashDict.Bar
+  end
+
+  test "expand aliases with macro does not expand source alias" do
+    alias HashDict, as: Dict, warn: false
+    require Kernel.QuoteTest.AliasHygiene
+    assert Kernel.QuoteTest.AliasHygiene.dict() == Elixir.Dict.Bar
+  end
+
+  test "expand aliases with macro has higher preference" do
+    alias HashDict, as: SuperDict, warn: false
+    require Kernel.QuoteTest.AliasHygiene
+    assert Kernel.QuoteTest.AliasHygiene.super_dict() == Elixir.Dict.Bar
+  end
+end
+
+defmodule Kernel.QuoteTest.ImportsHygieneTest do
+  use ExUnit.Case, async: true
+
+  # We are redefining |> and using it inside the quote
+  # and only inside the quote. This code should still compile.
+  defmacro x |> f do
+    quote do
+      unquote(x) |> unquote(f)
+    end
+  end
+
+  defmacrop get_list_length do
+    quote do
+      length('hello')
+    end
+  end
+end
