@@ -548,4 +548,72 @@ defmodule Kernel.QuoteTest.ImportsHygieneTest do
       length('hello')
     end
   end
+
+  defmacrop get_list_length_with_partial do
+    quote do
+      (&length(&1)).('hello')
+    end
+  end
+
+  defmacrop get_list_length_with_function do
+    quote do
+      (&length/1).('hello')
+    end
+  end
+
+  test "expand imports" do
+    import Kernel, except: [length: 1]
+    assert get_list_length() == 5
+    assert get_list_length_with_partial() == 5
+    assert get_list_length_with_function() == 5
+  end
+
+  defmacrop get_string_length do
+    import Kernel, except: [length: 1]
+
+    quote do
+      length("hello")
+    end
+  end
+
+  test "lazy expand imports" do
+    import Kernel, except: [length: 1]
+    import String, only: [length: 1]
+    assert get_string_length() == 5
+  end
+
+  test "lazy expand imports no conflicts" do
+    import Kernel, except: [length: 1]
+    import String, only: [length: 1]
+
+    assert get_list_length() == 5
+    assert get_list_length_with_partial() == 5
+    assert get_list_length_with_function() == 5
+  end
+
+  defmacrop with_length do
+    quote do
+      import Kernel, except: [length: 1]
+      import String, only: [length: 1]
+      length('hello')
+    end
+  end
+
+  test "explicitly overridden imports" do
+    assert with_length() == 5
+  end
+
+  defmodule BinaryUtils do
+    defmacro int32 do
+      quote do
+        integer - size(32)
+      end
+    end
+  end
+
+  test "checks the context also for variables to zero-arity functions" do
+    import BinaryUtils
+    {:int32, meta, __MODULE__} = quote(do: int32)
+    assert meta[:import] == BinaryUtils
+  end
 end
