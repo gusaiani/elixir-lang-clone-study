@@ -136,11 +136,27 @@ dot(Meta, Left, {'__aliases__', _, Args}, nil) ->
 
 dot(Meta, Left, Right, nil) when is_atom(Right) ->
   case atom_to_list(Right) of
-    "Elixir." ++ ->
+    "Elixir." ++ _ ->
       {'__aliases__', Meta, [Left, Right]};
     _ ->
       {{'.', Meta, [Left, Right]}, [{no_parens, true} | Meta], []}
-  end.
+  end;
+
+dot(Meta, Left, {Right, _, Context}, nil) when is_atom(Right), is_atom(Context) ->
+  {{'.', Meta, [Left, Right]}, [{no_parens, true} | Meta], []};
+
+dot(Meta, Left, {Right, _, Args}, nil) when is_atom(Right) ->
+  {{'.', Meta, [Left, Right]}, Meta, Args};
+
+dot(_Meta, _Left, Right, nil) ->
+  argument_error(<<"expected unquote after dot to return an atom, an alias or a quoted call, got: ",
+                   ('Elixir.Macro':to_string(Right))/binary>>);
+
+dot(Meta, Left, Right, Args) when is_atom(Right) ->
+  {{'.', Meta, [Left, Right]}, Meta, Args};
+
+dot(Meta, Left, {Right, _, Context}, Args) when is_atom(Right), is_atom(Context) ->
+  {{'.', Meta, [Left, Right]}, Meta, Args};
 
 %% Annotates the AST with context and other info.
 %%
