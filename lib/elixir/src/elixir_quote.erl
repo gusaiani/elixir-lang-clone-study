@@ -158,6 +158,32 @@ dot(Meta, Left, Right, Args) when is_atom(Right) ->
 dot(Meta, Left, {Right, _, Context}, Args) when is_atom(Right), is_atom(Context) ->
   {{'.', Meta, [Left, Right]}, Meta, Args};
 
+dot(_Meta, _Left, Right, _Args) ->
+  argument_error(<<"expected unquote after dot with args to return an atom or a quoted call, got: ",
+                   ('Elixir.Macro':to_string(Right))/binary>>).
+
+list(Left, Right) when is_list(Right) ->
+  validate_list(Left),
+  Left ++ Right.
+
+tail_list(Left, Right, Tail) when is_list(Right), is_list(Tail) ->
+  validate_list(Left),
+  Tail ++ Left ++ Right;
+
+tail_list(Left, Right, Tail) when is_list(Left) ->
+  validate_list(Left),
+  [H | T] = lists:reverse(Tail ++ Left),
+  lists:reverse([{'|', [], [H, Right]} | T]).
+
+validate_list(List) when is_list(List) ->
+  ok;
+validate_list(List) when not is_list(List) ->
+  argument_error(<<"expected a list with quoted expressions in unquote_splicing/1, got: ",
+                   ('Elixir.Kernel':inspect(List))/binary>>).
+
+argument_error(Message) ->
+  error('Elixir.ArgumentError':exception([{message, Message}])).
+
 %% Annotates the AST with context and other info.
 %%
 %% Note we need to delete the counter because linify
@@ -174,6 +200,13 @@ annotate({Lexical, Meta, [_ | _] = Args}, Context) when ?lexical(Lexical) ->
   NewMeta = keystore(context, keydelete(counter, Meta), Context),
   {Lexical, NewMeta, Args};
 annotate(Tree, _Context) -> Tree.
+
+has_unquotes({unquote, _, [_]}) -> true;
+has_unquotes({unquote_splicing, _, [_]}) -> true;
+has_unquotes({{'.', _, [_, unquote]}, _, [_]}) -> true;
+has_unquotes({Var, _, Ctx}) when is_atom(Var), is_atom(Ctx) -> false;
+has_unquotes({Name, _, Args}) when is_list(Args) ->
+  has_unquotes(Name) orelse lists:any(fun has_unquotes/1, Args);
 
 keynew(Key, Meta, Value) ->
   case lists:keymember(Key, 1, Meta) of
