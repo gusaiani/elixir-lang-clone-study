@@ -207,6 +207,118 @@ has_unquotes({{'.', _, [_, unquote]}, _, [_]}) -> true;
 has_unquotes({Var, _, Ctx}) when is_atom(Var), is_atom(Ctx) -> false;
 has_unquotes({Name, _, Args}) when is_list(Args) ->
   has_unquotes(Name) orelse lists:any(fun has_unquotes/1, Args);
+has_unquotes({Left, Right}) ->
+  has_unquotes(Left) orelse has_unquotes(Right);
+has_unquotes(List) when is_list(List) ->
+  lists:any(fun has_unquotes/1, List);
+has_unquotes(_Other) -> false.
+
+%% Escapes the given expression. It is similar to quote, but
+%% lines are kept and hygiene mechanisms are disabled.
+escape(Expr, Kind, Unquote) ->
+  do_quote(Expr, #elixir_quote{
+    line=true,
+    file=nil,
+    vars_hygiene=false,
+    aliases_hygiene=false,
+    imports_hygiene=false,
+    unquote=Unquote
+  }, Kind).
+
+%% fun_to_quoted
+
+fun_to_quoted(Function) ->
+  Meta = [],
+  {module, Module} = erlang:fun_info(Function, module),
+  {name, Name}     = erlang:fun_info(Function, name),
+  {arity, Arity}   = erlang:fun_info(Function, arity),
+  {'&', Meta, [{'/', Meta, [{{'.', Meta, [Module, Name]}, [{no_parens, true} | Meta], []}, Arity]}]}.
+
+%% Quotes an expression and return its quoted Elixir AST.
+
+quote(_Meta, {unquote_splicing, _, [_]}, _Binding, #elixir_quote{unquote=true}, _, _) ->
+  argument_error(<<"unquote_splicing only works inside arguments and block contexts, "
+    "wrap it in parens if you want it to work with one-liners">>);
+
+quote(Meta, Expr, Binding, Q, Prelude, E) ->
+  Context = Q#elixir_quote.context,
+
+  Vars = [{'{}', [],
+    ['=', [], [
+      {'{}', [], [K, Meta, Context]},
+      V
+    ]]
+  } || {K, V} <- Binding],
+
+  Quoted = do_quote(Expr, Q, E),
+
+  WithVars = case Vars of
+    [] -> Quoted;
+    _ -> {'{}', [], ['__block__', [], Vars ++ [Quoted]]}
+  end,
+
+  case Prelude of
+    [] -> WithVars;
+    _ -> {'__block__', [], Prelude ++ [WithVars]}
+  end.
+
+%% Actual quoting and helpers
+
+do_quote({quote, Meta, [Arg]}, Q, E) ->
+  TArg = do_quote(Arg, Q#elixir_quote{unquote=false}, E),
+
+  NewMeta = case Q of
+    #elixir_quote{vars_hygiene=true, context=Context} -> keystore(context, Meta, Context);
+    _ -> Meta
+  end,
+
+  {'{}', [], [quote, meta(NewMeta, Q), [TArg]]};
+
+do_quote({quote, Meta, [Opts, Arg]}, Q, E) ->
+  TOpts = do_quote(Opts, Q, E),
+  TArg = do_quote(Arg, Q#elixir_quote{unquote=false}, E),
+
+  NewMeta = case Q of
+    #elixir_quote{vars_hygiene=true, context=Context} -> keystore(context, Meta, Context);
+    _ -> Meta
+  end,
+
+  {'{}', [], [quote, meta(NewMeta, Q), [TOpts, TArg]]};
+
+do_quote({unquote, _Meta, [Expr]}, #elixir_quote{unquote=true}, _) ->
+  Expr;
+
+%% Helpers
+
+meta(Meta, Q) ->
+  generated(keep(Meta, Q), Q).
+
+generated(Meta, #elixir_quote{generated=true}) -> [{generated, true} | Meta];
+generated(Meta, #elixir_quote{generated=false}) -> Meta.
+
+keep(Meta, #elixir_quote{file=nil, line=Line}) ->
+  line(Meta, Line);
+keep(Meta, #elixir_quote{file=File}) ->
+  case lists:keytake(line, 1, Meta) of
+    {value, {line, Line}, MetaNoLine} ->
+      [{keep, {File, Line}} | MetaNoLine];
+    false ->
+      [{keep, {File, 0}} | Meta]
+  end.
+
+line(Meta, true) ->
+  Meta;
+line(Meta, false) ->
+  keydelete(line, Meta);
+line(Meta, Line) ->
+  keystore(line, Meta, Line).
+
+keydelete(Key, Meta) ->
+  lists:keydelete(Key, 1, Meta).
+keystore(_Key, Meta, nil) ->
+  Meta;
+keystore(Key, Meta, Value) ->
+  lists:keystore(Key, 1, Meta, {Key, Value}).
 
 keynew(Key, Meta, Value) ->
   case lists:keymember(Key, 1, Meta) of
