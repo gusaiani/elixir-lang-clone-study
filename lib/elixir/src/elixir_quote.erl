@@ -288,6 +288,54 @@ do_quote({quote, Meta, [Opts, Arg]}, Q, E) ->
 do_quote({unquote, _Meta, [Expr]}, #elixir_quote{unquote=true}, _) ->
   Expr;
 
+%% Aliases
+
+do_quote({'__aliases__', Meta, [H | T]} = Alias, #elixir_quote{aliases_hygiene=true} = Q, E) when is_atom(H and (H /= 'Elixir')) ->
+  Annotation =
+    case elixir_aliases:expand(Alias, E) of
+      Atom when is_atom(Atom) -> Atom;
+      Aliases when is_list(Aliases) -> false
+    end,
+  AliasMeta = keystore(alias, keydelete(counter, Meta), Annotation),
+  do_quote_tuple('__aliases__', AliasMeta, [H | T], Q, E);
+
+%% Vars
+
+do_quote({Name, Meta, nil}, #elixir_quote{vars_hygiene=true, imports_hygiene=true} = Q, E) when is_atom(Name) ->
+  ImportMeta = import_meta
+
+import_meta(Meta, Name, Arity, Q, E) ->
+  case (keyfind(import, Meta) == false) andalso
+      elixir_dispatch:find_import(Meta, Name, Arity, E) of
+    false ->
+      case (Arity == 1) andalso keyfind(ambiguous_op, Meta) of
+        {ambiguous_op, nil} -> keystore(ambiguous_op, Meta, Q#elixir_quote.context);
+        _ -> Meta
+      end;
+    Receiver ->
+      keystore(import, keystore(context, Meta, Q#elixir_quote.context), Receiver)
+  end.
+
+do_quote_tuple({Left, Meta, Right}, Q, E) ->
+  do_quote_tuple(Left, Meta, Right, Q, E).
+
+% In a def unquote(name)(args) expression name will be an atom literal,
+% thus location: :keep will not have enough information to generate the proper file/line annotation.
+% This alters metadata to force Elixir to show the file to which the definition is added
+% instead of the file where definition is quoted (i.e. we behave the opposite to location: :keep).
+do_quote_tuple(Left, Meta, [{{unquote, _, _}, _, _}, _] = Right, Q, E) when ?defs(Left) ->
+  TLeft  = do_quote(Left, Q, E),
+  [Head, Body] = do_quote(Right, Q, E),
+  {'{}', [], [HLeft, HMeta, HRight]} = Head,
+  NewMeta = lists:keydelete(file, 1, HMeta),
+  NewHead = {'{}', [], [HLeft, NewMeta, HRight]},
+  {'{}', [], [TLeft, meta(Meta, Q), [NewHead, Body]]};
+
+do_quote_tuple(Left, Meta, Right, Q, E) ->
+  TLeft = do_quote(Left, Q, E),
+  TRight = do_quote(Right, Q, E),
+  {'{}', [], [TLeft, meta(Meta, Q), TRight]}.
+
 %% Helpers
 
 meta(Meta, Q) ->
