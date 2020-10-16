@@ -290,7 +290,7 @@ do_quote({unquote, _Meta, [Expr]}, #elixir_quote{unquote=true}, _) ->
 
 %% Aliases
 
-do_quote({'__aliases__', Meta, [H | T]} = Alias, #elixir_quote{aliases_hygiene=true} = Q, E) when is_atom(H and (H /= 'Elixir')) ->
+do_quote({'__aliases__', Meta, [H | T]} = Alias, #elixir_quote{aliases_hygiene=true} = Q, E) when is_atom(H) and (H /= 'Elixir') ->
   Annotation =
     case elixir_aliases:expand(Alias, E) of
       Atom when is_atom(Atom) -> Atom;
@@ -302,7 +302,19 @@ do_quote({'__aliases__', Meta, [H | T]} = Alias, #elixir_quote{aliases_hygiene=t
 %% Vars
 
 do_quote({Name, Meta, nil}, #elixir_quote{vars_hygiene=true, imports_hygiene=true} = Q, E) when is_atom(Name) ->
-  ImportMeta = import_meta
+  ImportMeta = import_meta(Meta, Name, 0, Q, E),
+  {'{}', [], [Name, meta(ImportMeta, Q), Q#elixir_quote.context]};
+
+do_quote({Name, Meta, nil}, #elixir_quote{vars_hygiene=true} = Q, _E) when is_atom(Name) ->
+  {'{}', [], [Name, meta(Meta, Q), Q#elixir_quote.context]};
+
+%% Unquote
+
+do_quote({{{'.', Meta, [Left, unquote]}, _, [Expr]}, _Args}, #elixir_quote{unquote=true} = Q, E) ->
+  do_quote_call(Left, Meta, Expr, Args, Q, E);
+
+do_quote({{'.', Meta, [Left, unquote]}, _, [Expr]}, #elixir_quote{unquote=true} = Q, E) ->
+  do_quote_call(Left, Meta, Expr, nil, Q, E);
 
 import_meta(Meta, Name, Arity, Q, E) ->
   case (keyfind(import, Meta) == false) andalso
@@ -315,6 +327,18 @@ import_meta(Meta, Name, Arity, Q, E) ->
     Receiver ->
       keystore(import, keystore(context, Meta, Q#elixir_quote.context), Receiver)
   end.
+
+%% do_quote_*
+
+do_quote_import(Meta, Name, Arity, ArgsOrAtom, Q, E) ->
+  ImportMeta = import_meta(Meta, Name, Arity, Q, E),
+  Annotated = annotate({Name, ImportMeta, ArgsOrAtom}, Q#elixir_quote.context),
+  do_quote_tuple(Annotated, Q, E).
+
+do_quote_call(Left, Meta, Expr, Args, Q, E) ->
+  All  = [meta(Meta, Q), Left, {unquote, Meta, [Expr]}, Args, Q#elixir_quote.context],
+  TAll = [do_quote(X, Q, E) || X <- All],
+  {{'.', Meta, [elixir_quote, dot]}, Meta, TAll}.
 
 do_quote_tuple({Left, Meta, Right}, Q, E) ->
   do_quote_tuple(Left, Meta, Right, Q, E).
