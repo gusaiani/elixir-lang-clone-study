@@ -310,11 +310,52 @@ do_quote({Name, Meta, nil}, #elixir_quote{vars_hygiene=true} = Q, _E) when is_at
 
 %% Unquote
 
-do_quote({{{'.', Meta, [Left, unquote]}, _, [Expr]}, _Args}, #elixir_quote{unquote=true} = Q, E) ->
+do_quote({{{'.', Meta, [Left, unquote]}, _, [Expr]}, _, Args}, #elixir_quote{unquote=true} = Q, E) ->
   do_quote_call(Left, Meta, Expr, Args, Q, E);
 
 do_quote({{'.', Meta, [Left, unquote]}, _, [Expr]}, #elixir_quote{unquote=true} = Q, E) ->
   do_quote_call(Left, Meta, Expr, nil, Q, E);
+
+%% Imports
+
+do_quote({'&', Meta, [{'/', _, [{F, _, C}, A]}] = Args},
+         #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(F), is_integer(A), is_atom(C) ->
+  do_quote_fa('&', Meta, Args, F, A, Q, E);
+
+do_quote({Name, Meta, Args}, #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(Name), is_list(Args) ->
+  do_quote_import(Meta, Name, length(Args), Args, Q, E);
+
+do_quote({Name, Meta, Context}, #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(Name), is_atom(Context) ->
+  do_quote_import(Meta, Name, 0, Context, Q, E);
+
+%% Two-element tuples
+
+do_quote({Left, Right}, #elixir_quote{unquote=true} = Q, E) when
+    is_tuple(Left)  andalso (element(1, Left) == unquote_splicing);
+    is_tuple(Right) andalso (element(1, Right) == unquote_splicing) ->
+  do_quote({'{}', [], [Left, Right]}, Q, E);
+
+do_quote({Left, Right}, Q, E) ->
+  TLeft  = do_quote(Left, Q, E),
+  TRight = do_quote(Right, Q, E),
+  {TLeft, TRight};
+
+%% Everything else
+
+do_quote(Other, Q, E) when is_atom(E) ->
+  do_escape(Other, Q, E);
+
+%% do_escape
+
+do_escape({Left, Meta, Right}, Q, E = prune_metadata) ->
+  TM = [{K, V} || {K, V} <- Meta, (K == no_parens) orelse (K == line)],
+  TL = do_quote(Left, Q, E),
+  TR = do_quote(Right, Q, E),
+  {'{}', []], [TL, TM, TR]};
+
+do_escape(Tuple, Q, E) when is_tuple(Tuple) ->
+  TT = do_quote(tuple_to_list(Tuple), Q, E),
+  {'{}', [], TT};
 
 import_meta(Meta, Name, Arity, Q, E) ->
   case (keyfind(import, Meta) == false) andalso
