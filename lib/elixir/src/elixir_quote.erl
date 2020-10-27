@@ -345,17 +345,82 @@ do_quote({Left, Right}, Q, E) ->
 do_quote(Other, Q, E) when is_atom(E) ->
   do_escape(Other, Q, E);
 
+do_quote({_, _, _} = Tuple, Q, E) ->
+  Annotated = annotate(Tuple, Q#elixir_quote.context),
+  do_quote_tuple(Annotated, Q, E);
+
+do_quote([], _, _) ->
+  [];
+
+do_quote([H | T], #elixir_quote{unquote=false} = Q, E) ->
+  do_quote_simple_list(T, do_quote(H, Q, E), Q, E);
+
+do_quote([H | T], Q, E) ->
+  do_quote_tail(lists:reverse(T, [H]), Q, E);
+
+do_quote(Other, _, _) ->
+  Other.
+
 %% do_escape
 
 do_escape({Left, Meta, Right}, Q, E = prune_metadata) ->
   TM = [{K, V} || {K, V} <- Meta, (K == no_parens) orelse (K == line)],
   TL = do_quote(Left, Q, E),
   TR = do_quote(Right, Q, E),
-  {'{}', []], [TL, TM, TR]};
+  {'{}', [], [TL, TM, TR]};
 
 do_escape(Tuple, Q, E) when is_tuple(Tuple) ->
   TT = do_quote(tuple_to_list(Tuple), Q, E),
   {'{}', [], TT};
+
+do_escape(BitString, _, _) when is_bitstring(BitString) ->
+  case bit_size(BitString) rem 8 of
+    0 ->
+      BitString;
+    Size ->
+      <<Bits:Size, Bytes/binary>> = BitString,
+      {'<<>>', [], [{'::', [], [Bits, {size, [], [Size]}]}, {'::', [], [Bytes, {binary, [], []}]}]}
+  end;
+
+do_escape(Map, Q, E) when is_map(Map) ->
+  TT = do_quote(maps:to_list(Map), Q, E),
+  {'%{}', [], TT};
+
+do_escape([], _, _) -> [];
+
+do_escape([H | T], #elixir_quote{unquote=false} = Q, E) ->
+  do_quote_simple_list(T, do_quote(H, Q, E), Q, E);
+
+do_escape([H | T], Q, E) ->
+  %% The improper case is inefficient, but improper lists are rare.
+  try lists:reverse(T, [H]) of
+    L -> do_quote_tail(L, Q, E)
+  catch
+    _:_ ->
+      {L, R} = reverse_improper(T, [H]),
+      TL = do_quote_splice(L, Q, E, [], []),
+      TR = do_quote(R, Q, E),
+      update_last(TL, fun(X) -> {'|', [], [X, TR]} end)
+  end;
+
+do_escape(Other, _, _)
+    when is_number(Other); is_pid(Other); is_atom(Other) ->
+  Other;
+
+do_escape(Fun, _, _) when is_function(Fun) ->
+  case (erlang:fun_info(Fun, env) == {env, []}) andalso
+       (erlang:fun_info(Fun, type) == {type, external}) of
+    true  -> fun_to_quoted(Fun);
+    false -> bad_escape(Fun)
+  end;
+
+do_escape(Other, _, _) ->
+  bad_escape(Other).
+
+bad_escape(Arg) ->
+  argument_error(<<"cannot escape ", ('Elixir.Kernel':inspect(Arg, []))/binary, ". ",
+                   "The supported values are: lists, tuples, maps, atoms, numbers, bitstrings, ",
+                   "PIDs and remote functions in the format &Mod.fun/arity">>).
 
 import_meta(Meta, Name, Arity, Q, E) ->
   case (keyfind(import, Meta) == false) andalso
@@ -381,6 +446,18 @@ do_quote_call(Left, Meta, Expr, Args, Q, E) ->
   TAll = [do_quote(X, Q, E) || X <- All],
   {{'.', Meta, [elixir_quote, dot]}, Meta, TAll}.
 
+do_quote_fa(Target, Meta, Args, F, A, Q, E) ->
+  NewMeta =
+    case elixir_dispatch:find_import(Meta, F, A, E) of
+      false -> Meta;
+      Receiver ->
+        lists:keystore(context, 1,
+          lists:keystore(import, 1, Meta, {import, Receiver}),
+          {context, Q#elixir_quote.context}
+        )
+    end,
+  do_quote_tuple(Target, NewMeta, Args, Q, E).
+
 do_quote_tuple({Left, Meta, Right}, Q, E) ->
   do_quote_tuple(Left, Meta, Right, Q, E).
 
@@ -400,6 +477,41 @@ do_quote_tuple(Left, Meta, Right, Q, E) ->
   TLeft = do_quote(Left, Q, E),
   TRight = do_quote(Right, Q, E),
   {'{}', [], [TLeft, meta(Meta, Q), TRight]}.
+
+do_quote_simple_list([], Prev, _, _) -> [Prev];
+do_quote_simple_list([H | T], Prev, Q, E) ->
+  [Prev | do_quote_simple_list(T, do_quote(H, Q, E), Q, E)];
+do_quote_simple_list(Other, Prev, Q, E) ->
+  [{'|', [], [Prev, do_quote(Other, Q, E)]}].
+
+do_quote_tail([{'|', Meta, [{unquote_splicing, _, [Left]}, Right]} | T], #elixir_quote{unquote=true} = Q, E) ->
+  %% Process the remaining entries on the list.
+  %% For [1, 2, 3, unquote_splicing(arg) | tail], this will quote
+  %% 1, 2 and 3, which could even be unquotes.
+  TT = do_quote_splice(T, Q, E, [], []),
+  TR = do_quote(Right, Q, E),
+  do_runtime_list(Meta, tail_list, [Left, TR, TT]);
+
+do_quote_tail(List, Q, E) ->
+  do_quote_splice(List, Q, E, [], []).
+
+do_quote_splice([{unquote_splicing, Meta, [Expr]} | T], #elixir_quote{unquote=true} = Q, E, Buffer, Acc) ->
+  Runtime = do_runtime_list(Meta, list, [Expr, do_list_concat(Buffer, Acc)]),
+  do_quote_splice(T, Q, E, [], Runtime);
+
+do_quote_splice([H | T], Q, E, Buffer, Acc) ->
+  TH = do_quote(H, Q, E),
+  do_quote_splice(T, Q, E, [TH | Buffer], Acc);
+
+do_quote_splice([], _Q, _E, Buffer, Acc) ->
+  do_list_concat(Buffer, Acc).
+
+do_list_concat(Left, []) -> Left;
+do_list_concat([], Right) -> Right;
+do_list_concat(Left, Right) -> {{'.', [], [erlang, '++']}, [], [Left, Right]}.
+
+do_runtime_list(Meta, Fun, Args) ->
+  {{'.', Meta, [elixir_quote, Fun]}, Meta, Args}.
 
 %% Helpers
 
@@ -426,13 +538,22 @@ line(Meta, false) ->
 line(Meta, Line) ->
   keystore(line, Meta, Line).
 
+reverse_improper([H | T], Acc) -> reverse_improper(T, [H | Acc]);
+reverse_improper([], Acc) -> Acc;
+reverse_improper(T, Acc) -> {Acc, T}.
+
+update_last([], _) -> [];
+update_last([H], F) -> [F(H)];
+update_last([H | T], F) -> [H | update_last(T, F)].
+
+keyfind(Key, Meta) ->
+  lists:keyfind(Key, 1, Meta).
 keydelete(Key, Meta) ->
   lists:keydelete(Key, 1, Meta).
 keystore(_Key, Meta, nil) ->
   Meta;
 keystore(Key, Meta, Value) ->
   lists:keystore(Key, 1, Meta, {Key, Value}).
-
 keynew(Key, Meta, Value) ->
   case lists:keymember(Key, 1, Meta) of
     true -> Meta;
