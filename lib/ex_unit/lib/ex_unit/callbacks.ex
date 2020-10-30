@@ -6,11 +6,12 @@ defmodule ExUnit.Callbacks do
   `setup_all/2` callbacks, as well as the `on_exit/2`, `start_supervised/2`
   and `stop_supervised/1` functions.
 
-  The setup callbacks are defined via macros and each one can
-  optionally receive a map with test state and metadata, usually
-  referred to as `context`. The context to be used in the tests can be
-  optionally extended by the setup callbacks by returning a properly
-  structured value (see below).
+  The setup callbacks may be used to define [test fixtures](https://en.wikipedia.org/wiki/Test_fixture#Software)
+  and run any initialization code which help bring the system into a known
+  state. They are defined via macros and each one can optionally receive a map
+  with test state and metadata, usually referred to as the `context`.
+  Optionally, the context to be used in the tests can be extended by the
+  setup callbacks by returning a properly structured value (see below).
 
   The `setup_all` callbacks are invoked only once per module, before any
   test is run. All `setup` callbacks are run before each test. No callback
@@ -54,8 +55,8 @@ defmodule ExUnit.Callbacks do
 
   ## Context
 
-  If `setup_all` or `setup` return a keyword list, a map, or `{:ok,
-  keywords | map}`, the keyword list or map will be merged into the
+  If `setup_all` or `setup` return a keyword list, a map, or a tuple in the shape
+  of `{:ok, keyword() | map()}`, the keyword list or map will be merged into the
   current context and will be available in all subsequent `setup_all`,
   `setup`, and the `test` itself.
 
@@ -72,7 +73,7 @@ defmodule ExUnit.Callbacks do
 
         # "setup_all" is called once per module before any test runs
         setup_all do
-          IO.puts "Starting AssertionTest"
+          IO.puts("Starting AssertionTest")
 
           # Context is not updated here
           :ok
@@ -80,19 +81,20 @@ defmodule ExUnit.Callbacks do
 
         # "setup" is called before each test
         setup do
-          IO.puts "This is a setup callback for #{inspect self()}"
+          IO.puts("This is a setup callback for #{inspect(self())}")
 
-          on_exit fn ->
-            IO.puts "This is invoked once the test is done. Process: #{inspect self()}"
-          end
+          on_exit(fn ->
+            IO.puts("This is invoked once the test is done. Process: #{inspect(self())}")
+          end)
 
-          # Returns extra metadata to be merged into context
+          # Returns extra metadata to be merged into context.
+          # Any of the following would also work:
+          #
+          #     {:ok, %{hello: "world"}}
+          #     {:ok, [hello: "world"]}
+          #     %{hello: "world"}
+          #
           [hello: "world"]
-
-          # Similarly, any of the following would work:
-          #   {:ok, [hello: "world"]}
-          #   %{hello: "world"}
-          #   {:ok, %{hello: "world"}}
         end
 
         # Same as above, but receives the context as argument
