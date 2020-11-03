@@ -99,7 +99,9 @@ defmodule ExUnit.Callbacks do
 
         # Same as above, but receives the context as argument
         setup context do
-          IO.puts "Setting up: #{context.test}"
+          IO.puts("Setting up: #{context.test}")
+
+          # We can simply return :ok when we don't want to add any extra metadata
           :ok
         end
 
@@ -120,6 +122,43 @@ defmodule ExUnit.Callbacks do
         end
       end
 
+  It is also common to define your setup as a series of functions,
+  which are put together by calling `setup` or `setup_all` with a
+  list of atoms. Each of these functions receive the context and can
+  return any of the values allowed in `setup` blocks:
+
+      defmodule ExampleContextTest do
+        use ExUnit.Case
+
+        setup [:step1, :step2, :step3]
+
+        defp step1(_context), do: [step_one: true]
+        defp step2(_context), do: {:ok, step_two: true} # return values with shape of {:ok, keyword() | map()} allowed
+        defp step3(_context), do: :ok # Context not modified
+
+        test "context was modified", context do
+          assert context[:step_one] == true
+          assert context[:step_two] == true
+        end
+      end
+
+  Finally, as discussed in the `ExUnit.Case` documentation, remember
+  that the initial context metadata can also be set via `@tag`s, which
+  can then be accessed in the `setup` block:
+
+      defmodule ExampleTagModificationTest do
+        use ExUnit.Case
+
+        setup %{login_as: username} do
+          {:ok, current_user: username}
+        end
+
+        @tag login_as: "max"
+        test "tags modify context", context do
+          assert context[:login_as] == "max"
+          assert context[:current_user] == "max"
+        end
+      end
   """
 
   @doc false
@@ -147,6 +186,8 @@ defmodule ExUnit.Callbacks do
 
   Can return values to be merged into the context, to set up the state for
   tests. For more details, see the "Context" section shown above.
+
+  `setup/1` callbacks are executed in the same process as the test process.
 
   ## Examples
 
@@ -210,20 +251,31 @@ defmodule ExUnit.Callbacks do
   Can return values to be merged into the `context`, to set up the state for
   tests. For more details, see the "Context" section shown above.
 
+  `setup_all/1` callbacks are executed in a separate process than tests.
+  All `setup_all/1` callbacks are executed in order in the same process.
+
   ## Examples
 
-      def clean_up_tmp_directory(context) do
+      # One-arity function name
+      setup_all :clean_up_tmp_directory
+
+      def clean_up_tmp_directory(_context) do
         # perform setup
         :ok
       end
 
-      # block
+      # Block
       setup_all do
         [conn: Plug.Conn.build_conn()]
       end
 
-      # one-arity function name
-      setup_all :clean_up_tmp_directory
+  The context returned by `setup_all/1` will be available in all subsequent
+  `setup_all`, `setup`, and the `test` itself. For instance, the `conn` from
+  the previous example can be accessed as:
+
+      test "fetches current users", %{conn: conn} do
+        # ...
+      end
 
   """
   defmacro setup_all(block) do
@@ -244,15 +296,12 @@ defmodule ExUnit.Callbacks do
   @doc """
   Defines a callback to be run before all tests in a case.
 
-  Accepts a block or the name of a one-arity function in the form of an atom,
-  or a list of such atoms.
-
-  Can return values to be merged into the `context`, to set up the state for
-  tests. For more details, see the "Context" section shown above.
+  Same as `setup_all/1` but also takes a context. See
+  the "Context" section in the module documentation.
 
   ## Examples
 
-      setup_all context do
+      setup_all _context do
         [conn: Plug.Conn.build_conn()]
       end
 
@@ -281,6 +330,22 @@ defmodule ExUnit.Callbacks do
   However, `on_exit/2` may also be called dynamically, where a
   reference can be used to guarantee the callback will be invoked
   only once.
+
+  `on_exit/2` gets executed in a blocking fashion after a test
+  exits and **before** running the next test. This means that no
+  other test from the same test case will be running while the
+  `on_exit/2` callback for a previous test is running.
+
+  `on_exit/2` is executed in a different process than the test
+  process.
+
+  ## Examples
+
+      setup do
+        File.write!("fixture.json", "{}")
+        on_exit(fn -> File.rm!("fixture.json") end)
+      end
+
   """
   @spec on_exit(term, (() -> term)) :: :ok
   def on_exit(name_or_ref \\ make_ref(), callback) when is_function(callback, 0) do
