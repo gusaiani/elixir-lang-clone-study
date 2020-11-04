@@ -51,4 +51,69 @@ defmodule ExUnit.OnExitHandler do
       false -> :error
     end
   end
+
+  @spec run(pid, timeout) :: :ok | {Exception.kind(), term, Exception.stacktrace()}
+  def run(pid, timeout) when is_pid(pid) do
+    [{^pid, sup, callbacks}] = :ets.take(@name, pid)
+    error = terminate_supervisor(sup, timeout)
+    exec_on_exit_callbacks(Enum.reverse(callbacks), timeout, error)
+  end
+
+  defp terminate_supervisor(nil, _timeout), do: nil
+
+  defp terminate_supervisor(sup, timeout) do
+    ref = Process.monitor(sup)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> nil
+    after
+      timeout ->
+        {:error, ExUnit.TimeoutError.exception(timeout: timeout, type: "supervisor shutdown"), []}
+    end
+  end
+
+  defp exec_on_exit_callbacks(callbacks, timeout, error) do
+    {runner_pid, runner_monitor, error} =
+      Enum.reduce(callbacks, {nil, nil, error}, &exec_on_exit_callback(&1, timeout, &2))
+  end
+
+  defp exec_on_exit_callback({_name_or_ref, callback}, timeout, runner) do
+    {runner_pid, runner_monitor, error} = runner
+    {runner_pid, runner_monitor} = ensure_alive_callback_runner(runner_pid, runner_monitor)
+    send(runner_pid, {:run, self(), callback})
+    receive_runner_reply
+  end
+
+  defp receive_runner_reply(runner_pid, runner_monitor, error, timeout) do
+    receive do
+      {^runner_pid, reason} ->
+        {runner_pid, runner_monitor, error || reason}
+
+      {:DOWN, ^runner_monitor, :process, ^runner_pid, reason} ->
+        {nil, nil, error || {{:EXIT, runner_pid}, reason, []}}
+    after
+      timeout ->
+        case Process.info(runner_pid, :current_stacktrace) do
+          {:current_stacktrace, stacktrace} ->
+            Process.exit(runner_pid, :kill)
+
+            receive do
+              {:DOWN, ^runner_monitor, :process, ^runner_pid, _} -> :ok
+            end
+
+            exception = ExUnit.TimeoutError.exception
+        end
+    end
+  end
+
+  ## Runner
+
+  defp ensure_alive_callback_runner(nil, nil) do
+    spawn_monitor(__MODULE__, :on_exit_runner_loop, [])
+  end
+
+  defp ensure_alive_callback_runner(runner_pid, runner_monitor) do
+    {runner_pid, runner_monitor}
+  end
+
 end
