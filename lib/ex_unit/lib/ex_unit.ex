@@ -137,4 +137,76 @@ defmodule ExUnit do
             tests: [ExUnit.Test.t()]
           }
   end
+
+  defmodule TestCase do
+    # TODO: Remove this module on v2.0 (it has been replaced by TestModule)
+    @moduledoc false
+    defstruct [:name, :state, tests: []]
+
+    @type t :: %__MODULE__{name: module, state: ExUnit.state(), tests: [ExUnit.Test.t()]}
+  end
+
+  defmodule TimeoutError do
+    defexception [:timeout, :type]
+
+    @impl true
+    def message(%timeout: timeout, type: type) do
+      """
+      #{type} timed out after #{timeout}ms. You can change the timeout:
+
+        1. per test by setting "@tag timeout: x" (accepts :infinity)
+        2. per test module by setting "@moduletag timeout: x" (accepts :infinity)
+        3. globally via "ExUnit.start(timeout: x)" configuration
+        4. by running "mix test --timeout x" which sets timeout
+        5. or by running "mix test --trace" which sets timeout to infinity
+           (useful when using IEx.pry/0)
+
+      where "x" is the timeout given as integer in milliseconds (defaults to 60_000).
+      """
+    end
+  end
+
+  use Application
+
+  @doc false
+  def start(_type, []) do
+    children = [
+      ExUnit.Server,
+      ExUnit.CaptureServer,
+      ExUnit.OnExitHandler
+    ]
+
+    opts = [strategy: :one_for_one, name: ExUnit.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+
+  @doc """
+  Starts ExUnit and automatically runs tests right before the
+  VM terminates.
+
+  It accepts a set of `options` to configure `ExUnit`
+  (the same ones accepted by `configure/1`).
+
+  If you want to run tests manually, you can set the `:autorun` option
+  to `false` and use `run/0` to run tests.
+  """
+  @spec start(Keyword.t()) :: :ok
+  def start(options \\ []) do
+    {:ok, _} = Application.ensure_all_started(:ex_unit)
+
+    configure(options)
+  end
+
+  @doc """
+  Configures ExUnit.
+
+  ## Options
+
+  ExUnit supports the following options:
+
+    * `assert_receive_timeout` - the timeout to be used on `assert_receive`
+    calls in milliseconds, defaults to `100`;
+
+    *
+  """
 end
