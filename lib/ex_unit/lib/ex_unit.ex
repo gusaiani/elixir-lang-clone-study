@@ -150,7 +150,7 @@ defmodule ExUnit do
     defexception [:timeout, :type]
 
     @impl true
-    def message(%timeout: timeout, type: type) do
+    def message(%{timeout: timeout, type: type}) do
       """
       #{type} timed out after #{timeout}ms. You can change the timeout:
 
@@ -204,9 +204,84 @@ defmodule ExUnit do
 
   ExUnit supports the following options:
 
-    * `assert_receive_timeout` - the timeout to be used on `assert_receive`
-    calls in milliseconds, defaults to `100`;
+    * `:assert_receive_timeout` - the timeout to be used on `assert_receive`
+      calls in milliseconds, defaults to `100`;
 
-    *
+    * `:autorun` - if ExUnit should run by default on exit. Defaults to `true`;
+
+    * `:capture_log` - if ExUnit should default to keeping track of log messages
+      and print them on test failure. Can be overridden for individual tests via
+      `@tag capture_log: false`. Defaults to `false`;
+
+    * `:colors` - a keyword list of color options to be used by some formatters:
+      * `:enabled` - boolean option to enable colors, defaults to `IO.ANSI.enabled?/0`;
+      * `:diff_insert` - color of the insertions on diffs, defaults to `:green`;
+      * `:diff_insert_whitespace` - color of the whitespace insertions on diffs,
+        defaults to `IO.ANSI.color_background(2, 0, 0)`;
+      * `:diff_delete` - color of the deletions on diffs, defaults to `:red`;
+      * `:diff_delete_whitespace` - color of the whitespace deletions on diffs,
+        defaults to `IO.ANSI.color_background(0, 2, 0)`;
+
+    * `:exclude` - specifies which tests are run by skipping tests that match the
+      filter;
+
+    * `:failures_manifest_file` - specifies a path to the file used to store failures
+      between runs;
+
+    * `:formatters` - the formatters that will print results,
+      defaults to `[ExUnit.CLIFormatter]`;
+
+    * `:include` - specifies which tests are run by skipping tests that do not
+      match the filter. Keep in mind that all tests are included by default, so unless they are
+      excluded first, the `:include` option has no effect. To only run the tests
+      that match the `:include` filter, exclude the `:test` tag first (see the
+      documentation for `ExUnit.Case` for more information on tags);
+
+    * `:max_cases` - maximum number of tests to run in parallel. Only tests from
+      different modules run in parallel. It defaults to `System.schedulers_online * 2`
+      to optimize both CPU-bound and IO-bound tests;
+
+    * `:max_failures` - the suite stops evaluating tests when this number of test failures
+      is reached. All tests within a module that fail when using the `setup_all/1,2` callbacks
+      are counted as failures. Defaults to `:infinity`;
+
+    * `:only_test_ids` - a list of `{module_name, test_name}` tuples that limits
+      what tests get run;
+
+    * `:refute_receive_timeout` - the timeout to be used on `refute_receive`
+      calls in milliseconds, defaults to `100`;
+
+    * `:seed` - an integer seed value to randomize the test suite. This seed
+      is also mixed with the test module and name to create a new unique seed
+      on every test, which is automatically fed into the `:rand` module. This
+      provides randomness between tests, but predictable and reproducible results;
+
+    * `:slowest` - prints timing information for the N slowest tests. Running
+      ExUnit with slow test reporting automatically runs in `trace` mode. It
+      is disabled by default;
+
+    * `:stacktrace_depth` - configures the stacktrace depth to be used
+      on formatting and reporters, defaults to `20`;
+
+    * `:timeout` - sets the timeout for the tests in milliseconds, defaults to `60_000`;
+
+    * `:trace` - sets ExUnit into trace mode, this sets `:max_cases` to `1` and
+      prints each test case and test while running. Note that in trace mode test timeouts
+      will be ignored as timeout is set to `:infinity`.
+
+    * `:test_location_relative_path` - the test location is the file:line information
+      printed by tests as a shortcut to run a given test. When this value is set,
+      the value is used as a prefix for the test itself. This is typically used by
+      Mix to properly set-up umbrella projects
+
+  Any arbitrary configuration can also be passed to `configure/1` or `start/1`,
+  and these options can then be used in places such as custom formatters. These
+  other options will be ignored by ExUnit itself.
   """
+  @spec configure(Keyword.t()) :: :ok
+  def configure(options) do
+    Enum.each(options, fn {k, v} ->
+      Application.put_env(:ex_unit, k, v)
+    end)
+  end
 end
