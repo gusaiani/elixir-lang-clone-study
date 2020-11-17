@@ -195,6 +195,26 @@ defmodule ExUnit do
     {:ok, _} = Application.ensure_all_started(:ex_unit)
 
     configure(options)
+
+    if Application.fetch_env!(:ex_unit, :autorun) do
+      Application.put_env(:ex_unit, :autorun, false)
+
+      System.at_exit(fn
+        0 ->
+          time = ExUnit.Server.modules_loaded()
+          options = persist_defaults(configuration())
+          %{failures: failures} = ExUnit.Runner.run(options, time)
+
+          System.at_exit(fn _ ->
+            if failures > 0, do: exit({:shutdown, 1})
+          end)
+
+        _ ->
+          :ok
+      end)
+    else
+      :ok
+    end
   end
 
   @doc """
@@ -283,5 +303,56 @@ defmodule ExUnit do
     Enum.each(options, fn {k, v} ->
       Application.put_env(:ex_unit, k, v)
     end)
+  end
+
+  @doc """
+  Returns ExUnit configuration.
+  """
+  @spec configuration() :: Keyword.t()
+  def configuration do
+    Application.get_all_env(:ex_unit)
+    |> put_seed()
+    |> put_slowest()
+    |> put_max_cases()
+  end
+
+  # Persist default values in application
+  # environment before the test suit starts.
+  defp persist_defaults(config) do
+    config |> Keyword.take([:max_cases, :seed, :trace]) |> configure()
+    config
+  end
+
+  defp put_seed(opts) do
+    Keyword.put_new_lazy(opts, :seed, fn ->
+      # We're using `rem System.system_time()` here
+      # instead of directly using :os.timestamp or using the
+      # :microsecond argument because the VM on Windows has odd
+      # precision. Calling with :microsecond will give us a multiple
+      # of 1000. Calling without it gives actual microsecond precision.
+      System.system_time()
+      |> System.convert_time_unit(:native, :microsecond)
+      |> rem(1_000_000)
+    end)
+  end
+
+  defp put_max_cases(opts) do
+    Keyword.put(opts, :max_cases, max_cases(opts))
+  end
+
+  defp put_slowest(opts) do
+    if opts[:slowest] > 0 do
+      Keyword.put(opts, :trace, true)
+    else
+      opts
+    end
+  end
+
+  defp max_cases(opts) do
+    cond do
+      opts[:trace] -> 1
+      max = opts[:max_cases] -> max
+      true -> System.schedulers_online() * 2
+    end
   end
 end
