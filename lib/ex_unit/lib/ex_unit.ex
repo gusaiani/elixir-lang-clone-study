@@ -316,6 +316,51 @@ defmodule ExUnit do
     |> put_max_cases()
   end
 
+  @doc """
+  Returns the pluralization for `word`.
+
+  If one is not registered, returns the word appended with an "s".
+  """
+  @spec plural_rule(binary) :: binary
+  def plural_rule(word) when is_binary(word) do
+    Application.get_env(:ex_unit, :plural_rules, %{})
+    |> Map.get(word, "#{word}s")
+  end
+
+  @doc """
+  Registers a `pluralization` for `word`.
+
+  If one is already registered, it is replaced.
+  """
+  @spec plural_rule(binary, binary) :: :ok
+  def plural_rule(word, pluralization) when is_binary(word) and is_binary(pluralization) do
+    plural_rules =
+      Application.get_env(:ex_unit, :plural_rules, %{})
+      |> Map.put(word, pluralization)
+
+    configure(plural_rules: plural_rules)
+  end
+
+  @doc """
+  Runs the tests. It is invoked automatically
+  if ExUnit is started via `start/1`.
+
+  Returns a map containing the total number of tests, the number
+  of failures, the number of excluded tests and the number of skipped tests.
+  """
+  @spec run() :: suite_result()
+  def run do
+    options = persist_defaults(configuration())
+    with_signal_handler(fn -> ExUnit.Runner.run(options, nil) end)
+  end
+
+  defp with_signal_handler(fun) do
+    ExUnit.SignalHandler.install(self())
+    fun.()
+  after
+    ExUnit.SignalHandler.uninstall(self())
+  end
+
   # Persist default values in application
   # environment before the test suit starts.
   defp persist_defaults(config) do
