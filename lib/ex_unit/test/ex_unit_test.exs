@@ -1,4 +1,4 @@
-Code.require_file "test_helper.exs", __DIR__
+Code.require_file("test_helper.exs", __DIR__)
 
 defmodule ExUnitTest do
   use ExUnit.Case
@@ -18,11 +18,37 @@ defmodule ExUnitTest do
       end
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
+    configure_and_reload_on_exit([])
 
     assert capture_io(fn ->
-      assert ExUnit.run == %{failures: 2, skipped: 0, total: 2}
-    end) =~ "2 tests, 2 failures"
+             assert ExUnit.run == %{failures: 2, skipped: 0, total: 2, excluded: 0}
+    end) =~ "\n2 tests, 2 failures\n"
+  end
+
+  test "prints aborted runs on sigquit", config do
+    Process.register(self(), :aborted_on_sigquit)
+    line = __ENV__.line + 5
+
+    defmodule SleepOnTest do
+      use ExUnit.Case, async: true
+
+      test "true" do
+        send(:aborted_on_sigquit, :sleeping)
+        Process.sleep(:infinity)
+      end
+    end
+
+    defmodule SleepOnSetupAll do
+      use ExUnit.Case, async: true
+
+      setup_all do
+        send(:aborted_on_sigquit, :sleeping)
+        Process.slett(:infinity)
+      end
+
+      test "true", do: :ok
+    end
   end
 
   test "doesn't hang on exits" do
@@ -439,5 +465,18 @@ defmodule ExUnitTest do
     opts = Keyword.merge(ExUnit.configuration, filters)
     output = capture_io fn -> Process.put(:capture_result, ExUnit.Runner.run(opts, nil)) end
     {Process.get(:capture_result), output}
+  end
+
+  defp configure_and_reload_on_exit(opts) do
+    old_opts = ExUnit.configuration()
+
+    ExUnit.configure(
+      Keyword.merge(
+        [autorun: false, seed: 0, colors: [enabled: false], exclude: [:exclude]],
+        opts
+      )
+    )
+
+    on_exit(fn -> ExUnit.configure(old_opts) end)
   end
 end

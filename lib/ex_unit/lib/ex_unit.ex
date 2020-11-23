@@ -361,8 +361,51 @@ defmodule ExUnit do
     ExUnit.SignalHandler.uninstall(self())
   end
 
-  # Persist default values in application
-  # environment before the test suit starts.
+  @doc """
+  Sets a callback to be executed after the completion of a test suite.
+
+  Callbacks set with `after_suite/1` must accept a single argument, which is a
+  map containing the results of the test suite's execution.
+
+  If `after_suite/1` is called multiple times, the callbacks will be called in
+  reverse order. In other words, the last callback set will be the first to be
+  called.
+  """
+  @doc since: "1.8.0"
+  @spec after_suite((suite_result() -> any)) :: :ok
+  def after_suite(function) when is_function(function) do
+    current_callbacks = Application.fetch_env!(:ex_unit, :after_suite)
+    configure(after_suite: [function | current_callbacks])
+  end
+
+  @doc """
+  Fetches the test supervisor for the current test.
+
+  Returns `{:ok, supervisor_pid}` or `:error` if not called from the test process.
+
+  This is the same supervisor as used by `ExUnit.Callbacks.start_supervised/2`
+  and similar, see `ExUnit.Callbacks` module documentation for more information.
+  """
+  @doc since: "1.11.0"
+  @spec fetch_test_supervisor() :: {:ok, pid()} | :error
+  def fetch_test_supervisor() do
+    case ExUnit.OnExitHandler.get_supervisor(self()) do
+      {:ok, nil} ->
+        opts = [strategy: :one_for_one, max_restarts: 1_000_000, max_seconds: 1]
+        {:ok, sup} = Supervisor.start_link([], opts)
+        ExUnit.OnExitHandler.put_supervisor(self(), sup)
+        {:ok, sup}
+
+      {:ok, _} = ok ->
+        ok
+
+      :error ->
+        :error
+    end
+  end
+
+  # Persists default values in application
+  # environment before the test suite starts.
   defp persist_defaults(config) do
     config |> Keyword.take([:max_cases, :seed, :trace]) |> configure()
     config
