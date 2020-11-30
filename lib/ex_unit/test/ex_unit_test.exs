@@ -22,8 +22,8 @@ defmodule ExUnitTest do
     configure_and_reload_on_exit([])
 
     assert capture_io(fn ->
-             assert ExUnit.run == %{failures: 2, skipped: 0, total: 2, excluded: 0}
-    end) =~ "\n2 tests, 2 failures\n"
+             assert ExUnit.run() == %{failures: 2, skipped: 0, total: 2, excluded: 0}
+           end) =~ "\n2 tests, 2 failures\n"
   end
 
   test "prints aborted runs on sigquit", config do
@@ -44,11 +44,13 @@ defmodule ExUnitTest do
 
       setup_all do
         send(:aborted_on_sigquit, :sleeping)
-        Process.slett(:infinity)
+        Process.sleep(:infinity)
       end
 
       test "true", do: :ok
     end
+
+    ExUnit.Server.modules_loaded()
   end
 
   test "doesn't hang on exits" do
