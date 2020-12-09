@@ -51,6 +51,11 @@ defmodule ExUnitTest do
     end
 
     ExUnit.Server.modules_loaded()
+    configure_and_reload_on_exit(max_cases: 8)
+
+    result =
+      capture_io(fn ->
+      end)
   end
 
   test "doesn't hang on exits" do
