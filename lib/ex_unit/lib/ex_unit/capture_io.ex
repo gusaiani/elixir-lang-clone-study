@@ -142,5 +142,34 @@ defmodule ExUnit.CaptureIO do
     input = Keyword.get(options, :input, "")
 
     original_gl = Process.group_leader()
+    {:ok, capture_gl} = StringIO.open(input, capture_prompt: prompt_config, encoding: encoding)
+
+    try do
+      Process.group_leader(self(), capture_gl)
+      do_capture_gl(capture_gl, fun)
+    after
+      Process.group_leader(self(), original_gl)
+    end
+  end
+
+  defp do_capture_io(device, options, fun) do
+    input = Keyword.get(options, :input, "")
+    encoding = Keyword.get(options, :encoding, :unicode)
+
+    case ExUnit.CaptureServer.device_capture_on
+  end
+
+  defp do_capture_gl(string_io, fun) do
+    try do
+      fun.()
+    catch
+      kind, reason ->
+        _ = StringIO.close(string_io)
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    else
+      _ ->
+        {:ok, {_input, output}} = StringIO.close(string_io)
+        output
+    end
   end
 end
