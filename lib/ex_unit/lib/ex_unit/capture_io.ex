@@ -126,7 +126,7 @@ defmodule ExUnit.CaptureIO do
     capture_io(device, [input: input], fun)
   end
 
-  @spec capture_io(atom(), keyword(), (() -> any))) :: String.t()
+  @spec capture_io(atom(), keyword(), (() -> any())) :: String.t()
   def capture_io(device, options, fun)
       when is_atom(device) and is_list(options) and is_function(fun, 0) do
     do_capture_io(map_dev(device), options, fun)
