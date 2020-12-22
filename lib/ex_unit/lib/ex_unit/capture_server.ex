@@ -14,6 +14,14 @@ defmodule ExUnit.CaptureServer do
     GenServer.call(@name, {:device_capture_on, name, encoding, input}, @timeout)
   end
 
+  def device_output(name, ref) do
+    GenServer.call(@name, {:device_output, name, ref}, @timeout)
+  end
+
+  def device_capture_off(ref) do
+    GenServer.call(@name, {:device_capture_off, ref}, @timeout)
+  end
+
   ## Callbacks
 
   def init(:ok) do
@@ -28,6 +36,19 @@ defmodule ExUnit.CaptureServer do
 
   def handle_call({:device_capture_on, name, encoding, input}, {caller, _}, config) do
     capture_device(name, encoding, input, config, caller)
+  end
+
+  def handle_call({:device_output, name, ref}, _from, config) do
+    device = Map.fetch!(config.devices, name)
+    {_, output} = StringIO.contents(device.pid)
+    total = byte_size(output)
+    {_pid, offset} = Map.fetch!(device.refs, ref)
+    output_size = total - offset
+    {:reply, binary_part(output, offset, output_size), config}
+  end
+
+  def handle_call({:device_capture_off, ref}, _from, config) do
+    {:reply, :ok, release_device(ref, config)}
   end
 
   defp capture_device(name, encoding, input, config, caller) do
@@ -89,5 +110,39 @@ defmodule ExUnit.CaptureServer do
 
         {:reply, {:ok, ref}, put_in(config.devices[name], device)}
     end
+  end
+
+  defp release_device(ref, %{devices: devices} = config) do
+    Process.demonitor(ref, [:flush])
+
+    case Enum.find(devices, fn {_, device} -> Map.has_key?(device.refs, ref) end) do
+      {name, device} ->
+        case Map.delete(device.refs, ref) do
+          refs when map_size(refs) == 0 ->
+            revert_device_to_original_pid(name, device.original_pid)
+            close_string_io(device.pid)
+            %{config | devices: Map.delete(devices, name)}
+
+          refs ->
+            put_in(config.devices[name].refs, refs)
+        end
+
+      _ ->
+        config
+    end
+  end
+
+  defp revert_device_to_original_pid(name, pid) do
+    Process.unregister(name)
+  rescue
+    ArgumentError -> nil
+  after
+    Process.register(pid, name)
+  end
+
+  defp close_string_io(pid) do
+    StringIO.close(pid)
+  rescue
+    ArgumentError -> nil
   end
 end

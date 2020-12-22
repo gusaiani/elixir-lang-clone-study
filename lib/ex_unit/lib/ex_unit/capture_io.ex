@@ -156,7 +156,29 @@ defmodule ExUnit.CaptureIO do
     input = Keyword.get(options, :input, "")
     encoding = Keyword.get(options, :encoding, :unicode)
 
-    case ExUnit.CaptureServer.device_capture_on
+    case ExUnit.CaptureServer.device_capture_on(device, encoding, input) do
+      {:ok, ref} ->
+        try do
+          fun.()
+          ExUnit.CaptureServer.device_output(device, ref)
+        after
+          ExUnit.CaptureServer.device_capture_off(ref)
+        end
+
+      {:error, :no_device} ->
+        raise "could not find IO device registered at #{inspect(device)}"
+
+      {:error, {:changed_encoding, current_encoding}} ->
+        raise ArgumentError, """
+        attempted to change the encoding for a currently captured device #{inspect(device)}.
+
+        Currently set as: #{inspect(current_encoding)}
+        Given: #{inspect(encoding)}
+
+        If you need to use multiple encodings on a captured device, you cannot \
+        run your test asynchronously
+        """
+    end
   end
 
   defp do_capture_gl(string_io, fun) do
