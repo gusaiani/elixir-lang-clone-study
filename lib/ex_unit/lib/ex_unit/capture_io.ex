@@ -178,6 +178,11 @@ defmodule ExUnit.CaptureIO do
         If you need to use multiple encodings on a captured device, you cannot \
         run your test asynchronously
         """
+
+      {:error, :input_on_already_captured_device} ->
+        raise ArgumentError,
+              "attempted multiple captures on device #{inspect(device)} with input. " <>
+                "If you need to give an input to a captured device, you cannot run your test asynchronously"
     end
   end
 

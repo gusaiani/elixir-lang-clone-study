@@ -55,7 +55,30 @@ defmodule ExUnitTest do
 
     result =
       capture_io(fn ->
+        {pid, ref} = spawn_monitor(fn -> ExUnit.run() end)
+        assert_receive :sleeping
+        assert_receive :sleeping
+
+        # We are testing implementation details but since this involves
+        # the signal handler, it is truly the only way to test it.
+        send(pid, {ref, self(), :sigquit})
+
+        receive do
+          ^ref -> :ok
+        end
       end)
+
+    assert result =~ "Aborting test suite, the following have not completed:"
+    assert result =~ ~r"\* ExUnitTest.SleepOnSetupAll \[.*test/ex_unit_test.exs\]"
+    assert result =~ ~r"\* test true \[.*test/ex_unit_test.exs:#{line}\]"
+
+    assert result =~ """
+           Showing results so far...
+
+           0 failures
+
+           Randomized with seed 0
+           """
   end
 
   test "doesn't hang on exits" do
@@ -64,17 +87,19 @@ defmodule ExUnitTest do
 
       test "spawn and crash" do
         spawn_link(fn ->
-          exit :foo
+          exit(:foo)
         end)
+
         receive after: (1000 -> :ok)
       end
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
+    configure_and_reload_on_exit([])
 
     assert capture_io(fn ->
-      assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
-    end) =~ "1 test, 1 failure"
+             assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
+           end) =~ "\n1 test, 1 failure\n"
   end
 
   test "supports timeouts" do
@@ -87,11 +112,11 @@ defmodule ExUnitTest do
       end
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
-    output = capture_io(fn -> ExUnit.run end)
+    output = capture_io(fn -> ExUnit.run() end)
     assert output =~ "** (ExUnit.TimeoutError) test timed out after 10ms"
-    assert output =~ ~r"\(elixir\) lib/process\.ex:\d+: Process\.sleep/1"
+    assert output =~ ~r"\(elixir #{System.version()}\) lib/process\.ex:\d+: Process\.sleep/1"
   end
 
   test "supports configured timeout" do
@@ -104,11 +129,11 @@ defmodule ExUnitTest do
     end
 
     ExUnit.configure(timeout: 5)
-    ExUnit.Server.cases_loaded()
-    output = capture_io(fn -> ExUnit.run end)
+    ExUnit.Server.modules_loaded()
+    output = capture_io(fn -> ExUnit.run() end)
     assert output =~ "** (ExUnit.TimeoutError) test timed out after 5ms"
   after
-    ExUnit.configure(timeout: 60_000)
+    ExUnit.configure(timeout: 60000)
   end
 
   test "reports slow tests" do
@@ -130,46 +155,25 @@ defmodule ExUnitTest do
       end
     end
 
-    old_config = ExUnit.configuration()
-    on_exit(fn -> ExUnit.configure(old_config) end)
+    ExUnit.Server.modules_loaded()
+    configure_and_reload_on_exit(slowest: 2)
 
-    ExUnit.start(slowest: 2)
-    ExUnit.Server.cases_loaded()
-
-    output = capture_io(fn -> ExUnit.run end)
-
+    output = capture_io(fn -> ExUnit.run() end)
     assert output =~ ~r"Top 2 slowest \(\d+\.\d+s\), \d+.\d% of total time:"
     assert output =~ ~r"\* test slowest \(.+ms\)"
     assert output =~ ~r"\* test delayed \(.+ms\)"
   end
 
   test "sets max cases to one with trace enabled" do
-    old_config = ExUnit.configuration()
-    on_exit(fn -> ExUnit.configure(old_config) end)
-
-    ExUnit.start(trace: true, max_cases: 10, autorun: false)
+    configure_and_reload_on_exit(trace: true, max_cases: 10)
     config = ExUnit.configuration()
     assert config[:trace]
     assert config[:max_cases] == 1
-    assert config[:timeout] == 60_000
-  end
-
-  test "does not set timeout to infinity and the max cases to 1 with trace disabled" do
-    old_config = ExUnit.configuration()
-    on_exit(fn -> ExUnit.configure(old_config) end)
-
-    ExUnit.start(trace: false, autorun: false)
-    config = ExUnit.configuration()
-    refute config[:trace]
-    assert config[:max_cases] == System.schedulers_online * 2
-    assert config[:timeout] == 60_000
+    assert config[:timeout] == 60000
   end
 
   test "sets trace when slowest is enabled" do
-    old_config = ExUnit.configuration()
-    on_exit(fn -> ExUnit.configure(old_config) end)
-
-    ExUnit.start(slowest: 10, max_cases: 10, autorun: false)
+    configure_and_reload_on_exit(slowest: 10, max_cases: 10)
     config = ExUnit.configuration()
     assert config[:trace]
     assert config[:slowest] == 10
@@ -248,7 +252,7 @@ defmodule ExUnitTest do
       end
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
     output = capture_io(&ExUnit.run/0)
     assert output =~ "[debug] two"
     refute output =~ "[debug] one"
@@ -281,7 +285,7 @@ defmodule ExUnitTest do
       end
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     output = capture_io(fn ->
       assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
@@ -328,7 +332,7 @@ defmodule ExUnitTest do
       test "this is not implemented yet"
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     output = capture_io(fn ->
       assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
@@ -354,7 +358,7 @@ defmodule ExUnitTest do
       test "this will also raise", do: raise "oops"
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     output = capture_io(fn ->
       assert ExUnit.run == %{failures: 0, skipped: 2, total: 2}
@@ -419,7 +423,7 @@ defmodule ExUnitTest do
       test "sample", do: :ok
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     output = capture_io(fn ->
       assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
@@ -439,7 +443,7 @@ defmodule ExUnitTest do
       test "sample", do: :ok
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     output = capture_io(fn ->
       assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
@@ -459,7 +463,7 @@ defmodule ExUnitTest do
       test "sample", do: :ok
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     capture_io(fn ->
       assert ExUnit.run == %{failures: 0, skipped: 0, total: 1}
@@ -468,7 +472,7 @@ defmodule ExUnitTest do
 
   defp run_with_filter(filters, cases) do
     Enum.each(cases, &ExUnit.Server.add_sync_case/1)
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
     opts = Keyword.merge(ExUnit.configuration, filters)
     output = capture_io fn -> Process.put(:capture_result, ExUnit.Runner.run(opts, nil)) end
     {Process.get(:capture_result), output}
